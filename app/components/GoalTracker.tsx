@@ -217,6 +217,7 @@ export default function GoalTracker() {
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [isAddGoalOpen, setIsAddGoalOpen] = useState(false);
+  const [isGoalListOpen, setIsGoalListOpen] = useState(true);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
@@ -567,6 +568,7 @@ export default function GoalTracker() {
   function selectGoal(goal: Goal) {
     const goalLatestEntry = getLatestEntry(goal.entries);
     setActiveGoalId(goal.id);
+    setIsGoalListOpen(false);
     setIsEditingGoal(false);
     setGoalDraft(toGoalDraft(goal));
     setEntryValue(goalLatestEntry?.value ?? 0);
@@ -766,75 +768,91 @@ export default function GoalTracker() {
             </div>
 
             <div className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
-              <h2 className="px-1 pb-2 text-base font-semibold">Goal list</h2>
-              <div className="max-h-[520px] space-y-2 overflow-auto">
-                {goals.length === 0 ? (
-                  <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                    No goals yet. Add the first goal to start tracking.
-                  </p>
-                ) : (
-                  goals.map((goal) => {
-                    const latest = getLatestEntry(goal.entries)?.value ?? 0;
-                    const percent = Math.min(100, clampProgress(latest, goal.target));
-
-                    return (
-                      <div
-                        key={goal.id}
-                        role="button"
-                        tabIndex={0}
-                        draggable
-                        onClick={() => selectGoal(goal)}
-                        onDragStart={(event) => {
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/plain", goal.id);
-                          setDraggedGoalId(goal.id);
-                        }}
-                        onDragEnter={() => setDragOverGoalId(goal.id)}
-                        onDragOver={(event) => {
-                          event.preventDefault();
-                          event.dataTransfer.dropEffect = "move";
-                        }}
-                        onDragEnd={() => {
-                          setDraggedGoalId(null);
-                          setDragOverGoalId(null);
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          const sourceGoalId = event.dataTransfer.getData("text/plain") || draggedGoalId;
-                          if (sourceGoalId) void reorderGoalList(sourceGoalId, goal.id);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            selectGoal(goal);
-                          }
-                        }}
-                        className={`w-full cursor-pointer rounded-md border p-3 text-left transition ${
-                          activeGoalId === goal.id
-                            ? "border-emerald-700 bg-emerald-50"
-                            : "border-stone-200 bg-white hover:border-stone-400"
-                        } ${draggedGoalId === goal.id ? "opacity-50" : ""} ${
-                          dragOverGoalId === goal.id && draggedGoalId !== goal.id ? "ring-2 ring-emerald-500" : ""
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-start gap-2">
-                            <DragHandleIcon />
-                            <span className="min-w-0 font-medium">{goal.title}</span>
-                          </div>
-                          <span className="shrink-0 text-sm text-stone-600">{percent}%</span>
-                        </div>
-                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
-                          <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
-                        </div>
-                        <div className="mt-2 text-xs text-stone-600">
-                          {latest} / {goal.target} {goal.unit}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+                <h2 className="text-base font-semibold">Goal list</h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-stone-500">{goals.length}</span>
+                  <button
+                    type="button"
+                    aria-expanded={isGoalListOpen}
+                    aria-label={isGoalListOpen ? "Collapse goal list" : "Expand goal list"}
+                    onClick={() => setIsGoalListOpen((open) => !open)}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                  >
+                    <ChevronIcon isOpen={isGoalListOpen} />
+                  </button>
+                </div>
               </div>
+              {isGoalListOpen && (
+                <div className="max-h-[520px] space-y-2 overflow-auto">
+                  {goals.length === 0 ? (
+                    <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+                      No goals yet. Add the first goal to start tracking.
+                    </p>
+                  ) : (
+                    goals.map((goal) => {
+                      const latest = getLatestEntry(goal.entries)?.value ?? 0;
+                      const percent = Math.min(100, clampProgress(latest, goal.target));
+
+                      return (
+                        <div
+                          key={goal.id}
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          onClick={() => selectGoal(goal)}
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", goal.id);
+                            setDraggedGoalId(goal.id);
+                          }}
+                          onDragEnter={() => setDragOverGoalId(goal.id)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDragEnd={() => {
+                            setDraggedGoalId(null);
+                            setDragOverGoalId(null);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            const sourceGoalId = event.dataTransfer.getData("text/plain") || draggedGoalId;
+                            if (sourceGoalId) void reorderGoalList(sourceGoalId, goal.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              selectGoal(goal);
+                            }
+                          }}
+                          className={`w-full cursor-pointer rounded-md border p-3 text-left transition ${
+                            activeGoalId === goal.id
+                              ? "border-emerald-700 bg-emerald-50"
+                              : "border-stone-200 bg-white hover:border-stone-400"
+                          } ${draggedGoalId === goal.id ? "opacity-50" : ""} ${
+                            dragOverGoalId === goal.id && draggedGoalId !== goal.id ? "ring-2 ring-emerald-500" : ""
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-start gap-2">
+                              <DragHandleIcon />
+                              <span className="min-w-0 font-medium">{goal.title}</span>
+                            </div>
+                            <span className="shrink-0 text-sm text-stone-600">{percent}%</span>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
+                            <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
+                          </div>
+                          <div className="mt-2 text-xs text-stone-600">
+                            {latest} / {goal.target} {goal.unit}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
