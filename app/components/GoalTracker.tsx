@@ -652,6 +652,10 @@ export default function GoalTracker() {
     }
   }
 
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f7f4] text-stone-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
@@ -678,8 +682,8 @@ export default function GoalTracker() {
           </div>
         )}
 
-        <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
-          <aside className="flex flex-col gap-4">
+        <section className="grid min-w-0 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="min-w-0 flex flex-col gap-4">
             <div className="rounded-lg border border-stone-300 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold">Add goal</h2>
@@ -984,10 +988,10 @@ export default function GoalTracker() {
             </div>
           </aside>
 
-          <section className="min-w-0">
+          <section className="min-w-0 max-w-full">
             {activeGoal ? (
-              <div className="grid gap-4">
-                <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+              <div className="grid min-w-0 gap-4">
+                <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0">
                       {isEditingGoal ? (
@@ -1154,9 +1158,9 @@ export default function GoalTracker() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-                  <div className="grid gap-4">
-                    <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+                  <div className="grid min-w-0 gap-4">
+                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                       <h2 className="text-base font-semibold">Add progress record</h2>
                       <div className="mt-4 grid gap-3">
                         <label className="grid gap-1 text-sm font-medium">
@@ -1216,8 +1220,8 @@ export default function GoalTracker() {
                     </div>
                   </div>
 
-                  <div className="grid gap-4">
-                    <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                  <div className="grid min-w-0 gap-4">
+                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <h2 className="text-base font-semibold">Progress chart</h2>
@@ -1235,7 +1239,7 @@ export default function GoalTracker() {
                       />
                     </div>
 
-                    <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                       <h2 className="text-base font-semibold">Record history</h2>
                       <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                         {activeGoal.entries.length === 0 ? (
@@ -1366,6 +1370,24 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-xs font-medium text-stone-500">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <main
+      className="flex min-h-screen items-center justify-center bg-[#f6f7f4] text-stone-950"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <div className="flex flex-col items-center gap-4">
+        <div
+          className="h-12 w-12 animate-spin rounded-full border-4 border-stone-300 border-t-emerald-700"
+          aria-hidden="true"
+        />
+        <p className="text-sm font-medium text-stone-600">Loading data...</p>
+      </div>
+    </main>
   );
 }
 
