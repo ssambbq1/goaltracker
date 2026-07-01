@@ -34,6 +34,10 @@ type GoalDraft = {
   deadline: string;
 };
 
+type Session = {
+  loginId: string | null;
+};
+
 const emptyGoalForm = {
   title: "",
   memo: "",
@@ -41,6 +45,49 @@ const emptyGoalForm = {
   unit: "units",
   deadline: "",
 };
+
+async function fetchSession() {
+  const response = await fetch("/api/auth/session", { cache: "no-store" });
+  if (!response.ok) throw new Error("Failed to load session");
+  return (await response.json()) as Session;
+}
+
+async function login(loginId: string, password: string) {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ loginId, password }),
+  });
+  const data = (await response.json()) as { error?: string; loginId?: string };
+  if (!response.ok || !data.loginId) throw new Error(data.error || "Failed to login");
+  return data.loginId;
+}
+
+async function signup(loginId: string, password: string) {
+  const response = await fetch("/api/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ loginId, password }),
+  });
+  const data = (await response.json()) as { error?: string; loginId?: string };
+  if (!response.ok || !data.loginId) throw new Error(data.error || "Failed to sign up");
+  return data.loginId;
+}
+
+async function logout() {
+  const response = await fetch("/api/auth/logout", { method: "POST" });
+  if (!response.ok) throw new Error("Failed to logout");
+}
+
+async function deleteAccount(password: string) {
+  const response = await fetch("/api/auth/account", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const data = (await response.json()) as { error?: string; ok?: boolean };
+  if (!response.ok) throw new Error(data.error || "Failed to delete account");
+}
 
 function formatDateTime(ts: number) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -211,6 +258,13 @@ async function saveGoalOrder(goalIds: string[]) {
 }
 
 export default function GoalTracker() {
+  const [loginId, setLoginId] = useState<string | null>(null);
+  const [loginForm, setLoginForm] = useState("");
+  const [passwordForm, setPasswordForm] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [isAccountDeleteOpen, setIsAccountDeleteOpen] = useState(false);
+  const [accountDeletePassword, setAccountDeletePassword] = useState("");
+  const [accountDeleteConfirm, setAccountDeleteConfirm] = useState("");
   const [goals, setGoals] = useState<Goal[]>([]);
   const [deletedGoals, setDeletedGoals] = useState<Goal[]>([]);
   const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
@@ -241,8 +295,26 @@ export default function GoalTracker() {
   useEffect(() => {
     let isActive = true;
 
-    async function loadGoals() {
+    async function loadInitialData() {
       try {
+        const authError = new URLSearchParams(window.location.search).get("authError");
+        if (authError) {
+          setError(authError);
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+
+        const session = await fetchSession();
+        if (!isActive) return;
+
+        if (!session.loginId) {
+          setLoginId(null);
+          resetGoalState();
+          setIsLoading(false);
+          return;
+        }
+
+        setLoginId(session.loginId);
+        setLoginForm(session.loginId);
         const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
           fetchGoals(),
           fetchDeletedGoals(),
@@ -267,7 +339,7 @@ export default function GoalTracker() {
       }
     }
 
-    loadGoals();
+    loadInitialData();
 
     return () => {
       isActive = false;
@@ -306,6 +378,128 @@ export default function GoalTracker() {
 
     return { total, completed, average };
   }, [goals]);
+
+  function resetGoalState() {
+    setGoals([]);
+    setDeletedGoals([]);
+    setArchivedGoals([]);
+    setActiveGoalId(null);
+    setIsEditingGoal(false);
+    setGoalDraft(null);
+    setEntryValue(0);
+    setEntryMemo("");
+    setEditingEntryId(null);
+  }
+
+  function applyLoadedGoals(loadedGoals: Goal[], loadedDeletedGoals: Goal[], loadedArchivedGoals: Goal[]) {
+    const firstGoal = loadedGoals[0] ?? null;
+    const firstLatestEntry = firstGoal ? getLatestEntry(firstGoal.entries) : null;
+    setGoals(loadedGoals);
+    setDeletedGoals(loadedDeletedGoals);
+    setArchivedGoals(loadedArchivedGoals);
+    setActiveGoalId(firstGoal?.id ?? null);
+    setIsEditingGoal(false);
+    setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
+    setEntryValue(firstLatestEntry?.value ?? 0);
+  }
+
+  async function loadGoalData() {
+    const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
+      fetchGoals(),
+      fetchDeletedGoals(),
+      fetchArchivedGoals(),
+    ]);
+    applyLoadedGoals(loadedGoals, loadedDeletedGoals, loadedArchivedGoals);
+  }
+
+  async function submitLogin() {
+    const nextLoginId = loginForm.trim();
+    if (!nextLoginId || !passwordForm) return;
+    if (passwordForm.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const loggedInId = await login(nextLoginId, passwordForm);
+      setLoginId(loggedInId);
+      setLoginForm(loggedInId);
+      setPasswordForm("");
+      await loadGoalData();
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "Failed to login");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitSignup() {
+    const nextLoginId = loginForm.trim();
+    if (!nextLoginId || !passwordForm) return;
+    if (passwordForm.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const signedUpId = await signup(nextLoginId, passwordForm);
+      setLoginId(signedUpId);
+      setLoginForm(signedUpId);
+      setPasswordForm("");
+      await loadGoalData();
+    } catch (signupError) {
+      setError(signupError instanceof Error ? signupError.message : "Failed to sign up");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitLogout() {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      await logout();
+      setLoginId(null);
+      setPasswordForm("");
+      resetGoalState();
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : "Failed to logout");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitAccountDeletion() {
+    if (accountDeleteConfirm !== "DELETE") {
+      setError("Type DELETE to confirm account deletion.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      await deleteAccount(accountDeletePassword);
+      setLoginId(null);
+      setLoginForm("");
+      setPasswordForm("");
+      setAccountDeletePassword("");
+      setAccountDeleteConfirm("");
+      setIsAccountDeleteOpen(false);
+      resetGoalState();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete account");
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   async function addGoal() {
     const title = goalForm.title.trim();
@@ -656,6 +850,23 @@ export default function GoalTracker() {
     return <LoadingScreen />;
   }
 
+  if (!loginId) {
+    return (
+      <LoginScreen
+        loginId={loginForm}
+        password={passwordForm}
+        mode={authMode}
+        error={error}
+        isSaving={isSaving}
+        onLoginIdChange={setLoginForm}
+        onPasswordChange={setPasswordForm}
+        onModeChange={setAuthMode}
+        onSubmit={submitLogin}
+        onSignup={submitSignup}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f7f4] text-stone-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
@@ -665,14 +876,32 @@ export default function GoalTracker() {
             <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
               Goal Tracker
             </h1>
-            <p className="mt-2 text-sm text-stone-600">
-              Data is saved first to the local DB file at data/goals.json.
-            </p>
+            <p className="mt-2 text-sm text-stone-600">Signed in as {loginId}</p>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center sm:min-w-96">
-            <Stat label="Goals" value={`${summary.total}`} />
-            <Stat label="Done" value={`${summary.completed}`} />
-            <Stat label="Average" value={`${summary.average}%`} />
+          <div className="grid gap-3 sm:min-w-96">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <Stat label="Goals" value={`${summary.total}`} />
+              <Stat label="Done" value={`${summary.completed}`} />
+              <Stat label="Average" value={`${summary.average}%`} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAccountDeleteOpen((open) => !open)}
+                disabled={isSaving}
+                className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+              >
+                Delete account
+              </button>
+              <button
+                type="button"
+                onClick={submitLogout}
+                disabled={isSaving}
+                className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </header>
 
@@ -680,6 +909,60 @@ export default function GoalTracker() {
           <div className="rounded-md border border-stone-300 bg-white px-4 py-3 text-sm shadow-sm">
             {isLoading ? "Loading local DB..." : isSaving ? "Saving to local DB..." : error}
           </div>
+        )}
+
+        {isAccountDeleteOpen && (
+          <section className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,160px)_auto] md:items-end">
+              <div>
+                <h2 className="text-base font-semibold text-red-800">Delete account</h2>
+                <p className="mt-1 text-sm text-stone-600">
+                  This permanently deletes this ID and its goals. Type DELETE to confirm.
+                </p>
+              </div>
+              <label className="grid gap-1 text-sm font-medium">
+                Password
+                <input
+                  type="password"
+                  value={accountDeletePassword}
+                  onChange={(event) => setAccountDeletePassword(event.target.value)}
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-red-500"
+                  placeholder="Required for ID accounts"
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                Confirm
+                <input
+                  value={accountDeleteConfirm}
+                  onChange={(event) => setAccountDeleteConfirm(event.target.value)}
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-red-500"
+                  placeholder="DELETE"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={submitAccountDeletion}
+                  disabled={isSaving || accountDeleteConfirm !== "DELETE"}
+                  className="rounded-md bg-red-700 px-3 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAccountDeleteOpen(false);
+                    setAccountDeletePassword("");
+                    setAccountDeleteConfirm("");
+                  }}
+                  disabled={isSaving}
+                  className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </section>
         )}
 
         <section className="grid min-w-0 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -1428,6 +1711,107 @@ function ArchiveIcon() {
       <path d="M5 9v11h14V9" />
       <path d="M10 13h4" />
     </svg>
+  );
+}
+
+function LoginScreen({
+  loginId,
+  password,
+  mode,
+  error,
+  isSaving,
+  onLoginIdChange,
+  onPasswordChange,
+  onModeChange,
+  onSubmit,
+  onSignup,
+}: {
+  loginId: string;
+  password: string;
+  mode: "login" | "signup";
+  error: string;
+  isSaving: boolean;
+  onLoginIdChange: (loginId: string) => void;
+  onPasswordChange: (password: string) => void;
+  onModeChange: (mode: "login" | "signup") => void;
+  onSubmit: () => void;
+  onSignup: () => void;
+}) {
+  const primaryAction = mode === "login" ? onSubmit : onSignup;
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-5 text-stone-950">
+      <section className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+        <p className="text-sm font-medium text-emerald-700">Boostmaster</p>
+        <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
+        <div className="mt-5 grid gap-3">
+          <div className="grid grid-cols-2 rounded-md border border-stone-300 bg-stone-100 p-1">
+            <button
+              type="button"
+              onClick={() => onModeChange("login")}
+              className={`rounded px-3 py-2 text-sm font-medium ${
+                mode === "login" ? "bg-white text-stone-950 shadow-sm" : "text-stone-600 hover:text-stone-950"
+              }`}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange("signup")}
+              className={`rounded px-3 py-2 text-sm font-medium ${
+                mode === "signup" ? "bg-white text-stone-950 shadow-sm" : "text-stone-600 hover:text-stone-950"
+              }`}
+            >
+              Sign up
+            </button>
+          </div>
+          <label className="grid gap-1 text-sm font-medium">
+            Login ID
+            <input
+              value={loginId}
+              onChange={(event) => onLoginIdChange(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && primaryAction()}
+              autoFocus
+              autoCapitalize="none"
+              autoComplete="username"
+              className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+              placeholder="my-id"
+            />
+          </label>
+          <label className="grid gap-1 text-sm font-medium">
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => onPasswordChange(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && primaryAction()}
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+              placeholder="At least 8 characters"
+            />
+          </label>
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={primaryAction}
+            disabled={isSaving || !loginId.trim() || !password}
+            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+          >
+            {isSaving ? "Working..." : mode === "login" ? "Login" : "Create ID"}
+          </button>
+          <a
+            href="/api/auth/google"
+            className="rounded-md border border-stone-300 px-4 py-2 text-center text-sm font-semibold text-stone-800 hover:bg-stone-100"
+          >
+            Continue with Google
+          </a>
+        </div>
+      </section>
+    </main>
   );
 }
 

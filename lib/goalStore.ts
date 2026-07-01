@@ -1,3 +1,4 @@
+import { requireLoginId } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export type ProgressEntry = {
@@ -67,10 +68,12 @@ function archivedGoals(goals: Goal[]) {
 }
 
 async function readStoredGoals() {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const { data: goalRows, error: goalsError } = await supabase
     .from("goals")
     .select("*")
+    .eq("user_id", loginId)
     .order("position", { ascending: true })
     .order("created_at_ms", { ascending: false });
 
@@ -125,9 +128,11 @@ export async function readArchivedGoals() {
 }
 
 export async function writeGoals(goals: Goal[]) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const goalRows = goals.map((goal, index) => ({
     id: goal.id,
+    user_id: loginId,
     title: goal.title,
     memo: goal.memo,
     target: goal.target,
@@ -151,8 +156,20 @@ export async function writeGoals(goals: Goal[]) {
   const { error: upsertGoalsError } = await supabase.from("goals").upsert(goalRows);
   if (upsertGoalsError) throw upsertGoalsError;
 
-  const { error: deleteEntriesError } = await supabase.from("progress_entries").delete().neq("id", "");
-  if (deleteEntriesError) throw deleteEntriesError;
+  const { data: ownedGoalRows, error: ownedGoalsError } = await supabase
+    .from("goals")
+    .select("id")
+    .eq("user_id", loginId);
+  if (ownedGoalsError) throw ownedGoalsError;
+
+  const ownedGoalIds = (ownedGoalRows ?? []).map((goal) => goal.id);
+  if (ownedGoalIds.length) {
+    const { error: deleteEntriesError } = await supabase
+      .from("progress_entries")
+      .delete()
+      .in("goal_id", ownedGoalIds);
+    if (deleteEntriesError) throw deleteEntriesError;
+  }
 
   if (entryRows.length) {
     const { error: upsertEntriesError } = await supabase.from("progress_entries").upsert(entryRows);
@@ -161,6 +178,7 @@ export async function writeGoals(goals: Goal[]) {
 }
 
 export async function reorderGoals(goalIds: string[]) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const active = await readGoals();
   const knownActiveIds = new Set(active.map((goal) => goal.id));
@@ -175,6 +193,7 @@ export async function reorderGoals(goalIds: string[]) {
         .from("goals")
         .update({ position: index })
         .eq("id", goalId)
+        .eq("user_id", loginId)
         .is("deleted_at_ms", null)
         .is("archived_at_ms", null)
         .throwOnError(),
@@ -189,6 +208,7 @@ function makeId(prefix: string) {
 }
 
 export async function addGoal(input: NewGoalInput) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const active = await readGoals();
   const goal: Goal = {
@@ -204,6 +224,7 @@ export async function addGoal(input: NewGoalInput) {
 
   const { error } = await supabase.from("goals").insert({
     id: goal.id,
+    user_id: loginId,
     title: goal.title,
     memo: goal.memo,
     target: goal.target,
@@ -221,6 +242,7 @@ export async function updateGoal(
   goalId: string,
   patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline">>,
 ) {
+  const loginId = await requireLoginId();
   const goal = (await readGoals()).find((item) => item.id === goalId);
   if (!goal) return readGoals();
 
@@ -236,6 +258,7 @@ export async function updateGoal(
       deadline: nextGoal.deadline,
     })
     .eq("id", goalId)
+    .eq("user_id", loginId)
     .is("deleted_at_ms", null)
     .is("archived_at_ms", null);
 
@@ -244,11 +267,13 @@ export async function updateGoal(
 }
 
 export async function deleteGoal(goalId: string) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
     .from("goals")
     .update({ deleted_at_ms: Date.now(), archived_at_ms: null })
     .eq("id", goalId)
+    .eq("user_id", loginId)
     .is("deleted_at_ms", null);
 
   if (error) throw error;
@@ -257,11 +282,13 @@ export async function deleteGoal(goalId: string) {
 }
 
 export async function archiveGoal(goalId: string) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
     .from("goals")
     .update({ archived_at_ms: Date.now() })
     .eq("id", goalId)
+    .eq("user_id", loginId)
     .is("deleted_at_ms", null)
     .is("archived_at_ms", null);
 
@@ -271,11 +298,13 @@ export async function archiveGoal(goalId: string) {
 }
 
 export async function restoreGoal(goalId: string) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
     .from("goals")
     .update({ deleted_at_ms: null, archived_at_ms: null, position: -1 })
-    .eq("id", goalId);
+    .eq("id", goalId)
+    .eq("user_id", loginId);
 
   if (error) throw error;
   const goals = await readStoredGoals();
@@ -287,14 +316,21 @@ export async function restoreGoal(goalId: string) {
 }
 
 export async function permanentlyDeleteGoal(goalId: string) {
+  const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
-  const { error } = await supabase.from("goals").delete().eq("id", goalId).not("deleted_at_ms", "is", null);
+  const { error } = await supabase
+    .from("goals")
+    .delete()
+    .eq("id", goalId)
+    .eq("user_id", loginId)
+    .not("deleted_at_ms", "is", null);
   if (error) throw error;
   const goals = await readStoredGoals();
   return { goals: activeGoals(goals), deletedGoals: deletedGoals(goals) };
 }
 
 export async function addEntry(goalId: string, input: NewEntryInput) {
+  const loginId = await requireLoginId();
   const createdAt =
     typeof input.createdAt === "number" && Number.isFinite(input.createdAt) ? input.createdAt : Date.now();
   const entry: ProgressEntry = {
@@ -308,6 +344,7 @@ export async function addEntry(goalId: string, input: NewEntryInput) {
     .from("goals")
     .select("id")
     .eq("id", goalId)
+    .eq("user_id", loginId)
     .is("deleted_at_ms", null)
     .is("archived_at_ms", null)
     .maybeSingle();
@@ -355,6 +392,10 @@ export async function updateEntry(goalId: string, entryId: string, patch: EntryP
 }
 
 export async function deleteEntry(goalId: string, entryId: string) {
+  const goals = await readGoals();
+  const ownsGoal = goals.some((goal) => goal.id === goalId);
+  if (!ownsGoal) return goals;
+
   const supabase = getSupabaseServerClient();
   const { error } = await supabase.from("progress_entries").delete().eq("id", entryId).eq("goal_id", goalId);
   if (error) throw error;

@@ -3,9 +3,32 @@ import { createClient } from "@supabase/supabase-js";
 export type Database = {
   public: {
     Tables: {
+      app_users: {
+        Row: {
+          login_id: string;
+          google_user_id: string | null;
+          google_email: string | null;
+          display_name: string | null;
+          password_hash: string | null;
+          created_at_ms: number;
+          last_login_at_ms: number;
+        };
+        Insert: {
+          login_id: string;
+          google_user_id?: string | null;
+          google_email?: string | null;
+          display_name?: string | null;
+          password_hash?: string | null;
+          created_at_ms: number;
+          last_login_at_ms: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["app_users"]["Insert"]>;
+        Relationships: [];
+      };
       goals: {
         Row: {
           id: string;
+          user_id: string | null;
           title: string;
           memo: string;
           target: number;
@@ -18,6 +41,7 @@ export type Database = {
         };
         Insert: {
           id: string;
+          user_id?: string | null;
           title: string;
           memo?: string;
           target: number;
@@ -75,6 +99,35 @@ export function getSupabaseServerClient() {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+    },
+  });
+}
+
+export type SupabaseAuthStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  isServer?: boolean;
+};
+
+export function getSupabaseAuthClient(storage?: SupabaseAuthStorage) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey =
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Missing SUPABASE_URL and Supabase auth key");
+  }
+
+  return createClient<Database>(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: Boolean(storage),
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      flowType: "pkce",
+      storage,
     },
   });
 }
