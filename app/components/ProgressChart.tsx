@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 type ProgressEntry = {
   id: string;
@@ -39,7 +39,7 @@ export default function ProgressChart({
   if (entries.length === 0) {
     return (
       <div className="flex h-72 items-center justify-center rounded-md bg-stone-100 px-4 text-center text-sm text-stone-600">
-        첫 기록을 저장하면 달성도 변화 그래프가 표시됩니다.
+        泥?湲곕줉????ν븯硫??ъ꽦??蹂??洹몃옒?꾧? ?쒖떆?⑸땲??
       </div>
     );
   }
@@ -76,12 +76,12 @@ export default function ProgressChart({
   const ticks = [0, target / 2, target];
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full overflow-hidden">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="목표 달성도 변화 그래프"
-        className="min-h-72 w-full min-w-[560px]"
+        aria-label="Goal progress chart"
+        className="block h-auto w-full max-w-full"
       >
         <defs>
           <linearGradient id="progress-fill" x1="0" x2="0" y1="0" y2="1">

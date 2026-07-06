@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import ProgressChart from "./ProgressChart";
@@ -34,7 +34,7 @@ type GoalDraft = {
   deadline: string;
 };
 
-type TrackerView = "add" | "list" | "archive" | "trash" | "detail";
+type TrackerView = "add" | "list" | "archive" | "trash" | "detail" | "user";
 
 type Session = {
   loginId: string | null;
@@ -247,18 +247,6 @@ async function removeEntry(goalId: string, entryId: string) {
   return Array.isArray(data.goals) ? data.goals : [];
 }
 
-async function saveGoalOrder(goalIds: string[]) {
-  const response = await fetch("/api/goals", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goalIds }),
-  });
-
-  if (!response.ok) throw new Error("Failed to reorder goals");
-  const data = (await response.json()) as { goals?: Goal[] };
-  return Array.isArray(data.goals) ? data.goals : [];
-}
-
 export default function GoalTracker() {
   const [loginId, setLoginId] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState("");
@@ -285,8 +273,6 @@ export default function GoalTracker() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
-  const [draggedGoalId, setDraggedGoalId] = useState<string | null>(null);
-  const [dragOverGoalId, setDragOverGoalId] = useState<string | null>(null);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
   const goalSaveVersions = useRef<Record<string, number>>({});
@@ -361,22 +347,6 @@ export default function GoalTracker() {
   const latestValue = latestEntry?.value ?? 0;
   const progressPercent = activeGoal ? clampProgress(latestValue, activeGoal.target) : 0;
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
-
-  const summary = useMemo(() => {
-    const total = goals.length;
-    const completed = goals.filter((goal) => (getLatestEntry(goal.entries)?.value ?? 0) >= goal.target).length;
-    const average =
-      total === 0
-        ? 0
-        : Math.round(
-            goals.reduce((sum, goal) => {
-              const latest = getLatestEntry(goal.entries)?.value ?? 0;
-              return sum + Math.min(100, clampProgress(latest, goal.target));
-            }, 0) / total,
-          );
-
-    return { total, completed, average };
-  }, [goals]);
 
   function resetGoalState() {
     setGoals([]);
@@ -775,35 +745,6 @@ export default function GoalTracker() {
     setEditingEntryId(null);
   }
 
-  async function reorderGoalList(sourceGoalId: string, targetGoalId: string) {
-    if (sourceGoalId === targetGoalId) return;
-
-    const sourceIndex = goals.findIndex((goal) => goal.id === sourceGoalId);
-    const targetIndex = goals.findIndex((goal) => goal.id === targetGoalId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-
-    const nextGoals = [...goals];
-    const [movedGoal] = nextGoals.splice(sourceIndex, 1);
-    nextGoals.splice(targetIndex, 0, movedGoal);
-
-    setGoals(nextGoals);
-    setIsSaving(true);
-    setError("");
-
-    try {
-      const savedGoals = await saveGoalOrder(nextGoals.map((goal) => goal.id));
-      setGoals(savedGoals);
-    } catch (orderError) {
-      setError(orderError instanceof Error ? orderError.message : "Failed to reorder goals");
-      const restoredGoals = await fetchGoals();
-      setGoals(restoredGoals);
-    } finally {
-      setDraggedGoalId(null);
-      setDragOverGoalId(null);
-      setIsSaving(false);
-    }
-  }
-
   function startEditingEntry(entry: ProgressEntry) {
     setEditingEntryId(entry.id);
     setEditEntryValue(entry.value);
@@ -874,39 +815,28 @@ export default function GoalTracker() {
   return (
     <main className="min-h-screen bg-[#f6f7f4] text-stone-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <header className="flex flex-col gap-4 border-b border-stone-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
+        <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
+          <div className="min-w-0">
             <p className="text-sm font-medium text-emerald-700">Master plan for everything</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
               Goal Tracker
             </h1>
-            <p className="mt-2 text-sm text-stone-600">Signed in as {loginId}</p>
           </div>
-          <div className="grid gap-3 sm:min-w-96">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <Stat label="Goals" value={`${summary.total}`} />
-              <Stat label="Done" value={`${summary.completed}`} />
-              <Stat label="Average" value={`${summary.average}%`} />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsAccountDeleteOpen((open) => !open)}
-                disabled={isSaving}
-                className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-              >
-                Delete account
-              </button>
-              <button
-                type="button"
-                onClick={submitLogout}
-                disabled={isSaving}
-                className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentView("user");
+              setIsEditingGoal(false);
+            }}
+            aria-label="Open user page"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border shadow-sm transition ${
+              currentView === "user"
+                ? "border-emerald-700 bg-emerald-700 text-white"
+                : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+            }`}
+          >
+            <UserIcon />
+          </button>
         </header>
 
         {(error || isSaving || isLoading) && (
@@ -915,12 +845,12 @@ export default function GoalTracker() {
           </div>
         )}
 
-        <nav className="grid grid-cols-2 gap-2 rounded-lg border border-stone-300 bg-white p-2 shadow-sm md:grid-cols-4">
+        <nav className="grid grid-cols-4 gap-1 rounded-full border border-stone-300 bg-white/90 p-1 shadow-sm">
           {[
-            { id: "add", label: "Add goal", count: null },
-            { id: "list", label: "Goal list", count: goals.length },
-            { id: "archive", label: "Archive", count: archivedGoals.length },
-            { id: "trash", label: "휴지통", count: deletedGoals.length },
+            { id: "add", label: "Add goal", shortLabel: "Add", count: null },
+            { id: "list", label: "Goal list", shortLabel: "List", count: goals.length },
+            { id: "archive", label: "Archive", shortLabel: "Archive", count: archivedGoals.length },
+            { id: "trash", label: "휴지통", shortLabel: "Trash", count: deletedGoals.length },
           ].map((item) => (
             <button
               key={item.id}
@@ -928,20 +858,83 @@ export default function GoalTracker() {
               onClick={() => {
                 setCurrentView(item.id as TrackerView);
                 setIsEditingGoal(false);
+                setIsAccountDeleteOpen(false);
               }}
-              className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+              className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
                 currentView === item.id
                   ? "bg-emerald-700 text-white shadow-sm"
                   : "text-stone-700 hover:bg-stone-100"
               }`}
             >
-              <span>{item.label}</span>
-              {item.count !== null && <span className="ml-2 text-xs opacity-80">{item.count}</span>}
+              {item.id === "add" && <AddIcon />}
+              {item.id === "list" && <ListIcon />}
+              {item.id === "archive" && <ArchiveIcon />}
+              {item.id === "trash" && <TrashIcon />}
+              <span className="min-w-0 truncate sm:hidden">{item.shortLabel}</span>
+              <span className="hidden min-w-0 truncate sm:inline">{item.label}</span>
+              {item.count !== null && (
+                <span
+                  className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
+                    currentView === item.id ? "bg-white/20 text-white" : "bg-stone-100 text-stone-600"
+                  }`}
+                >
+                  {item.count}
+                </span>
+              )}
             </button>
           ))}
         </nav>
 
-        {isAccountDeleteOpen && (
+        <section className={`min-w-0 ${currentView === "user" ? "grid gap-4" : "hidden"}`}>
+          <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-base font-semibold">
+                  <UserIcon />
+                  User
+                </div>
+                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="rounded-md bg-stone-100 p-3">
+                    <dt className="text-xs font-medium text-stone-500">Login ID</dt>
+                    <dd className="mt-1 font-semibold">{loginId}</dd>
+                  </div>
+                  <div className="rounded-md bg-stone-100 p-3">
+                    <dt className="text-xs font-medium text-stone-500">Active goals</dt>
+                    <dd className="mt-1 font-semibold">{goals.length}</dd>
+                  </div>
+                  <div className="rounded-md bg-stone-100 p-3">
+                    <dt className="text-xs font-medium text-stone-500">Archived</dt>
+                    <dd className="mt-1 font-semibold">{archivedGoals.length}</dd>
+                  </div>
+                  <div className="rounded-md bg-stone-100 p-3">
+                    <dt className="text-xs font-medium text-stone-500">Trash</dt>
+                    <dd className="mt-1 font-semibold">{deletedGoals.length}</dd>
+                  </div>
+                </dl>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAccountDeleteOpen((open) => !open)}
+                  disabled={isSaving}
+                  className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Delete account
+                </button>
+                <button
+                  type="button"
+                  onClick={submitLogout}
+                  disabled={isSaving}
+                  className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {currentView === "user" && isAccountDeleteOpen && (
           <section className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,160px)_auto] md:items-end">
               <div>
@@ -996,7 +989,7 @@ export default function GoalTracker() {
         )}
 
         <section className="min-w-0">
-          <aside className={`min-w-0 flex-col gap-4 ${currentView === "detail" ? "hidden" : "flex"}`}>
+          <aside className={`min-w-0 flex-col gap-4 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div
               className={`rounded-lg border border-stone-300 bg-white p-4 shadow-sm ${
                 currentView === "add" ? "" : "hidden"
@@ -1109,7 +1102,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "list" && (
-                <div className="max-h-[520px] space-y-2 overflow-auto">
+                <div className="space-y-2">
                   {goals.length === 0 ? (
                     <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                       No goals yet. Add the first goal to start tracking.
@@ -1124,27 +1117,7 @@ export default function GoalTracker() {
                           key={goal.id}
                           role="button"
                           tabIndex={0}
-                          draggable
                           onClick={() => selectGoal(goal)}
-                          onDragStart={(event) => {
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", goal.id);
-                            setDraggedGoalId(goal.id);
-                          }}
-                          onDragEnter={() => setDragOverGoalId(goal.id)}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "move";
-                          }}
-                          onDragEnd={() => {
-                            setDraggedGoalId(null);
-                            setDragOverGoalId(null);
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            const sourceGoalId = event.dataTransfer.getData("text/plain") || draggedGoalId;
-                            if (sourceGoalId) void reorderGoalList(sourceGoalId, goal.id);
-                          }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -1155,13 +1128,10 @@ export default function GoalTracker() {
                             activeGoalId === goal.id
                               ? "border-emerald-700 bg-emerald-50"
                               : "border-stone-200 bg-white hover:border-stone-400"
-                          } ${draggedGoalId === goal.id ? "opacity-50" : ""} ${
-                            dragOverGoalId === goal.id && draggedGoalId !== goal.id ? "ring-2 ring-emerald-500" : ""
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-2">
-                              <DragHandleIcon />
                               <span className="min-w-0 font-medium">{goal.title}</span>
                             </div>
                             <span className="shrink-0 text-sm text-stone-600">{percent}%</span>
@@ -1256,7 +1226,7 @@ export default function GoalTracker() {
               <div className="flex items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <TrashIcon />
-                  휴지통
+                  Trash
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{deletedGoals.length}</span>
@@ -1275,7 +1245,7 @@ export default function GoalTracker() {
               <div className="max-h-64 space-y-2 overflow-auto">
                 {deletedGoals.length === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                    삭제한 목표가 여기에 표시됩니다.
+                    Deleted goals will appear here.
                   </p>
                 ) : (
                   deletedGoals.map((goal) => {
@@ -1348,6 +1318,17 @@ export default function GoalTracker() {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2 self-start">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
+                          setIsEditingGoal(false);
+                          setCurrentView("list");
+                        }}
+                        className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
+                      >
+                        Back to list
+                      </button>
                       {isEditingGoal ? (
                         <>
                           <button
@@ -1684,15 +1665,6 @@ export default function GoalTracker() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-stone-300 bg-white px-3 py-2 shadow-sm">
-      <div className="text-xs font-medium text-stone-500">{label}</div>
-      <div className="mt-1 text-xl font-semibold">{value}</div>
-    </div>
-  );
-}
-
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md bg-stone-100 p-3">
@@ -1725,7 +1697,7 @@ function TrashIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className="h-4 w-4 text-stone-600"
+      className="h-4 w-4 shrink-0"
       fill="none"
       stroke="currentColor"
       strokeLinecap="round"
@@ -1746,7 +1718,7 @@ function ArchiveIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className="h-4 w-4 text-stone-600"
+      className="h-4 w-4 shrink-0"
       fill="none"
       stroke="currentColor"
       strokeLinecap="round"
@@ -1756,6 +1728,24 @@ function ArchiveIcon() {
       <path d="M3 4h18v5H3z" />
       <path d="M5 9v11h14V9" />
       <path d="M10 13h4" />
+    </svg>
+  );
+}
+
+function UserIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M20 21a8 8 0 0 0-16 0" />
+      <circle cx="12" cy="8" r="4" />
     </svg>
   );
 }
@@ -1866,7 +1856,7 @@ function AddIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className="h-4 w-4"
+      className="h-4 w-4 shrink-0"
       fill="none"
       stroke="currentColor"
       strokeLinecap="round"
@@ -1883,7 +1873,7 @@ function ListIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className="h-4 w-4"
+      className="h-4 w-4 shrink-0"
       fill="none"
       stroke="currentColor"
       strokeLinecap="round"
@@ -1899,23 +1889,3 @@ function ListIcon() {
   );
 }
 
-function DragHandleIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="mt-0.5 h-4 w-4 shrink-0 text-stone-400"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="2"
-    >
-      <path d="M9 6h.01" />
-      <path d="M15 6h.01" />
-      <path d="M9 12h.01" />
-      <path d="M15 12h.01" />
-      <path d="M9 18h.01" />
-      <path d="M15 18h.01" />
-    </svg>
-  );
-}
