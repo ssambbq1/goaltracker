@@ -34,6 +34,8 @@ type GoalDraft = {
   deadline: string;
 };
 
+type TrackerView = "add" | "list" | "archive" | "trash" | "detail";
+
 type Session = {
   loginId: string | null;
 };
@@ -269,11 +271,8 @@ export default function GoalTracker() {
   const [deletedGoals, setDeletedGoals] = useState<Goal[]>([]);
   const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
-  const [isAddGoalOpen, setIsAddGoalOpen] = useState(false);
-  const [isGoalListOpen, setIsGoalListOpen] = useState(true);
-  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
-  const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
@@ -384,6 +383,7 @@ export default function GoalTracker() {
     setDeletedGoals([]);
     setArchivedGoals([]);
     setActiveGoalId(null);
+    setCurrentView("list");
     setIsEditingGoal(false);
     setGoalDraft(null);
     setEntryValue(0);
@@ -527,7 +527,7 @@ export default function GoalTracker() {
       setEntryRecordedAt(toDateTimeLocalValue());
       setEditingEntryId(null);
       setGoalForm(emptyGoalForm);
-      setIsAddGoalOpen(false);
+      setCurrentView("detail");
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "Failed to add goal");
     } finally {
@@ -677,8 +677,10 @@ export default function GoalTracker() {
       setIsEditingGoal(false);
       setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
       setEntryValue(nextLatestEntry?.value ?? 0);
+      setCurrentView("trash");
     }
     setGoals(nextGoals);
+    setCurrentView("trash");
     setIsSaving(true);
     setError("");
 
@@ -703,6 +705,7 @@ export default function GoalTracker() {
       setIsEditingGoal(false);
       setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
       setEntryValue(nextLatestEntry?.value ?? 0);
+      setCurrentView("archive");
     }
     setGoals(nextGoals);
     setIsSaving(true);
@@ -737,6 +740,7 @@ export default function GoalTracker() {
       setEntryMemo("");
       setEntryRecordedAt(toDateTimeLocalValue());
       setEditingEntryId(null);
+      setCurrentView("detail");
     } catch (restoreError) {
       setError(restoreError instanceof Error ? restoreError.message : "Failed to restore goal");
     } finally {
@@ -762,7 +766,7 @@ export default function GoalTracker() {
   function selectGoal(goal: Goal) {
     const goalLatestEntry = getLatestEntry(goal.entries);
     setActiveGoalId(goal.id);
-    setIsGoalListOpen(false);
+    setCurrentView("detail");
     setIsEditingGoal(false);
     setGoalDraft(toGoalDraft(goal));
     setEntryValue(goalLatestEntry?.value ?? 0);
@@ -911,6 +915,32 @@ export default function GoalTracker() {
           </div>
         )}
 
+        <nav className="grid grid-cols-2 gap-2 rounded-lg border border-stone-300 bg-white p-2 shadow-sm md:grid-cols-4">
+          {[
+            { id: "add", label: "Add goal", count: null },
+            { id: "list", label: "Goal list", count: goals.length },
+            { id: "archive", label: "Archive", count: archivedGoals.length },
+            { id: "trash", label: "휴지통", count: deletedGoals.length },
+          ].map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                setCurrentView(item.id as TrackerView);
+                setIsEditingGoal(false);
+              }}
+              className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                currentView === item.id
+                  ? "bg-emerald-700 text-white shadow-sm"
+                  : "text-stone-700 hover:bg-stone-100"
+              }`}
+            >
+              <span>{item.label}</span>
+              {item.count !== null && <span className="ml-2 text-xs opacity-80">{item.count}</span>}
+            </button>
+          ))}
+        </nav>
+
         {isAccountDeleteOpen && (
           <section className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,160px)_auto] md:items-end">
@@ -965,22 +995,26 @@ export default function GoalTracker() {
           </section>
         )}
 
-        <section className="grid min-w-0 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="min-w-0 flex flex-col gap-4">
-            <div className="rounded-lg border border-stone-300 bg-white p-4 shadow-sm">
+        <section className="min-w-0">
+          <aside className={`min-w-0 flex-col gap-4 ${currentView === "detail" ? "hidden" : "flex"}`}>
+            <div
+              className={`rounded-lg border border-stone-300 bg-white p-4 shadow-sm ${
+                currentView === "add" ? "" : "hidden"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold">Add goal</h2>
                 <button
                   type="button"
-                  aria-expanded={isAddGoalOpen}
-                  aria-label={isAddGoalOpen ? "Collapse add goal form" : "Expand add goal form"}
-                  onClick={() => setIsAddGoalOpen((open) => !open)}
+                  aria-expanded={currentView === "add"}
+                  aria-label="Add goal form"
+                  onClick={() => setCurrentView("add")}
                   className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                 >
-                  <ChevronIcon isOpen={isAddGoalOpen} />
+                  <AddIcon />
                 </button>
               </div>
-              {isAddGoalOpen && (
+              {currentView === "add" && (
                 <div className="mt-4 grid gap-3">
                   <label className="grid gap-1 text-sm font-medium">
                     Goal name
@@ -1035,7 +1069,7 @@ export default function GoalTracker() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setIsAddGoalOpen(false)}
+                      onClick={() => setCurrentView("list")}
                       disabled={isSaving}
                       className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                     >
@@ -1054,23 +1088,27 @@ export default function GoalTracker() {
               )}
             </div>
 
-            <div className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <div
+              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+                currentView === "list" ? "" : "hidden"
+              }`}
+            >
               <div className="flex items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">Goal list</h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{goals.length}</span>
                   <button
                     type="button"
-                    aria-expanded={isGoalListOpen}
-                    aria-label={isGoalListOpen ? "Collapse goal list" : "Expand goal list"}
-                    onClick={() => setIsGoalListOpen((open) => !open)}
+                    aria-expanded={currentView === "list"}
+                    aria-label="Goal list"
+                    onClick={() => setCurrentView("list")}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                   >
-                    <ChevronIcon isOpen={isGoalListOpen} />
+                    <ListIcon />
                   </button>
                 </div>
               </div>
-              {isGoalListOpen && (
+              {currentView === "list" && (
                 <div className="max-h-[520px] space-y-2 overflow-auto">
                   {goals.length === 0 ? (
                     <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -1142,7 +1180,11 @@ export default function GoalTracker() {
               )}
             </div>
 
-            <div className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <div
+              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+                currentView === "archive" ? "" : "hidden"
+              }`}
+            >
               <div className="flex items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <ArchiveIcon />
@@ -1152,16 +1194,16 @@ export default function GoalTracker() {
                   <span className="text-xs font-medium text-stone-500">{archivedGoals.length}</span>
                   <button
                     type="button"
-                    aria-expanded={isArchiveOpen}
-                    aria-label={isArchiveOpen ? "Collapse archive" : "Expand archive"}
-                    onClick={() => setIsArchiveOpen((open) => !open)}
+                    aria-expanded={currentView === "archive"}
+                    aria-label="Archive"
+                    onClick={() => setCurrentView("archive")}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                   >
-                    <ChevronIcon isOpen={isArchiveOpen} />
+                    <ArchiveIcon />
                   </button>
                 </div>
               </div>
-              {isArchiveOpen && (
+              {currentView === "archive" && (
               <div className="max-h-64 space-y-2 overflow-auto">
                 {archivedGoals.length === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -1206,7 +1248,11 @@ export default function GoalTracker() {
               )}
             </div>
 
-            <div className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <div
+              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+                currentView === "trash" ? "" : "hidden"
+              }`}
+            >
               <div className="flex items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <TrashIcon />
@@ -1216,16 +1262,16 @@ export default function GoalTracker() {
                   <span className="text-xs font-medium text-stone-500">{deletedGoals.length}</span>
                   <button
                     type="button"
-                    aria-expanded={isTrashOpen}
-                    aria-label={isTrashOpen ? "Collapse trash" : "Expand trash"}
-                    onClick={() => setIsTrashOpen((open) => !open)}
+                    aria-expanded={currentView === "trash"}
+                    aria-label="Trash"
+                    onClick={() => setCurrentView("trash")}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                   >
-                    <ChevronIcon isOpen={isTrashOpen} />
+                    <TrashIcon />
                   </button>
                 </div>
               </div>
-              {isTrashOpen && (
+              {currentView === "trash" && (
               <div className="max-h-64 space-y-2 overflow-auto">
                 {deletedGoals.length === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -1271,7 +1317,7 @@ export default function GoalTracker() {
             </div>
           </aside>
 
-          <section className="min-w-0 max-w-full">
+          <section className={`min-w-0 max-w-full ${currentView === "detail" ? "" : "hidden"}`}>
             {activeGoal ? (
               <div className="grid min-w-0 gap-4">
                 <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
@@ -1446,14 +1492,14 @@ export default function GoalTracker() {
                     <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                       <h2 className="text-base font-semibold">Add progress record</h2>
                       <div className="mt-4 grid gap-3">
-                        <label className="grid gap-1 text-sm font-medium">
+                        <label className="grid min-w-0 gap-1 text-sm font-medium">
                           Current value
                           <input
                             type="number"
                             min={0}
                             value={entryValue}
                             onChange={(event) => setEntryValue(Number(event.target.value))}
-                            className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                            className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           />
                         </label>
                         <input
@@ -1464,30 +1510,30 @@ export default function GoalTracker() {
                           onChange={(event) => setEntryValue(Number(event.target.value))}
                           className="w-full accent-emerald-700"
                         />
-                        <label className="grid gap-1 text-sm font-medium">
+                        <label className="grid min-w-0 gap-1 text-sm font-medium">
                           Record date and time
-                          <div className="grid grid-cols-[1fr_auto] gap-2">
+                          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                             <input
                               type="datetime-local"
                               value={entryRecordedAt}
                               onChange={(event) => setEntryRecordedAt(event.target.value)}
-                              className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                              className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                             />
                             <button
                               type="button"
                               onClick={() => setEntryRecordedAt(toDateTimeLocalValue())}
-                              className="rounded-md border border-stone-300 px-3 py-2 font-normal text-stone-700 hover:bg-stone-100"
+                              className="w-full rounded-md border border-stone-300 px-3 py-2 font-normal text-stone-700 hover:bg-stone-100 sm:w-auto"
                             >
                               Now
                             </button>
                           </div>
                         </label>
-                        <label className="grid gap-1 text-sm font-medium">
+                        <label className="grid min-w-0 gap-1 text-sm font-medium">
                           Memo
                           <textarea
                             value={entryMemo}
                             onChange={(event) => setEntryMemo(event.target.value)}
-                            className="min-h-24 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                            className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                             placeholder="What changed since the last record?"
                           />
                         </label>
@@ -1742,7 +1788,7 @@ function LoginScreen({
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-5 text-stone-950">
       <section className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-        <p className="text-sm font-medium text-emerald-700">Boostmaster</p>
+        <p className="text-sm font-medium text-emerald-700">MasterPlan</p>
         <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
         <div className="mt-5 grid gap-3">
           <div className="grid grid-cols-2 rounded-md border border-stone-300 bg-stone-100 p-1">
@@ -1815,15 +1861,40 @@ function LoginScreen({
   );
 }
 
-function ChevronIcon({ isOpen }: { isOpen: boolean }) {
+function AddIcon() {
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
-      fill="currentColor"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeWidth="2"
     >
-      <path d="M7 10h10l-5 6z" />
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeWidth="2"
+    >
+      <path d="M8 6h13" />
+      <path d="M8 12h13" />
+      <path d="M8 18h13" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
     </svg>
   );
 }
