@@ -1,0 +1,34 @@
+import { addTodo, readTodos } from "@/lib/todoStore";
+import { isUnauthorizedError } from "@/lib/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const todos = await readTodos();
+    return Response.json({ todos });
+  } catch (error) {
+    if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
+    const message = error instanceof Error ? error.message : "Failed to load todos";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const title = typeof body?.title === "string" ? body.title.trim() : "";
+
+    if (!title) {
+      return Response.json({ error: "Todo title is required" }, { status: 400 });
+    }
+
+    const result = await addTodo(title);
+    return Response.json(result, { status: 201 });
+  } catch (error) {
+    if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
+    const message = error instanceof Error ? error.message : "Failed to add todo";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}

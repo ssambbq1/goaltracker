@@ -81,6 +81,32 @@ export type Database = {
           },
         ];
       };
+      todos: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          completed: boolean;
+          created_at_ms: number;
+        };
+        Insert: {
+          id: string;
+          user_id: string;
+          title: string;
+          completed?: boolean;
+          created_at_ms: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["todos"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "todos_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "app_users";
+            referencedColumns: ["login_id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

@@ -43,6 +43,14 @@ create table if not exists public.progress_entries (
   memo text not null default ''
 );
 
+create table if not exists public.todos (
+  id text primary key,
+  user_id text not null references public.app_users(login_id) on delete cascade,
+  title text not null,
+  completed boolean not null default false,
+  created_at_ms bigint not null
+);
+
 create index if not exists goals_user_active_order_idx
   on public.goals (user_id, position asc, created_at_ms desc)
   where deleted_at_ms is null and archived_at_ms is null;
@@ -58,6 +66,10 @@ create index if not exists goals_user_archived_idx
 create index if not exists progress_entries_goal_created_idx
   on public.progress_entries (goal_id, created_at_ms asc);
 
+create index if not exists todos_user_created_idx
+  on public.todos (user_id, created_at_ms desc);
+
 alter table public.app_users enable row level security;
 alter table public.goals enable row level security;
 alter table public.progress_entries enable row level security;
+alter table public.todos enable row level security;

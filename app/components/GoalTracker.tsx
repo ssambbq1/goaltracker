@@ -34,7 +34,14 @@ type GoalDraft = {
   deadline: string;
 };
 
-type TrackerView = "add" | "list" | "archive" | "trash" | "detail" | "user";
+type Todo = {
+  id: string;
+  title: string;
+  completed: boolean;
+  createdAt: number;
+};
+
+type TrackerView = "list" | "todo" | "archive" | "trash" | "detail" | "user";
 
 type Session = {
   loginId: string | null;
@@ -163,6 +170,115 @@ async function createGoal(input: typeof emptyGoalForm) {
   return (await response.json()) as { goal: Goal; goals: Goal[] };
 }
 
+async function fetchTodos() {
+  const response = await fetch("/api/todos", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load todos");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
+function getTodoStorageKey(ownerId: string) {
+  return `boostmaster.todos.${ownerId}`;
+}
+
+function readLocalTodos(ownerId: string) {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(getTodoStorageKey(ownerId)) || "[]") as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((todo): todo is Todo => {
+        if (!todo || typeof todo !== "object") return false;
+        const record = todo as Record<string, unknown>;
+        return (
+          typeof record.id === "string" &&
+          typeof record.title === "string" &&
+          typeof record.completed === "boolean" &&
+          typeof record.createdAt === "number"
+        );
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalTodos(ownerId: string, nextTodos: Todo[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getTodoStorageKey(ownerId), JSON.stringify(nextTodos));
+}
+
+function addLocalTodo(ownerId: string, title: string) {
+  const todo: Todo = {
+    id: `local-todo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title,
+    completed: false,
+    createdAt: Date.now(),
+  };
+  const todos = [todo, ...readLocalTodos(ownerId)];
+  writeLocalTodos(ownerId, todos);
+  return { todo, todos };
+}
+
+function patchLocalTodo(ownerId: string, todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {
+  const todos = readLocalTodos(ownerId).map((todo) =>
+    todo.id === todoId
+      ? {
+          ...todo,
+          title: patch.title !== undefined && patch.title.trim() ? patch.title.trim() : todo.title,
+          completed: patch.completed ?? todo.completed,
+        }
+      : todo,
+  );
+  writeLocalTodos(ownerId, todos);
+  return todos;
+}
+
+function removeLocalTodo(ownerId: string, todoId: string) {
+  const todos = readLocalTodos(ownerId).filter((todo) => todo.id !== todoId);
+  writeLocalTodos(ownerId, todos);
+  return todos;
+}
+
+async function fetchTodosOrEmpty(ownerId: string) {
+  try {
+    return await fetchTodos();
+  } catch {
+    return readLocalTodos(ownerId);
+  }
+}
+
+async function createTodo(title: string) {
+  const response = await fetch("/api/todos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  const data = (await response.json()) as { error?: string; todo?: Todo; todos?: Todo[] };
+  if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add todo");
+  return { todo: data.todo, todos: Array.isArray(data.todos) ? data.todos : [] };
+}
+
+async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {
+  const response = await fetch(`/api/todos/${todoId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to update todo");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
+async function removeTodo(todoId: string) {
+  const response = await fetch(`/api/todos/${todoId}`, { method: "DELETE" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to delete todo");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
 async function patchGoal(goalId: string, patch: GoalPatch) {
   const response = await fetch(`/api/goals/${goalId}`, {
     method: "PATCH",
@@ -258,10 +374,14 @@ export default function GoalTracker() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [deletedGoals, setDeletedGoals] = useState<Goal[]>([]);
   const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
+  const [todoTitle, setTodoTitle] = useState("");
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
   const [entryMemo, setEntryMemo] = useState("");
@@ -305,12 +425,14 @@ export default function GoalTracker() {
           fetchDeletedGoals(),
           fetchArchivedGoals(),
         ]);
+        const loadedTodos = await fetchTodosOrEmpty(session.loginId);
         const firstGoal = loadedGoals[0] ?? null;
         const firstLatestEntry = firstGoal ? getLatestEntry(firstGoal.entries) : null;
         if (!isActive) return;
         setGoals(loadedGoals);
         setDeletedGoals(loadedDeletedGoals);
         setArchivedGoals(loadedArchivedGoals);
+        setTodos(loadedTodos);
         setActiveGoalId(firstGoal?.id ?? null);
         setIsEditingGoal(false);
         setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
@@ -352,9 +474,13 @@ export default function GoalTracker() {
     setGoals([]);
     setDeletedGoals([]);
     setArchivedGoals([]);
+    setTodos([]);
     setActiveGoalId(null);
     setCurrentView("list");
     setIsEditingGoal(false);
+    setIsGoalModalOpen(false);
+    setIsTodoModalOpen(false);
+    setTodoTitle("");
     setGoalDraft(null);
     setEntryValue(0);
     setEntryMemo("");
@@ -373,13 +499,15 @@ export default function GoalTracker() {
     setEntryValue(firstLatestEntry?.value ?? 0);
   }
 
-  async function loadGoalData() {
+  async function loadGoalData(ownerId: string) {
     const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
       fetchGoals(),
       fetchDeletedGoals(),
       fetchArchivedGoals(),
     ]);
+    const loadedTodos = await fetchTodosOrEmpty(ownerId);
     applyLoadedGoals(loadedGoals, loadedDeletedGoals, loadedArchivedGoals);
+    setTodos(loadedTodos);
   }
 
   async function submitLogin() {
@@ -398,7 +526,7 @@ export default function GoalTracker() {
       setLoginId(loggedInId);
       setLoginForm(loggedInId);
       setPasswordForm("");
-      await loadGoalData();
+      await loadGoalData(loggedInId);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Failed to login");
     } finally {
@@ -422,7 +550,7 @@ export default function GoalTracker() {
       setLoginId(signedUpId);
       setLoginForm(signedUpId);
       setPasswordForm("");
-      await loadGoalData();
+      await loadGoalData(signedUpId);
     } catch (signupError) {
       setError(signupError instanceof Error ? signupError.message : "Failed to sign up");
     } finally {
@@ -497,9 +625,81 @@ export default function GoalTracker() {
       setEntryRecordedAt(toDateTimeLocalValue());
       setEditingEntryId(null);
       setGoalForm(emptyGoalForm);
+      setIsGoalModalOpen(false);
       setCurrentView("detail");
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "Failed to add goal");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function addTodoItem() {
+    const title = todoTitle.trim();
+    if (!title || !loginId) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await createTodo(title);
+      setTodos(result.todos);
+    } catch {
+      const result = addLocalTodo(loginId, title);
+      setTodos(result.todos);
+    } finally {
+      setTodoTitle("");
+      setIsTodoModalOpen(false);
+      setCurrentView("todo");
+      setIsSaving(false);
+    }
+  }
+
+  async function toggleTodoItem(todo: Todo) {
+    if (!loginId) return;
+
+    const nextCompleted = !todo.completed;
+    const nextTodos = todos.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item));
+    setTodos(nextTodos);
+
+    if (todo.id.startsWith("local-todo-")) {
+      setTodos(patchLocalTodo(loginId, todo.id, { completed: nextCompleted }));
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
+    } catch {
+      writeLocalTodos(loginId, nextTodos);
+      setTodos(nextTodos);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deleteTodoItem(todoId: string) {
+    if (!loginId) return;
+
+    const previousTodos = todos;
+    setTodos((current) => current.filter((todo) => todo.id !== todoId));
+
+    if (todoId.startsWith("local-todo-")) {
+      setTodos(removeLocalTodo(loginId, todoId));
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await removeTodo(todoId));
+    } catch {
+      const nextTodos = previousTodos.filter((todo) => todo.id !== todoId);
+      writeLocalTodos(loginId, nextTodos);
+      setTodos(nextTodos);
     } finally {
       setIsSaving(false);
     }
@@ -827,6 +1027,8 @@ export default function GoalTracker() {
             onClick={() => {
               setCurrentView("user");
               setIsEditingGoal(false);
+              setIsGoalModalOpen(false);
+              setIsTodoModalOpen(false);
             }}
             aria-label="Open user page"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border shadow-sm transition ${
@@ -845,10 +1047,10 @@ export default function GoalTracker() {
           </div>
         )}
 
-        <nav className="grid grid-cols-4 gap-1 rounded-full border border-stone-300 bg-white/90 p-1 shadow-sm">
+        <nav className="sticky top-0 z-40 grid grid-cols-4 gap-1 rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
           {[
-            { id: "add", label: "Add goal", shortLabel: "Add", count: null },
-            { id: "list", label: "Goal list", shortLabel: "List", count: goals.length },
+            { id: "list", label: "Goal list", shortLabel: "Goals", count: goals.length },
+            { id: "todo", label: "To do list", shortLabel: "To do", count: todos.length },
             { id: "archive", label: "Archive", shortLabel: "Archive", count: archivedGoals.length },
             { id: "trash", label: "휴지통", shortLabel: "Trash", count: deletedGoals.length },
           ].map((item) => (
@@ -859,6 +1061,8 @@ export default function GoalTracker() {
                 setCurrentView(item.id as TrackerView);
                 setIsEditingGoal(false);
                 setIsAccountDeleteOpen(false);
+                setIsGoalModalOpen(false);
+                setIsTodoModalOpen(false);
               }}
               className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
                 currentView === item.id
@@ -866,8 +1070,8 @@ export default function GoalTracker() {
                   : "text-stone-700 hover:bg-stone-100"
               }`}
             >
-              {item.id === "add" && <AddIcon />}
               {item.id === "list" && <ListIcon />}
+              {item.id === "todo" && <TodoIcon />}
               {item.id === "archive" && <ArchiveIcon />}
               {item.id === "trash" && <TrashIcon />}
               <span className="min-w-0 truncate sm:hidden">{item.shortLabel}</span>
@@ -991,97 +1195,6 @@ export default function GoalTracker() {
         <section className="min-w-0">
           <aside className={`min-w-0 flex-col gap-4 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div
-              className={`rounded-lg border border-stone-300 bg-white p-4 shadow-sm ${
-                currentView === "add" ? "" : "hidden"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">Add goal</h2>
-                <button
-                  type="button"
-                  aria-expanded={currentView === "add"}
-                  aria-label="Add goal form"
-                  onClick={() => setCurrentView("add")}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                >
-                  <AddIcon />
-                </button>
-              </div>
-              {currentView === "add" && (
-                <div className="mt-4 grid gap-3">
-                  <label className="grid gap-1 text-sm font-medium">
-                    Goal name
-                    <input
-                      value={goalForm.title}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
-                      onKeyDown={(event) => event.key === "Enter" && addGoal()}
-                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                      placeholder="Example: TOEIC 900"
-                    />
-                  </label>
-                  <label className="grid gap-1 text-sm font-medium">
-                    Goal memo
-                    <textarea
-                      value={goalForm.memo}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
-                      className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                      placeholder="Describe the final goal or why it matters."
-                    />
-                  </label>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,96px)]">
-                    <label className="grid min-w-0 gap-1 text-sm font-medium">
-                      Target
-                      <input
-                        type="number"
-                        min={1}
-                        value={goalForm.target}
-                        onChange={(event) =>
-                          setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))
-                        }
-                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                      />
-                    </label>
-                    <label className="grid min-w-0 gap-1 text-sm font-medium">
-                      Unit
-                      <input
-                        value={goalForm.unit}
-                        onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
-                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                      />
-                    </label>
-                  </div>
-                  <label className="grid gap-1 text-sm font-medium">
-                    Deadline
-                    <input
-                      type="date"
-                      value={goalForm.deadline}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
-                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    />
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setCurrentView("list")}
-                      disabled={isSaving}
-                      className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      Close
-                    </button>
-                    <button
-                      type="button"
-                      onClick={addGoal}
-                      disabled={isSaving}
-                      className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      Add
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div
               className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
                 currentView === "list" ? "" : "hidden"
               }`}
@@ -1092,12 +1205,15 @@ export default function GoalTracker() {
                   <span className="text-xs font-medium text-stone-500">{goals.length}</span>
                   <button
                     type="button"
-                    aria-expanded={currentView === "list"}
-                    aria-label="Goal list"
-                    onClick={() => setCurrentView("list")}
+                    aria-expanded={isGoalModalOpen}
+                    aria-label="Add goal"
+                    onClick={() => {
+                      setCurrentView("list");
+                      setIsGoalModalOpen(true);
+                    }}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                   >
-                    <ListIcon />
+                    <AddIcon />
                   </button>
                 </div>
               </div>
@@ -1145,6 +1261,77 @@ export default function GoalTracker() {
                         </div>
                       );
                     })
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div
+              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+                currentView === "todo" ? "" : "hidden"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <TodoIcon />
+                  To do list
+                </h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-stone-500">{todos.length}</span>
+                  <button
+                    type="button"
+                    aria-expanded={isTodoModalOpen}
+                    aria-label="Add todo"
+                    onClick={() => {
+                      setCurrentView("todo");
+                      setIsTodoModalOpen(true);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                  >
+                    <AddIcon />
+                  </button>
+                </div>
+              </div>
+              {currentView === "todo" && (
+                <div className="space-y-2">
+                  {todos.length === 0 ? (
+                    <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+                      No todos yet. Add a simple task to keep it on the list.
+                    </p>
+                  ) : (
+                    todos.map((todo) => (
+                      <div
+                        key={todo.id}
+                        className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white p-3 sm:gap-3"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={todo.completed}
+                          onChange={() => toggleTodoItem(todo)}
+                          disabled={isSaving}
+                          aria-label={`Toggle ${todo.title}`}
+                          className="h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
+                        />
+                        <div className="min-w-0">
+                          <div
+                            className={`break-words text-sm font-medium ${
+                              todo.completed ? "text-stone-500 line-through" : "text-stone-900"
+                            }`}
+                          >
+                            {todo.title}
+                          </div>
+                          <div className="mt-1 text-xs text-stone-500">{formatDateTime(todo.createdAt)}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteTodoItem(todo.id)}
+                          disabled={isSaving}
+                          className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))
                   )}
                 </div>
               )}
@@ -1660,6 +1847,142 @@ export default function GoalTracker() {
             )}
           </section>
         </section>
+
+        {isGoalModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+            <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold">Add goal</h2>
+                <button
+                  type="button"
+                  aria-label="Close add goal"
+                  onClick={() => setIsGoalModalOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3">
+                <label className="grid gap-1 text-sm font-medium">
+                  Goal name
+                  <input
+                    value={goalForm.title}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
+                    onKeyDown={(event) => event.key === "Enter" && addGoal()}
+                    autoFocus
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    placeholder="Example: TOEIC 900"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm font-medium">
+                  Goal memo
+                  <textarea
+                    value={goalForm.memo}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
+                    className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    placeholder="Describe the final goal or why it matters."
+                  />
+                </label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,96px)]">
+                  <label className="grid min-w-0 gap-1 text-sm font-medium">
+                    Target
+                    <input
+                      type="number"
+                      min={1}
+                      value={goalForm.target}
+                      onChange={(event) => setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))}
+                      className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    />
+                  </label>
+                  <label className="grid min-w-0 gap-1 text-sm font-medium">
+                    Unit
+                    <input
+                      value={goalForm.unit}
+                      onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
+                      className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    />
+                  </label>
+                </div>
+                <label className="grid gap-1 text-sm font-medium">
+                  Deadline
+                  <input
+                    type="date"
+                    value={goalForm.deadline}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsGoalModalOpen(false)}
+                    disabled={isSaving}
+                    className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addGoal}
+                    disabled={isSaving}
+                    className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {isTodoModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+            <section className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold">Add todo</h2>
+                <button
+                  type="button"
+                  aria-label="Close add todo"
+                  onClick={() => setIsTodoModalOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3">
+                <label className="grid gap-1 text-sm font-medium">
+                  Todo
+                  <input
+                    value={todoTitle}
+                    onChange={(event) => setTodoTitle(event.target.value)}
+                    onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                    autoFocus
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    placeholder="Write a task"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsTodoModalOpen(false)}
+                    disabled={isSaving}
+                    className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addTodoItem}
+                    disabled={isSaving || !todoTitle.trim()}
+                    className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </main>
   );
@@ -1885,6 +2208,41 @@ function ListIcon() {
       <path d="M3 6h.01" />
       <path d="M3 12h.01" />
       <path d="M3 18h.01" />
+    </svg>
+  );
+}
+
+function TodoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M9 11l2 2 4-4" />
+      <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeWidth="2"
+    >
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
     </svg>
   );
 }
