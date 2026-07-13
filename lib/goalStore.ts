@@ -37,6 +37,9 @@ export type NewEntryInput = {
 
 export type EntryPatchInput = Partial<NewEntryInput>;
 
+const TODO_GOAL_MEMO = "__boostmaster_todo__";
+const TODO_GOAL_UNIT = "__todo__";
+
 function applyGoalPatch(
   goal: Goal,
   patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline">>,
@@ -78,9 +81,11 @@ async function readStoredGoals() {
     .order("created_at_ms", { ascending: false });
 
   if (goalsError) throw goalsError;
-  if (!goalRows.length) return [];
 
-  const goalIds = goalRows.map((goal) => goal.id);
+  const visibleGoalRows = goalRows.filter((goal) => goal.memo !== TODO_GOAL_MEMO || goal.unit !== TODO_GOAL_UNIT);
+  if (!visibleGoalRows.length) return [];
+
+  const goalIds = visibleGoalRows.map((goal) => goal.id);
   const { data: entryRows, error: entriesError } = await supabase
     .from("progress_entries")
     .select("*")
@@ -101,7 +106,7 @@ async function readStoredGoals() {
     entriesByGoal.set(entry.goal_id, entries);
   }
 
-  return goalRows.map((goal) => ({
+  return visibleGoalRows.map((goal) => ({
     id: goal.id,
     title: goal.title,
     memo: goal.memo,

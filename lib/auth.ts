@@ -101,6 +101,27 @@ export async function requireLoginId() {
   return loginId;
 }
 
+export async function ensureAppUser(loginId: string) {
+  const supabase = getSupabaseServerClient();
+  const { data: user, error: userError } = await supabase
+    .from("app_users")
+    .select("login_id")
+    .eq("login_id", loginId)
+    .maybeSingle();
+
+  if (userError) throw userError;
+  if (user) return;
+
+  const now = Date.now();
+  const { error } = await supabase.from("app_users").insert({
+    login_id: loginId,
+    created_at_ms: now,
+    last_login_at_ms: now,
+  });
+
+  if (error && error.code !== "23505") throw error;
+}
+
 export function isUnauthorizedError(error: unknown) {
   return error instanceof UnauthorizedError;
 }
