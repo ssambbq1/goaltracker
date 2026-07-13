@@ -48,8 +48,12 @@ create table if not exists public.todos (
   user_id text not null references public.app_users(login_id) on delete cascade,
   title text not null,
   completed boolean not null default false,
-  created_at_ms bigint not null
+  created_at_ms bigint not null,
+  position integer not null default 0
 );
+
+alter table public.todos
+  add column if not exists position integer not null default 0;
 
 create index if not exists goals_user_active_order_idx
   on public.goals (user_id, position asc, created_at_ms desc)
@@ -68,6 +72,9 @@ create index if not exists progress_entries_goal_created_idx
 
 create index if not exists todos_user_created_idx
   on public.todos (user_id, created_at_ms desc);
+
+create index if not exists todos_user_position_idx
+  on public.todos (user_id, position asc, created_at_ms desc);
 
 alter table public.app_users enable row level security;
 alter table public.goals enable row level security;

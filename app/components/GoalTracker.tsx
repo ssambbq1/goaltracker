@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ProgressChart from "./ProgressChart";
 
 type ProgressEntry = {
@@ -45,6 +45,12 @@ type TrackerView = "list" | "todo" | "archive" | "trash" | "detail" | "user";
 
 type Session = {
   loginId: string | null;
+};
+
+type NavigationState = {
+  boostmaster: true;
+  view: TrackerView;
+  goalId: string | null;
 };
 
 const emptyGoalForm = {
@@ -138,6 +144,43 @@ function toGoalDraft(goal: Goal): GoalDraft {
   };
 }
 
+function moveByIndex<T>(items: T[], fromIndex: number, offset: -1 | 1) {
+  const toIndex = fromIndex + offset;
+  if (fromIndex < 0 || toIndex < 0 || toIndex >= items.length) return items;
+  const nextItems = [...items];
+  const [item] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, item);
+  return nextItems;
+}
+
+function makeNavigationState(view: TrackerView, goalId: string | null): NavigationState {
+  return {
+    boostmaster: true,
+    view,
+    goalId: view === "detail" ? goalId : null,
+  };
+}
+
+function isNavigationState(value: unknown): value is NavigationState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.boostmaster === true &&
+    typeof record.view === "string" &&
+    ["list", "todo", "archive", "trash", "detail", "user"].includes(record.view)
+  );
+}
+
+function navigationKey(state: NavigationState) {
+  return `${state.view}:${state.goalId ?? ""}`;
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
 async function fetchGoals() {
   const response = await fetch("/api/goals", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; goals?: Goal[] };
@@ -170,6 +213,17 @@ async function createGoal(input: typeof emptyGoalForm) {
   return (await response.json()) as { goal: Goal; goals: Goal[] };
 }
 
+async function reorderGoalList(goalIds: string[]) {
+  const response = await fetch("/api/goals", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ goalIds }),
+  });
+  const data = (await response.json()) as { error?: string; goals?: Goal[] };
+  if (!response.ok) throw new Error(data.error || "Failed to reorder goals");
+  return Array.isArray(data.goals) ? data.goals : [];
+}
+
 async function fetchTodos() {
   const response = await fetch("/api/todos", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
@@ -186,6 +240,17 @@ async function createTodo(title: string) {
   const data = (await response.json()) as { error?: string; todo?: Todo; todos?: Todo[] };
   if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add todo");
   return { todo: data.todo, todos: Array.isArray(data.todos) ? data.todos : [] };
+}
+
+async function reorderTodoList(todoIds: string[]) {
+  const response = await fetch("/api/todos", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ todoIds }),
+  });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to reorder todos");
+  return Array.isArray(data.todos) ? data.todos : [];
 }
 
 async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {
@@ -307,6 +372,10 @@ export default function GoalTracker() {
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
+  const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
+  const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
+  const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
+  const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [todoTitle, setTodoTitle] = useState("");
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
@@ -323,6 +392,28 @@ export default function GoalTracker() {
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
   const goalSaveVersions = useRef<Record<string, number>>({});
+  const highlightTimers = useRef<Record<"goal" | "todo", ReturnType<typeof setTimeout> | null>>({
+    goal: null,
+    todo: null,
+  });
+  const hasNavigationState = useRef(false);
+  const isApplyingBrowserNavigation = useRef(false);
+  const lastNavigationKey = useRef("");
+  const previousView = useRef<TrackerView>("list");
+  const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
+    if (highlightTimers.current[kind]) clearTimeout(highlightTimers.current[kind]);
+
+    if (kind === "goal") {
+      setHighlightedGoalId(itemId);
+      highlightTimers.current.goal = setTimeout(() => setHighlightedGoalId(null), 1100);
+      return;
+    }
+
+    setHighlightedTodoId(itemId);
+    highlightTimers.current.todo = setTimeout(() => setHighlightedTodoId(null), 1100);
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -390,9 +481,85 @@ export default function GoalTracker() {
 
   useEffect(() => {
     const timers = goalSaveTimers.current;
+    const highlights = highlightTimers.current;
     return () => {
       Object.values(timers).forEach((timer) => clearTimeout(timer));
+      Object.values(highlights).forEach((timer) => {
+        if (timer) clearTimeout(timer);
+      });
     };
+  }, []);
+
+  useEffect(() => {
+    function applyBrowserNavigation(event: PopStateEvent) {
+      if (!isNavigationState(event.state)) return;
+
+      const nextView = event.state.view === "detail" && !event.state.goalId ? "list" : event.state.view;
+      const nextGoal = event.state.goalId && goals.some((goal) => goal.id === event.state.goalId)
+        ? event.state.goalId
+        : goals[0]?.id ?? null;
+
+      isApplyingBrowserNavigation.current = true;
+      lastNavigationKey.current = navigationKey(event.state);
+      setCurrentView(nextView === "detail" && !nextGoal ? "list" : nextView);
+      if (nextView === "detail") setActiveGoalId(nextGoal);
+      setIsEditingGoal(false);
+      setIsGoalModalOpen(false);
+      setIsTodoModalOpen(false);
+      setIsEntryModalOpen(false);
+      setTodoToDelete(null);
+    }
+
+    window.addEventListener("popstate", applyBrowserNavigation);
+    return () => window.removeEventListener("popstate", applyBrowserNavigation);
+  }, [goals]);
+
+  useEffect(() => {
+    if (!loginId || isLoading) return;
+
+    const state = makeNavigationState(currentView, activeGoalId);
+    const key = navigationKey(state);
+
+    if (!hasNavigationState.current) {
+      window.history.replaceState(state, "", window.location.href);
+      hasNavigationState.current = true;
+      lastNavigationKey.current = key;
+      return;
+    }
+
+    if (isApplyingBrowserNavigation.current) {
+      isApplyingBrowserNavigation.current = false;
+      return;
+    }
+
+    if (lastNavigationKey.current === key) return;
+
+    window.history.pushState(state, "", window.location.href);
+    lastNavigationKey.current = key;
+  }, [activeGoalId, currentView, isLoading, loginId]);
+
+  useEffect(() => {
+    function handleNavigationKeys(event: KeyboardEvent) {
+      if (isEditableTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      const isUndo = (event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey;
+      const isRedo = (event.ctrlKey || event.metaKey) && (key === "y" || (key === "z" && event.shiftKey));
+      const isBackspaceBack = event.key === "Backspace" && !event.ctrlKey && !event.metaKey && !event.altKey;
+
+      if (isUndo || isBackspaceBack) {
+        event.preventDefault();
+        window.history.back();
+      }
+
+      if (isRedo) {
+        event.preventDefault();
+        window.history.forward();
+      }
+    }
+
+    window.addEventListener("keydown", handleNavigationKeys);
+    return () => window.removeEventListener("keydown", handleNavigationKeys);
   }, []);
 
   const activeGoal = useMemo(
@@ -405,7 +572,27 @@ export default function GoalTracker() {
   const progressPercent = activeGoal ? clampProgress(latestValue, activeGoal.target) : 0;
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
 
+  useEffect(() => {
+    const textarea = goalMemoTextareaRef.current;
+    if (!textarea || !isEditingGoal) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [activeGoalDraft?.memo, activeGoalId, isEditingGoal]);
+
+  useEffect(() => {
+    const previous = previousView.current;
+    if (currentView === "list" && previous === "detail" && activeGoalId) {
+      flashMovedItem("goal", activeGoalId);
+    }
+    previousView.current = currentView;
+  }, [activeGoalId, currentView, flashMovedItem]);
+
   function resetGoalState() {
+    hasNavigationState.current = false;
+    isApplyingBrowserNavigation.current = false;
+    lastNavigationKey.current = "";
+    previousView.current = "list";
     setGoals([]);
     setDeletedGoals([]);
     setArchivedGoals([]);
@@ -415,6 +602,10 @@ export default function GoalTracker() {
     setIsEditingGoal(false);
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
+    setIsEntryModalOpen(false);
+    setTodoToDelete(null);
+    setHighlightedGoalId(null);
+    setHighlightedTodoId(null);
     setTodoTitle("");
     setGoalDraft(null);
     setEntryValue(0);
@@ -574,6 +765,28 @@ export default function GoalTracker() {
     }
   }
 
+  async function moveGoalItem(goalId: string, offset: -1 | 1) {
+    const fromIndex = goals.findIndex((goal) => goal.id === goalId);
+    const nextGoals = moveByIndex(goals, fromIndex, offset);
+    if (nextGoals === goals) return;
+
+    const previousGoals = goals;
+    setGoals(nextGoals);
+    flashMovedItem("goal", goalId);
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setGoals(await reorderGoalList(nextGoals.map((goal) => goal.id)));
+    } catch (reorderError) {
+      setGoals(previousGoals);
+      setHighlightedGoalId(null);
+      setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder goals");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function addTodoItem() {
     const title = todoTitle.trim();
     if (!title || !loginId) return;
@@ -589,6 +802,28 @@ export default function GoalTracker() {
       setCurrentView("todo");
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "Failed to add todo");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function moveTodoItem(todoId: string, offset: -1 | 1) {
+    const fromIndex = todos.findIndex((todo) => todo.id === todoId);
+    const nextTodos = moveByIndex(todos, fromIndex, offset);
+    if (nextTodos === todos) return;
+
+    const previousTodos = todos;
+    setTodos(nextTodos);
+    flashMovedItem("todo", todoId);
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await reorderTodoList(nextTodos.map((todo) => todo.id)));
+    } catch (reorderError) {
+      setTodos(previousTodos);
+      setHighlightedTodoId(null);
+      setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder todos");
     } finally {
       setIsSaving(false);
     }
@@ -625,6 +860,7 @@ export default function GoalTracker() {
 
     try {
       setTodos(await removeTodo(todoId));
+      setTodoToDelete(null);
     } catch (deleteError) {
       setTodos(previousTodos);
       setError(deleteError instanceof Error ? deleteError.message : "Failed to delete todo");
@@ -759,6 +995,7 @@ export default function GoalTracker() {
       setEntryMemo("");
       setEntryRecordedAt(toDateTimeLocalValue());
       setEditingEntryId(null);
+      setIsEntryModalOpen(false);
     } catch (entryError) {
       setError(entryError instanceof Error ? entryError.message : "Failed to add record");
     } finally {
@@ -838,6 +1075,7 @@ export default function GoalTracker() {
       setEntryMemo("");
       setEntryRecordedAt(toDateTimeLocalValue());
       setEditingEntryId(null);
+      setIsEntryModalOpen(false);
       setCurrentView("detail");
     } catch (restoreError) {
       setError(restoreError instanceof Error ? restoreError.message : "Failed to restore goal");
@@ -863,6 +1101,7 @@ export default function GoalTracker() {
 
   function selectGoal(goal: Goal) {
     const goalLatestEntry = getLatestEntry(goal.entries);
+    flashMovedItem("goal", goal.id);
     setActiveGoalId(goal.id);
     setCurrentView("detail");
     setIsEditingGoal(false);
@@ -871,6 +1110,7 @@ export default function GoalTracker() {
     setEntryMemo("");
     setEntryRecordedAt(toDateTimeLocalValue());
     setEditingEntryId(null);
+    setIsEntryModalOpen(false);
   }
 
   function startEditingEntry(entry: ProgressEntry) {
@@ -950,23 +1190,43 @@ export default function GoalTracker() {
               Goal Tracker
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setCurrentView("user");
-              setIsEditingGoal(false);
-              setIsGoalModalOpen(false);
-              setIsTodoModalOpen(false);
-            }}
-            aria-label="Open user page"
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border shadow-sm transition ${
-              currentView === "user"
-                ? "border-emerald-700 bg-emerald-700 text-white"
-                : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-            }`}
-          >
-            <UserIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              aria-label="Go back"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
+            >
+              <ArrowLeftIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => window.history.forward()}
+              aria-label="Go forward"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
+            >
+              <ArrowRightIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentView("user");
+                setIsEditingGoal(false);
+                setIsGoalModalOpen(false);
+                setIsTodoModalOpen(false);
+                setIsEntryModalOpen(false);
+                setTodoToDelete(null);
+              }}
+              aria-label="Open user page"
+              className={`flex h-11 w-11 items-center justify-center rounded-full border shadow-sm transition ${
+                currentView === "user"
+                  ? "border-emerald-700 bg-emerald-700 text-white"
+                  : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+              }`}
+            >
+              <UserIcon />
+            </button>
+          </div>
         </header>
 
         {(error || isSaving || isLoading) && (
@@ -991,6 +1251,8 @@ export default function GoalTracker() {
                 setIsAccountDeleteOpen(false);
                 setIsGoalModalOpen(false);
                 setIsTodoModalOpen(false);
+                setIsEntryModalOpen(false);
+                setTodoToDelete(null);
               }}
               className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
                 currentView === item.id
@@ -1152,7 +1414,7 @@ export default function GoalTracker() {
                       No goals yet. Add the first goal to start tracking.
                     </p>
                   ) : (
-                    goals.map((goal) => {
+                    goals.map((goal, index) => {
                       const latest = getLatestEntry(goal.entries)?.value ?? 0;
                       const percent = Math.min(100, clampProgress(latest, goal.target));
 
@@ -1168,9 +1430,9 @@ export default function GoalTracker() {
                               selectGoal(goal);
                             }
                           }}
-                          className={`w-full cursor-pointer rounded-md border p-3 text-left transition ${
-                            activeGoalId === goal.id
-                              ? "border-emerald-700 bg-emerald-50"
+                          className={`w-full cursor-pointer rounded-md border p-3 text-left transition-all duration-500 ${
+                            highlightedGoalId === goal.id
+                              ? "border-emerald-500 bg-emerald-100 shadow-sm"
                               : "border-stone-200 bg-white hover:border-stone-400"
                           }`}
                         >
@@ -1178,7 +1440,18 @@ export default function GoalTracker() {
                             <div className="flex min-w-0 items-start gap-2">
                               <span className="min-w-0 font-medium">{goal.title}</span>
                             </div>
-                            <span className="shrink-0 text-sm text-stone-600">{percent}%</span>
+                            <div className="flex shrink-0 items-start gap-2">
+                              <span className="pt-1 text-sm text-stone-600">{percent}%</span>
+                              <ReorderControls
+                                canMoveUp={index > 0}
+                                canMoveDown={index < goals.length - 1}
+                                disabled={isSaving}
+                                upLabel={`Move ${goal.title} up`}
+                                downLabel={`Move ${goal.title} down`}
+                                onMoveUp={() => moveGoalItem(goal.id, -1)}
+                                onMoveDown={() => moveGoalItem(goal.id, 1)}
+                              />
+                            </div>
                           </div>
                           <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
                             <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
@@ -1227,10 +1500,14 @@ export default function GoalTracker() {
                       No todos yet. Add a simple task to keep it on the list.
                     </p>
                   ) : (
-                    todos.map((todo) => (
+                    todos.map((todo, index) => (
                       <div
                         key={todo.id}
-                        className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white p-3 sm:gap-3"
+                        className={`grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
+                          highlightedTodoId === todo.id
+                            ? "border-emerald-500 bg-emerald-100 shadow-sm"
+                            : "border-stone-200 bg-white"
+                        }`}
                       >
                         <input
                           type="checkbox"
@@ -1250,9 +1527,18 @@ export default function GoalTracker() {
                           </div>
                           <div className="mt-1 text-xs text-stone-500">{formatDateTime(todo.createdAt)}</div>
                         </div>
+                        <ReorderControls
+                          canMoveUp={index > 0}
+                          canMoveDown={index < todos.length - 1}
+                          disabled={isSaving}
+                          upLabel={`Move ${todo.title} up`}
+                          downLabel={`Move ${todo.title} down`}
+                          onMoveUp={() => moveTodoItem(todo.id, -1)}
+                          onMoveDown={() => moveTodoItem(todo.id, 1)}
+                        />
                         <button
                           type="button"
-                          onClick={() => deleteTodoItem(todo.id)}
+                          onClick={() => setTodoToDelete(todo)}
                           disabled={isSaving}
                           className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
                         >
@@ -1438,6 +1724,7 @@ export default function GoalTracker() {
                         onClick={() => {
                           if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
                           setIsEditingGoal(false);
+                          setIsEntryModalOpen(false);
                           setCurrentView("list");
                         }}
                         className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
@@ -1500,6 +1787,7 @@ export default function GoalTracker() {
                       <label className="grid gap-1 text-sm font-medium">
                         Memo
                         <textarea
+                          ref={goalMemoTextareaRef}
                           value={activeGoalDraft?.memo ?? ""}
                           onChange={(event) =>
                             setGoalDraft((draft) =>
@@ -1508,7 +1796,7 @@ export default function GoalTracker() {
                                 : { ...toGoalDraft(activeGoal), memo: event.target.value },
                             )
                           }
-                          className="min-h-24 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="min-h-24 resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -1566,11 +1854,23 @@ export default function GoalTracker() {
                         <div className="text-xs font-medium text-stone-500">Memo</div>
                         <p className="mt-1 whitespace-pre-wrap text-sm text-stone-800">{activeGoal.memo || "No memo"}</p>
                       </div>
-                      <div className="grid gap-3 md:grid-cols-4">
-                        <Metric label="Current" value={`${latestValue} ${activeGoal.unit}`} />
-                        <Metric label="Target" value={`${activeGoal.target}`} />
-                        <Metric label="Unit" value={activeGoal.unit} />
-                        <Metric label="Progress" value={`${progressPercent}%`} />
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md bg-stone-100 px-3 py-2 text-sm">
+                        <span>
+                          <span className="font-medium text-stone-500">Current</span>{" "}
+                          <span className="font-semibold text-stone-900">{latestValue}</span>
+                        </span>
+                        <span>
+                          <span className="font-medium text-stone-500">Target</span>{" "}
+                          <span className="font-semibold text-stone-900">{activeGoal.target}</span>
+                        </span>
+                        <span>
+                          <span className="font-medium text-stone-500">Unit</span>{" "}
+                          <span className="font-semibold text-stone-900">{activeGoal.unit}</span>
+                        </span>
+                        <span>
+                          <span className="font-medium text-stone-500">Progress</span>{" "}
+                          <span className="font-semibold text-emerald-700">{progressPercent}%</span>
+                        </span>
                       </div>
                     </div>
                   )}
@@ -1583,78 +1883,30 @@ export default function GoalTracker() {
                   </div>
                 </div>
 
-                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-                  <div className="grid min-w-0 gap-4">
-                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-                      <h2 className="text-base font-semibold">Add progress record</h2>
-                      <div className="mt-4 grid gap-3">
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Current value
-                          <input
-                            type="number"
-                            min={0}
-                            value={entryValue}
-                            onChange={(event) => setEntryValue(Number(event.target.value))}
-                            className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                          />
-                        </label>
-                        <input
-                          type="range"
-                          min={0}
-                          max={Math.max(activeGoal.target, entryValue, 1)}
-                          value={entryValue}
-                          onChange={(event) => setEntryValue(Number(event.target.value))}
-                          className="w-full accent-emerald-700"
-                        />
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Record date and time
-                          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                            <input
-                              type="datetime-local"
-                              value={entryRecordedAt}
-                              onChange={(event) => setEntryRecordedAt(event.target.value)}
-                              className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setEntryRecordedAt(toDateTimeLocalValue())}
-                              className="w-full rounded-md border border-stone-300 px-3 py-2 font-normal text-stone-700 hover:bg-stone-100 sm:w-auto"
-                            >
-                              Now
-                            </button>
-                          </div>
-                        </label>
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Memo
-                          <textarea
-                            value={entryMemo}
-                            onChange={(event) => setEntryMemo(event.target.value)}
-                            className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                            placeholder="What changed since the last record?"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={addEntry}
-                          disabled={isSaving}
-                          className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          Save record
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid min-w-0 gap-4">
+                <div className="grid min-w-0 gap-4">
                     <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
                       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <h2 className="text-base font-semibold">Progress chart</h2>
                           <p className="text-sm text-stone-600">Records are plotted by saved date and time.</p>
                         </div>
-                        <span className="text-sm font-medium text-emerald-700">
-                          Target {activeGoal.target} {activeGoal.unit}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-emerald-700">
+                            Target {activeGoal.target} {activeGoal.unit}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Add progress record"
+                            onClick={() => {
+                              setEntryRecordedAt(toDateTimeLocalValue());
+                              setIsEntryModalOpen(true);
+                            }}
+                            disabled={isSaving}
+                            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            <AddIcon />
+                          </button>
+                        </div>
                       </div>
                       <ProgressChart
                         entries={activeGoal.entries}
@@ -1737,20 +1989,22 @@ export default function GoalTracker() {
                               ) : (
                                 <div
                                   key={entry.id}
-                                  className="grid w-full gap-2 rounded-md border border-stone-200 p-3 text-left sm:grid-cols-[150px_1fr_auto] sm:items-start"
+                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-stone-200 p-3 text-left"
                                 >
-                                  <div>
+                                  <div className="min-w-0">
                                     <div className="font-semibold">
                                       {entry.value} {activeGoal.unit}
                                     </div>
                                     <div className="text-xs text-stone-500">{formatDateTime(entry.createdAt)}</div>
+                                    <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-sm text-stone-700">
+                                      {entry.memo || "No memo"}
+                                    </p>
                                   </div>
-                                  <p className="text-sm text-stone-700">{entry.memo || "No memo"}</p>
                                   <button
                                     type="button"
                                     onClick={() => startEditingEntry(entry)}
                                     disabled={isSaving}
-                                    className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                                    className="shrink-0 self-start rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
                                   >
                                     Edit
                                   </button>
@@ -1760,7 +2014,6 @@ export default function GoalTracker() {
                         )}
                       </div>
                     </div>
-                  </div>
                 </div>
               </div>
             ) : (
@@ -1775,6 +2028,89 @@ export default function GoalTracker() {
             )}
           </section>
         </section>
+
+        {isEntryModalOpen && activeGoal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+            <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold">Add progress record</h2>
+                <button
+                  type="button"
+                  aria-label="Close add progress record"
+                  onClick={() => setIsEntryModalOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3">
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
+                  Current value
+                  <input
+                    type="number"
+                    min={0}
+                    value={entryValue}
+                    onChange={(event) => setEntryValue(Number(event.target.value))}
+                    className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  />
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(activeGoal.target, entryValue, 1)}
+                  value={entryValue}
+                  onChange={(event) => setEntryValue(Number(event.target.value))}
+                  className="w-full accent-emerald-700"
+                />
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
+                  Record date and time
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      type="datetime-local"
+                      value={entryRecordedAt}
+                      onChange={(event) => setEntryRecordedAt(event.target.value)}
+                      className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEntryRecordedAt(toDateTimeLocalValue())}
+                      className="w-full rounded-md border border-stone-300 px-3 py-2 font-normal text-stone-700 hover:bg-stone-100 sm:w-auto"
+                    >
+                      Now
+                    </button>
+                  </div>
+                </label>
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
+                  Memo
+                  <textarea
+                    value={entryMemo}
+                    onChange={(event) => setEntryMemo(event.target.value)}
+                    className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    placeholder="What changed since the last record?"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEntryModalOpen(false)}
+                    disabled={isSaving}
+                    className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addEntry}
+                    disabled={isSaving}
+                    className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
 
         {isGoalModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
@@ -1911,17 +2247,47 @@ export default function GoalTracker() {
             </section>
           </div>
         )}
+
+        {todoToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+            <section className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold">Delete todo?</h2>
+                <button
+                  type="button"
+                  aria-label="Close delete todo"
+                  onClick={() => setTodoToDelete(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="mt-4 rounded-md bg-stone-100 p-3 text-sm text-stone-800">
+                {todoToDelete.title}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTodoToDelete(null)}
+                  disabled={isSaving}
+                  className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteTodoItem(todoToDelete.id)}
+                  disabled={isSaving}
+                  className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Delete
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </main>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md bg-stone-100 p-3">
-      <div className="text-xs font-medium text-stone-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
-    </div>
   );
 }
 
@@ -2102,6 +2468,53 @@ function LoginScreen({
   );
 }
 
+function ReorderControls({
+  canMoveUp,
+  canMoveDown,
+  disabled,
+  upLabel,
+  downLabel,
+  onMoveUp,
+  onMoveDown,
+}: {
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  disabled: boolean;
+  upLabel: string;
+  downLabel: string;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <button
+        type="button"
+        aria-label={upLabel}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMoveUp();
+        }}
+        disabled={disabled || !canMoveUp}
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <ArrowUpIcon />
+      </button>
+      <button
+        type="button"
+        aria-label={downLabel}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMoveDown();
+        }}
+        disabled={disabled || !canMoveDown}
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <ArrowDownIcon />
+      </button>
+    </div>
+  );
+}
+
 function AddIcon() {
   return (
     <svg
@@ -2115,6 +2528,74 @@ function AddIcon() {
     >
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  );
+}
+
+function ArrowDownIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m9 18 6-6-6-6" />
     </svg>
   );
 }

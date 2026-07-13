@@ -88,6 +88,7 @@ export type Database = {
           title: string;
           completed: boolean;
           created_at_ms: number;
+          position: number;
         };
         Insert: {
           id: string;
@@ -95,6 +96,7 @@ export type Database = {
           title: string;
           completed?: boolean;
           created_at_ms: number;
+          position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["todos"]["Insert"]>;
         Relationships: [

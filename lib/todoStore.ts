@@ -30,6 +30,7 @@ async function readTodosFromGoalRows(loginId: string) {
     .eq("memo", TODO_GOAL_MEMO)
     .eq("unit", TODO_GOAL_UNIT)
     .is("deleted_at_ms", null)
+    .order("position", { ascending: true })
     .order("created_at_ms", { ascending: false });
 
   if (error) throw error;
@@ -106,6 +107,7 @@ export async function readTodos() {
     .from("todos")
     .select("*")
     .eq("user_id", loginId)
+    .order("position", { ascending: true })
     .order("created_at_ms", { ascending: false });
 
   if (error) {
@@ -131,6 +133,7 @@ export async function addTodo(title: string) {
     completed: false,
     createdAt: Date.now(),
   };
+  const active = await readTodos();
 
   const { error } = await supabase.from("todos").insert({
     id: todo.id,
@@ -138,6 +141,7 @@ export async function addTodo(title: string) {
     title: todo.title,
     completed: todo.completed,
     created_at_ms: todo.createdAt,
+    position: active.length ? -1 : 0,
   });
 
   if (error) {
@@ -148,6 +152,44 @@ export async function addTodo(title: string) {
     throw error;
   }
   return { todo, todos: await readTodos() };
+}
+
+export async function reorderTodos(todoIds: string[]) {
+  const loginId = await requireLoginId();
+  const supabase = getSupabaseServerClient();
+  const active = await readTodos();
+  const knownActiveIds = new Set(active.map((todo) => todo.id));
+  const orderedIds = [
+    ...todoIds.filter((todoId) => knownActiveIds.has(todoId)),
+    ...active.map((todo) => todo.id).filter((todoId) => !todoIds.includes(todoId)),
+  ];
+
+  const updates = orderedIds.map((todoId, index) =>
+    supabase.from("todos").update({ position: index }).eq("id", todoId).eq("user_id", loginId),
+  );
+  const results = await Promise.all(updates);
+  const missingTodosTableError = results.find((result) => result.error && isMissingTodosTableError(result.error));
+
+  if (missingTodosTableError) {
+    await Promise.all(
+      orderedIds.map((todoId, index) =>
+        supabase
+          .from("goals")
+          .update({ position: index })
+          .eq("id", todoId)
+          .eq("user_id", loginId)
+          .eq("memo", TODO_GOAL_MEMO)
+          .eq("unit", TODO_GOAL_UNIT)
+          .throwOnError(),
+      ),
+    );
+    return readTodosFromGoalRows(loginId);
+  }
+
+  const updateError = results.find((result) => result.error)?.error;
+  if (updateError) throw updateError;
+
+  return readTodos();
 }
 
 export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {

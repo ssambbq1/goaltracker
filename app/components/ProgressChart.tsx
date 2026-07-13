@@ -1,5 +1,7 @@
 ﻿"use client";
 
+import { useState } from "react";
+
 type ProgressEntry = {
   id: string;
   createdAt: number;
@@ -36,6 +38,8 @@ export default function ProgressChart({
   unit: string;
   deadline: string;
 }) {
+  const [todayTs] = useState(() => Date.now());
+
   if (entries.length === 0) {
     return (
       <div className="flex h-72 items-center justify-center rounded-md bg-stone-100 px-4 text-center text-sm text-stone-600">
@@ -46,14 +50,14 @@ export default function ProgressChart({
 
   const sorted = entries.slice().sort((a, b) => a.createdAt - b.createdAt);
   const width = 720;
-  const height = 280;
-  const padding = { top: 18, right: 22, bottom: 36, left: 52 };
+  const height = 300;
+  const padding = { top: 18, right: 22, bottom: 54, left: 52 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const minTs = sorted[0].createdAt;
   const latestRecordTs = sorted[sorted.length - 1].createdAt;
+  const minTs = Math.min(sorted[0].createdAt, todayTs);
   const deadlineTs = parseDeadlineEnd(deadline);
-  const maxTs = Math.max(latestRecordTs, deadlineTs ?? latestRecordTs);
+  const maxTs = Math.max(latestRecordTs, deadlineTs ?? latestRecordTs, todayTs);
   const maxValue = Math.max(target, ...sorted.map((entry) => entry.value), 1);
   const yMax = Math.ceil(maxValue * 1.1);
 
@@ -73,6 +77,8 @@ export default function ProgressChart({
     sorted[0].createdAt,
   )} ${padding.top + plotHeight} Z`;
   const goalY = yFor(target);
+  const todayX = xFor(todayTs);
+  const latestRecordX = xFor(latestRecordTs);
   const ticks = [0, target / 2, target];
 
   return (
@@ -120,6 +126,19 @@ export default function ProgressChart({
           Target {target} {unit}
         </text>
 
+        <line
+          x1={todayX}
+          x2={todayX}
+          y1={padding.top}
+          y2={padding.top + plotHeight}
+          stroke="#0f766e"
+          strokeDasharray="4 5"
+          strokeWidth="2"
+        />
+        <text x={todayX + 6} y={padding.top + 14} textAnchor="start" className="fill-teal-700 text-xs">
+          Today
+        </text>
+
         <path d={areaPath} fill="url(#progress-fill)" />
         <path d={linePath} fill="none" stroke="#047857" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
 
@@ -137,6 +156,9 @@ export default function ProgressChart({
         </text>
         <text x={padding.left + plotWidth} y={height - 8} textAnchor="end" className="fill-stone-500 text-xs">
           {formatShortDate(maxTs)}
+        </text>
+        <text x={latestRecordX} y={height - 26} textAnchor="middle" className="fill-emerald-700 text-xs">
+          {formatShortDate(latestRecordTs)}
         </text>
       </svg>
     </div>
