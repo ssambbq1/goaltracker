@@ -374,6 +374,8 @@ export default function GoalTracker() {
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
+  const [editingTodoTitle, setEditingTodoTitle] = useState("");
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
@@ -508,6 +510,8 @@ export default function GoalTracker() {
       setIsTodoModalOpen(false);
       setIsEntryModalOpen(false);
       setTodoToDelete(null);
+      setEditingTodoId(null);
+      setEditingTodoTitle("");
     }
 
     window.addEventListener("popstate", applyBrowserNavigation);
@@ -604,6 +608,8 @@ export default function GoalTracker() {
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
     setTodoToDelete(null);
+    setEditingTodoId(null);
+    setEditingTodoTitle("");
     setHighlightedGoalId(null);
     setHighlightedTodoId(null);
     setTodoTitle("");
@@ -802,6 +808,47 @@ export default function GoalTracker() {
       setCurrentView("todo");
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "Failed to add todo");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function startEditingTodo(todo: Todo) {
+    setEditingTodoId(todo.id);
+    setEditingTodoTitle(todo.title);
+    setTodoToDelete(null);
+  }
+
+  function cancelEditingTodo() {
+    setEditingTodoId(null);
+    setEditingTodoTitle("");
+  }
+
+  async function saveTodoTitle(todo: Todo) {
+    if (!loginId) return;
+
+    const title = editingTodoTitle.trim();
+    if (!title) {
+      setError("Todo title is required");
+      return;
+    }
+
+    if (title === todo.title) {
+      cancelEditingTodo();
+      return;
+    }
+
+    const previousTodos = todos;
+    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, title } : item)));
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await patchTodo(todo.id, { title }));
+      cancelEditingTodo();
+    } catch (updateError) {
+      setTodos(previousTodos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update todo");
     } finally {
       setIsSaving(false);
     }
@@ -1216,6 +1263,8 @@ export default function GoalTracker() {
                 setIsTodoModalOpen(false);
                 setIsEntryModalOpen(false);
                 setTodoToDelete(null);
+                setEditingTodoId(null);
+                setEditingTodoTitle("");
               }}
               aria-label="Open user page"
               className={`flex h-11 w-11 items-center justify-center rounded-full border shadow-sm transition ${
@@ -1230,8 +1279,18 @@ export default function GoalTracker() {
         </header>
 
         {(error || isSaving || isLoading) && (
-          <div className="rounded-md border border-stone-300 bg-white px-4 py-3 text-sm shadow-sm">
-            {isLoading ? "Loading local DB..." : isSaving ? "Saving to local DB..." : error}
+          <div className="pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4">
+            <div
+              role={error ? "alert" : "status"}
+              aria-live="polite"
+              className={`max-w-[calc(100vw-2rem)] rounded-full border px-4 py-2 text-sm shadow-lg backdrop-blur-md ${
+                error
+                  ? "border-red-200 bg-red-50/85 text-red-800"
+                  : "border-stone-300 bg-white/70 text-stone-700"
+              }`}
+            >
+              {isLoading ? "Loading local DB..." : isSaving ? "Saving to local DB..." : error}
+            </div>
           </div>
         )}
 
@@ -1253,6 +1312,8 @@ export default function GoalTracker() {
                 setIsTodoModalOpen(false);
                 setIsEntryModalOpen(false);
                 setTodoToDelete(null);
+                setEditingTodoId(null);
+                setEditingTodoTitle("");
               }}
               className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
                 currentView === item.id
@@ -1500,7 +1561,10 @@ export default function GoalTracker() {
                       No todos yet. Add a simple task to keep it on the list.
                     </p>
                   ) : (
-                    todos.map((todo, index) => (
+                    todos.map((todo, index) => {
+                      const isEditingTodo = editingTodoId === todo.id;
+
+                      return (
                       <div
                         key={todo.id}
                         className={`grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
@@ -1513,39 +1577,83 @@ export default function GoalTracker() {
                           type="checkbox"
                           checked={todo.completed}
                           onChange={() => toggleTodoItem(todo)}
-                          disabled={isSaving}
+                          disabled={isSaving || isEditingTodo}
                           aria-label={`Toggle ${todo.title}`}
                           className="h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
                         />
                         <div className="min-w-0">
-                          <div
-                            className={`break-words text-sm font-medium ${
-                              todo.completed ? "text-stone-500 line-through" : "text-stone-900"
-                            }`}
-                          >
-                            {todo.title}
-                          </div>
+                          {isEditingTodo ? (
+                            <input
+                              value={editingTodoTitle}
+                              onChange={(event) => setEditingTodoTitle(event.target.value)}
+                              autoFocus
+                              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
+                              aria-label={`Edit ${todo.title}`}
+                            />
+                          ) : (
+                            <div
+                              className={`break-words text-sm font-medium ${
+                                todo.completed ? "text-stone-500 line-through" : "text-stone-900"
+                              }`}
+                            >
+                              {todo.title}
+                            </div>
+                          )}
                           <div className="mt-1 text-xs text-stone-500">{formatDateTime(todo.createdAt)}</div>
                         </div>
                         <ReorderControls
                           canMoveUp={index > 0}
                           canMoveDown={index < todos.length - 1}
-                          disabled={isSaving}
+                          disabled={isSaving || editingTodoId !== null}
                           upLabel={`Move ${todo.title} up`}
                           downLabel={`Move ${todo.title} down`}
                           onMoveUp={() => moveTodoItem(todo.id, -1)}
                           onMoveDown={() => moveTodoItem(todo.id, 1)}
                         />
-                        <button
-                          type="button"
-                          onClick={() => setTodoToDelete(todo)}
-                          disabled={isSaving}
-                          className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                          {isEditingTodo ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => saveTodoTitle(todo)}
+                                disabled={isSaving || !editingTodoTitle.trim()}
+                                className="rounded-md bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelEditingTodo}
+                                disabled={isSaving}
+                                className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => startEditingTodo(todo)}
+                                disabled={isSaving || editingTodoId !== null}
+                                className="rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setTodoToDelete(todo)}
+                                disabled={isSaving || editingTodoId !== null}
+                                className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
@@ -1704,9 +1812,6 @@ export default function GoalTracker() {
                                 : { ...toGoalDraft(activeGoal), title: event.target.value },
                             )
                           }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") finishEditingGoal();
-                          }}
                           className="w-full rounded-md border border-stone-300 px-2 py-1 text-2xl font-semibold outline-none focus:border-emerald-600"
                         />
                       ) : (
