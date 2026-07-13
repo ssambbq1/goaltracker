@@ -177,79 +177,6 @@ async function fetchTodos() {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-function getTodoStorageKey(ownerId: string) {
-  return `boostmaster.todos.${ownerId}`;
-}
-
-function readLocalTodos(ownerId: string) {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(getTodoStorageKey(ownerId)) || "[]") as unknown;
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .filter((todo): todo is Todo => {
-        if (!todo || typeof todo !== "object") return false;
-        const record = todo as Record<string, unknown>;
-        return (
-          typeof record.id === "string" &&
-          typeof record.title === "string" &&
-          typeof record.completed === "boolean" &&
-          typeof record.createdAt === "number"
-        );
-      })
-      .sort((a, b) => b.createdAt - a.createdAt);
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalTodos(ownerId: string, nextTodos: Todo[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(getTodoStorageKey(ownerId), JSON.stringify(nextTodos));
-}
-
-function addLocalTodo(ownerId: string, title: string) {
-  const todo: Todo = {
-    id: `local-todo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    title,
-    completed: false,
-    createdAt: Date.now(),
-  };
-  const todos = [todo, ...readLocalTodos(ownerId)];
-  writeLocalTodos(ownerId, todos);
-  return { todo, todos };
-}
-
-function patchLocalTodo(ownerId: string, todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {
-  const todos = readLocalTodos(ownerId).map((todo) =>
-    todo.id === todoId
-      ? {
-          ...todo,
-          title: patch.title !== undefined && patch.title.trim() ? patch.title.trim() : todo.title,
-          completed: patch.completed ?? todo.completed,
-        }
-      : todo,
-  );
-  writeLocalTodos(ownerId, todos);
-  return todos;
-}
-
-function removeLocalTodo(ownerId: string, todoId: string) {
-  const todos = readLocalTodos(ownerId).filter((todo) => todo.id !== todoId);
-  writeLocalTodos(ownerId, todos);
-  return todos;
-}
-
-async function fetchTodosOrEmpty(ownerId: string) {
-  try {
-    return await fetchTodos();
-  } catch {
-    return readLocalTodos(ownerId);
-  }
-}
-
 async function createTodo(title: string) {
   const response = await fetch("/api/todos", {
     method: "POST",
@@ -425,18 +352,26 @@ export default function GoalTracker() {
           fetchDeletedGoals(),
           fetchArchivedGoals(),
         ]);
-        const loadedTodos = await fetchTodosOrEmpty(session.loginId);
         const firstGoal = loadedGoals[0] ?? null;
         const firstLatestEntry = firstGoal ? getLatestEntry(firstGoal.entries) : null;
         if (!isActive) return;
         setGoals(loadedGoals);
         setDeletedGoals(loadedDeletedGoals);
         setArchivedGoals(loadedArchivedGoals);
-        setTodos(loadedTodos);
         setActiveGoalId(firstGoal?.id ?? null);
         setIsEditingGoal(false);
         setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
         setEntryValue(firstLatestEntry?.value ?? 0);
+
+        try {
+          const loadedTodos = await fetchTodos();
+          if (!isActive) return;
+          setTodos(loadedTodos);
+        } catch (todoError) {
+          if (!isActive) return;
+          setTodos([]);
+          setError(todoError instanceof Error ? todoError.message : "Failed to load todos");
+        }
       } catch (loadError) {
         if (!isActive) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load data");
@@ -499,15 +434,20 @@ export default function GoalTracker() {
     setEntryValue(firstLatestEntry?.value ?? 0);
   }
 
-  async function loadGoalData(ownerId: string) {
+  async function loadGoalData() {
     const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
       fetchGoals(),
       fetchDeletedGoals(),
       fetchArchivedGoals(),
     ]);
-    const loadedTodos = await fetchTodosOrEmpty(ownerId);
     applyLoadedGoals(loadedGoals, loadedDeletedGoals, loadedArchivedGoals);
-    setTodos(loadedTodos);
+
+    try {
+      setTodos(await fetchTodos());
+    } catch (todoError) {
+      setTodos([]);
+      setError(todoError instanceof Error ? todoError.message : "Failed to load todos");
+    }
   }
 
   async function submitLogin() {
@@ -526,7 +466,7 @@ export default function GoalTracker() {
       setLoginId(loggedInId);
       setLoginForm(loggedInId);
       setPasswordForm("");
-      await loadGoalData(loggedInId);
+      await loadGoalData();
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Failed to login");
     } finally {
@@ -550,7 +490,7 @@ export default function GoalTracker() {
       setLoginId(signedUpId);
       setLoginForm(signedUpId);
       setPasswordForm("");
-      await loadGoalData(signedUpId);
+      await loadGoalData();
     } catch (signupError) {
       setError(signupError instanceof Error ? signupError.message : "Failed to sign up");
     } finally {
@@ -644,13 +584,12 @@ export default function GoalTracker() {
     try {
       const result = await createTodo(title);
       setTodos(result.todos);
-    } catch {
-      const result = addLocalTodo(loginId, title);
-      setTodos(result.todos);
-    } finally {
       setTodoTitle("");
       setIsTodoModalOpen(false);
       setCurrentView("todo");
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "Failed to add todo");
+    } finally {
       setIsSaving(false);
     }
   }
@@ -662,19 +601,14 @@ export default function GoalTracker() {
     const nextTodos = todos.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item));
     setTodos(nextTodos);
 
-    if (todo.id.startsWith("local-todo-")) {
-      setTodos(patchLocalTodo(loginId, todo.id, { completed: nextCompleted }));
-      return;
-    }
-
     setIsSaving(true);
     setError("");
 
     try {
       setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
-    } catch {
-      writeLocalTodos(loginId, nextTodos);
-      setTodos(nextTodos);
+    } catch (updateError) {
+      setTodos(todos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update todo");
     } finally {
       setIsSaving(false);
     }
@@ -686,20 +620,14 @@ export default function GoalTracker() {
     const previousTodos = todos;
     setTodos((current) => current.filter((todo) => todo.id !== todoId));
 
-    if (todoId.startsWith("local-todo-")) {
-      setTodos(removeLocalTodo(loginId, todoId));
-      return;
-    }
-
     setIsSaving(true);
     setError("");
 
     try {
       setTodos(await removeTodo(todoId));
-    } catch {
-      const nextTodos = previousTodos.filter((todo) => todo.id !== todoId);
-      writeLocalTodos(loginId, nextTodos);
-      setTodos(nextTodos);
+    } catch (deleteError) {
+      setTodos(previousTodos);
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete todo");
     } finally {
       setIsSaving(false);
     }
