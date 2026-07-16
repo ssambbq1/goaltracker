@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ProgressChart from "./ProgressChart";
 
 type ProgressEntry = {
@@ -144,9 +144,8 @@ function toGoalDraft(goal: Goal): GoalDraft {
   };
 }
 
-function moveByIndex<T>(items: T[], fromIndex: number, offset: -1 | 1) {
-  const toIndex = fromIndex + offset;
-  if (fromIndex < 0 || toIndex < 0 || toIndex >= items.length) return items;
+function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex < 0 || toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) return items;
   const nextItems = [...items];
   const [item] = nextItems.splice(fromIndex, 1);
   nextItems.splice(toIndex, 0, item);
@@ -370,6 +369,7 @@ export default function GoalTracker() {
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
@@ -378,6 +378,10 @@ export default function GoalTracker() {
   const [editingTodoTitle, setEditingTodoTitle] = useState("");
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
+  const [draggingGoalId, setDraggingGoalId] = useState<string | null>(null);
+  const [draggingTodoId, setDraggingTodoId] = useState<string | null>(null);
+  const [goalDropTargetId, setGoalDropTargetId] = useState<string | null>(null);
+  const [todoDropTargetId, setTodoDropTargetId] = useState<string | null>(null);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [todoTitle, setTodoTitle] = useState("");
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
@@ -403,6 +407,12 @@ export default function GoalTracker() {
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
   const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const suppressGoalClickAfterDrag = useRef(false);
+  const goalsBeforeDrag = useRef<Goal[] | null>(null);
+  const todosBeforeDrag = useRef<Todo[] | null>(null);
+  const latestDraggedGoals = useRef<Goal[] | null>(null);
+  const latestDraggedTodos = useRef<Todo[] | null>(null);
+  const dragImageClone = useRef<HTMLElement | null>(null);
 
   const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
     if (highlightTimers.current[kind]) clearTimeout(highlightTimers.current[kind]);
@@ -771,19 +781,15 @@ export default function GoalTracker() {
     }
   }
 
-  async function moveGoalItem(goalId: string, offset: -1 | 1) {
-    const fromIndex = goals.findIndex((goal) => goal.id === goalId);
-    const nextGoals = moveByIndex(goals, fromIndex, offset);
-    if (nextGoals === goals) return;
+  async function saveGoalOrder(nextGoals: Goal[], previousGoals: Goal[], movedGoalId: string) {
+    if (nextGoals.map((goal) => goal.id).join("|") === previousGoals.map((goal) => goal.id).join("|")) return;
 
-    const previousGoals = goals;
-    setGoals(nextGoals);
-    flashMovedItem("goal", goalId);
     setIsSaving(true);
     setError("");
 
     try {
       setGoals(await reorderGoalList(nextGoals.map((goal) => goal.id)));
+      flashMovedItem("goal", movedGoalId);
     } catch (reorderError) {
       setGoals(previousGoals);
       setHighlightedGoalId(null);
@@ -791,6 +797,108 @@ export default function GoalTracker() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function makeFloatingDragCard(event: ReactPointerEvent) {
+    const card = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-reorder-card]");
+    if (!card) return;
+
+    const rect = card.getBoundingClientRect();
+    const clone = card.cloneNode(true) as HTMLElement;
+    clone.style.position = "fixed";
+    clone.style.top = `${rect.top}px`;
+    clone.style.left = `${rect.left}px`;
+    clone.style.width = `${rect.width}px`;
+    clone.style.opacity = "1";
+    clone.style.background = "white";
+    clone.style.boxShadow = "0 18px 40px rgba(15, 23, 42, 0.22)";
+    clone.style.pointerEvents = "none";
+    clone.style.zIndex = "9999";
+    clone.style.transform = "scale(1.01)";
+    clone.style.transition = "none";
+    document.body.appendChild(clone);
+    dragImageClone.current = clone;
+
+    return {
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+  }
+
+  function removeDragImageClone() {
+    dragImageClone.current?.remove();
+    dragImageClone.current = null;
+  }
+
+  function moveFloatingDragCard(clientX: number, clientY: number, offsetX: number, offsetY: number) {
+    if (!dragImageClone.current) return;
+    dragImageClone.current.style.left = `${clientX - offsetX}px`;
+    dragImageClone.current.style.top = `${clientY - offsetY}px`;
+  }
+
+  function startGoalDrag(event: ReactPointerEvent, goalId: string) {
+    if (isSaving) {
+      event.preventDefault();
+      return;
+    }
+
+    const dragOffset = makeFloatingDragCard(event);
+    if (!dragOffset) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    goalsBeforeDrag.current = goals;
+    latestDraggedGoals.current = goals;
+    setDraggingGoalId(goalId);
+    setGoalDropTargetId(goalId);
+    suppressGoalClickAfterDrag.current = true;
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      pointerEvent.preventDefault();
+      moveFloatingDragCard(pointerEvent.clientX, pointerEvent.clientY, dragOffset.offsetX, dragOffset.offsetY);
+
+      const targetCard = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>('[data-reorder-kind="goal"]');
+      const targetGoalId = targetCard?.dataset.reorderId;
+      if (!targetGoalId || targetGoalId === goalId) return;
+
+      setGoalDropTargetId(targetGoalId);
+      setGoals((currentGoals) => {
+        const fromIndex = currentGoals.findIndex((goal) => goal.id === goalId);
+        const toIndex = currentGoals.findIndex((goal) => goal.id === targetGoalId);
+        const nextGoals = moveToIndex(currentGoals, fromIndex, toIndex);
+        latestDraggedGoals.current = nextGoals;
+        return nextGoals;
+      });
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+
+      const previousGoals = goalsBeforeDrag.current;
+      const nextGoals = latestDraggedGoals.current;
+
+      setDraggingGoalId(null);
+      setGoalDropTargetId(null);
+      removeDragImageClone();
+      goalsBeforeDrag.current = null;
+      latestDraggedGoals.current = null;
+
+      if (previousGoals && nextGoals) {
+        void saveGoalOrder(nextGoals, previousGoals, goalId);
+      }
+
+      window.setTimeout(() => {
+        suppressGoalClickAfterDrag.current = false;
+      }, 0);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
   }
 
   async function addTodoItem() {
@@ -854,19 +962,15 @@ export default function GoalTracker() {
     }
   }
 
-  async function moveTodoItem(todoId: string, offset: -1 | 1) {
-    const fromIndex = todos.findIndex((todo) => todo.id === todoId);
-    const nextTodos = moveByIndex(todos, fromIndex, offset);
-    if (nextTodos === todos) return;
+  async function saveTodoOrder(nextTodos: Todo[], previousTodos: Todo[], movedTodoId: string) {
+    if (nextTodos.map((todo) => todo.id).join("|") === previousTodos.map((todo) => todo.id).join("|")) return;
 
-    const previousTodos = todos;
-    setTodos(nextTodos);
-    flashMovedItem("todo", todoId);
     setIsSaving(true);
     setError("");
 
     try {
       setTodos(await reorderTodoList(nextTodos.map((todo) => todo.id)));
+      flashMovedItem("todo", movedTodoId);
     } catch (reorderError) {
       setTodos(previousTodos);
       setHighlightedTodoId(null);
@@ -874,6 +978,66 @@ export default function GoalTracker() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function startTodoDrag(event: ReactPointerEvent, todoId: string) {
+    if (isSaving || editingTodoId !== null) {
+      event.preventDefault();
+      return;
+    }
+
+    const dragOffset = makeFloatingDragCard(event);
+    if (!dragOffset) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    todosBeforeDrag.current = todos;
+    latestDraggedTodos.current = todos;
+    setDraggingTodoId(todoId);
+    setTodoDropTargetId(todoId);
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      pointerEvent.preventDefault();
+      moveFloatingDragCard(pointerEvent.clientX, pointerEvent.clientY, dragOffset.offsetX, dragOffset.offsetY);
+
+      const targetCard = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>('[data-reorder-kind="todo"]');
+      const targetTodoId = targetCard?.dataset.reorderId;
+      if (!targetTodoId || targetTodoId === todoId) return;
+
+      setTodoDropTargetId(targetTodoId);
+      setTodos((currentTodos) => {
+        const fromIndex = currentTodos.findIndex((todo) => todo.id === todoId);
+        const toIndex = currentTodos.findIndex((todo) => todo.id === targetTodoId);
+        const nextTodos = moveToIndex(currentTodos, fromIndex, toIndex);
+        latestDraggedTodos.current = nextTodos;
+        return nextTodos;
+      });
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+
+      const previousTodos = todosBeforeDrag.current;
+      const nextTodos = latestDraggedTodos.current;
+
+      setDraggingTodoId(null);
+      setTodoDropTargetId(null);
+      removeDragImageClone();
+      todosBeforeDrag.current = null;
+      latestDraggedTodos.current = null;
+
+      if (previousTodos && nextTodos) {
+        void saveTodoOrder(nextTodos, previousTodos, todoId);
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
   }
 
   async function toggleTodoItem(todo: Todo) {
@@ -1234,7 +1398,7 @@ export default function GoalTracker() {
           <div className="min-w-0">
             <p className="text-sm font-medium text-emerald-700">Master plan for everything</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Goal Tracker
+              GOAL TRACKER
             </h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -1257,8 +1421,25 @@ export default function GoalTracker() {
             <button
               type="button"
               onClick={() => {
+                setIsManualModalOpen(true);
+                setIsGoalModalOpen(false);
+                setIsTodoModalOpen(false);
+                setIsEntryModalOpen(false);
+                setTodoToDelete(null);
+                setEditingTodoId(null);
+                setEditingTodoTitle("");
+              }}
+              aria-label="Open manual"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
+            >
+              <BookIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 setCurrentView("user");
                 setIsEditingGoal(false);
+                setIsManualModalOpen(false);
                 setIsGoalModalOpen(false);
                 setIsTodoModalOpen(false);
                 setIsEntryModalOpen(false);
@@ -1289,7 +1470,7 @@ export default function GoalTracker() {
                   : "border-stone-300 bg-white/70 text-stone-700"
               }`}
             >
-              {isLoading ? "Loading local DB..." : isSaving ? "Saving to local DB..." : error}
+              {isLoading ? "Loading local DB..." : isSaving ? "Saving to DB..." : error}
             </div>
           </div>
         )}
@@ -1308,6 +1489,7 @@ export default function GoalTracker() {
                 setCurrentView(item.id as TrackerView);
                 setIsEditingGoal(false);
                 setIsAccountDeleteOpen(false);
+                setIsManualModalOpen(false);
                 setIsGoalModalOpen(false);
                 setIsTodoModalOpen(false);
                 setIsEntryModalOpen(false);
@@ -1475,16 +1657,22 @@ export default function GoalTracker() {
                       No goals yet. Add the first goal to start tracking.
                     </p>
                   ) : (
-                    goals.map((goal, index) => {
+                    goals.map((goal) => {
                       const latest = getLatestEntry(goal.entries)?.value ?? 0;
                       const percent = Math.min(100, clampProgress(latest, goal.target));
 
                       return (
                         <div
                           key={goal.id}
+                          data-reorder-card
+                          data-reorder-kind="goal"
+                          data-reorder-id={goal.id}
                           role="button"
                           tabIndex={0}
-                          onClick={() => selectGoal(goal)}
+                          onClick={() => {
+                            if (suppressGoalClickAfterDrag.current) return;
+                            selectGoal(goal);
+                          }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -1494,6 +1682,10 @@ export default function GoalTracker() {
                           className={`w-full cursor-pointer rounded-md border p-3 text-left transition-all duration-500 ${
                             highlightedGoalId === goal.id
                               ? "border-emerald-500 bg-emerald-100 shadow-sm"
+                              : goalDropTargetId === goal.id && draggingGoalId !== goal.id
+                                ? "border-emerald-500 bg-white shadow-sm"
+                                : draggingGoalId === goal.id
+                                  ? "border-stone-400 bg-white opacity-90 shadow-sm"
                               : "border-stone-200 bg-white hover:border-stone-400"
                           }`}
                         >
@@ -1503,14 +1695,10 @@ export default function GoalTracker() {
                             </div>
                             <div className="flex shrink-0 items-start gap-2">
                               <span className="pt-1 text-sm text-stone-600">{percent}%</span>
-                              <ReorderControls
-                                canMoveUp={index > 0}
-                                canMoveDown={index < goals.length - 1}
+                              <ReorderHandle
                                 disabled={isSaving}
-                                upLabel={`Move ${goal.title} up`}
-                                downLabel={`Move ${goal.title} down`}
-                                onMoveUp={() => moveGoalItem(goal.id, -1)}
-                                onMoveDown={() => moveGoalItem(goal.id, 1)}
+                                label={`Drag ${goal.title} to reorder`}
+                                onPointerDown={(event) => startGoalDrag(event, goal.id)}
                               />
                             </div>
                           </div>
@@ -1561,15 +1749,22 @@ export default function GoalTracker() {
                       No todos yet. Add a simple task to keep it on the list.
                     </p>
                   ) : (
-                    todos.map((todo, index) => {
+                    todos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
 
                       return (
                       <div
                         key={todo.id}
+                        data-reorder-card
+                        data-reorder-kind="todo"
+                        data-reorder-id={todo.id}
                         className={`grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
                           highlightedTodoId === todo.id
                             ? "border-emerald-500 bg-emerald-100 shadow-sm"
+                            : todoDropTargetId === todo.id && draggingTodoId !== todo.id
+                              ? "border-emerald-500 bg-white shadow-sm"
+                              : draggingTodoId === todo.id
+                                ? "border-stone-400 bg-white opacity-90 shadow-sm"
                             : "border-stone-200 bg-white"
                         }`}
                       >
@@ -1601,14 +1796,10 @@ export default function GoalTracker() {
                           )}
                           <div className="mt-1 text-xs text-stone-500">{formatDateTime(todo.createdAt)}</div>
                         </div>
-                        <ReorderControls
-                          canMoveUp={index > 0}
-                          canMoveDown={index < todos.length - 1}
+                        <ReorderHandle
                           disabled={isSaving || editingTodoId !== null}
-                          upLabel={`Move ${todo.title} up`}
-                          downLabel={`Move ${todo.title} down`}
-                          onMoveUp={() => moveTodoItem(todo.id, -1)}
-                          onMoveDown={() => moveTodoItem(todo.id, 1)}
+                          label={`Drag ${todo.title} to reorder`}
+                          onPointerDown={(event) => startTodoDrag(event, todo.id)}
                         />
                         <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
                           {isEditingTodo ? (
@@ -2217,6 +2408,56 @@ export default function GoalTracker() {
           </div>
         )}
 
+        {isManualModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+            <section className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <BookIcon />
+                  Manual
+                </h2>
+                <button
+                  type="button"
+                  aria-label="Close manual"
+                  onClick={() => setIsManualModalOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
+                <section className="rounded-md bg-stone-100 p-3">
+                  <h3 className="font-semibold text-stone-950">Goal list</h3>
+                  <p className="mt-1">목표를 추가하고, 목표 카드를 눌러 상세 화면에서 진행 기록을 관리합니다.</p>
+                </section>
+                <section className="rounded-md bg-stone-100 p-3">
+                  <h3 className="font-semibold text-stone-950">Progress record</h3>
+                  <p className="mt-1">상세 화면에서 현재 값, 기록 시각, 메모를 저장하면 달성률과 기록 그래프가 갱신됩니다.</p>
+                </section>
+                <section className="rounded-md bg-stone-100 p-3">
+                  <h3 className="font-semibold text-stone-950">To do list</h3>
+                  <p className="mt-1">간단한 할 일을 추가하고 체크박스로 완료 상태를 바꿀 수 있습니다.</p>
+                </section>
+                <section className="rounded-md bg-stone-100 p-3">
+                  <h3 className="font-semibold text-stone-950">Reorder</h3>
+                  <p className="mt-1">항목 오른쪽의 위아래 화살표 핸들을 누른 채 드래그하면 목표와 할 일의 순서를 바꿀 수 있습니다.</p>
+                </section>
+                <section className="rounded-md bg-stone-100 p-3">
+                  <h3 className="font-semibold text-stone-950">Archive and trash</h3>
+                  <p className="mt-1">완료했거나 잠시 숨길 목표는 보관함으로 보내고, 삭제한 목표는 휴지통에서 복원하거나 완전히 삭제할 수 있습니다.</p>
+                </section>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsManualModalOpen(false)}
+                className="mt-4 w-full rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+              >
+                Close
+              </button>
+            </section>
+          </div>
+        )}
+
         {isGoalModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
             <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -2472,6 +2713,26 @@ function UserIcon() {
   );
 }
 
+function BookIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
+      <path d="M8 6h8" />
+      <path d="M8 10h6" />
+    </svg>
+  );
+}
+
 function LoginScreen({
   loginId,
   password,
@@ -2573,49 +2834,33 @@ function LoginScreen({
   );
 }
 
-function ReorderControls({
-  canMoveUp,
-  canMoveDown,
+function ReorderHandle({
   disabled,
-  upLabel,
-  downLabel,
-  onMoveUp,
-  onMoveDown,
+  label,
+  onPointerDown,
 }: {
-  canMoveUp: boolean;
-  canMoveDown: boolean;
   disabled: boolean;
-  upLabel: string;
-  downLabel: string;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
+  label: string;
+  onPointerDown: (event: ReactPointerEvent) => void;
 }) {
   return (
-    <div className="grid gap-1">
-      <button
-        type="button"
-        aria-label={upLabel}
-        onClick={(event) => {
-          event.stopPropagation();
-          onMoveUp();
-        }}
-        disabled={disabled || !canMoveUp}
-        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35"
-      >
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
+      aria-label={label}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onPointerDown={disabled ? undefined : onPointerDown}
+      className={`grid h-12 w-8 touch-none cursor-grab select-none place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 active:cursor-grabbing ${
+        disabled ? "cursor-not-allowed opacity-35" : ""
+      }`}
+      title="Drag to reorder"
+    >
+      <span className="grid gap-0.5">
         <ArrowUpIcon />
-      </button>
-      <button
-        type="button"
-        aria-label={downLabel}
-        onClick={(event) => {
-          event.stopPropagation();
-          onMoveDown();
-        }}
-        disabled={disabled || !canMoveDown}
-        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35"
-      >
         <ArrowDownIcon />
-      </button>
+      </span>
     </div>
   );
 }
