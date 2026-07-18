@@ -55,6 +55,27 @@ create table if not exists public.todos (
 alter table public.todos
   add column if not exists position integer not null default 0;
 
+create table if not exists public.routines (
+  id text primary key,
+  user_id text not null references public.app_users(login_id) on delete cascade,
+  title text not null,
+  memo text not null default '',
+  start_date date not null,
+  end_date date not null,
+  created_at_ms bigint not null,
+  position integer not null default 0,
+  check (start_date <= end_date)
+);
+
+create table if not exists public.routine_marks (
+  id text primary key,
+  routine_id text not null references public.routines(id) on delete cascade,
+  date date not null,
+  status text not null check (status in ('success', 'failure')),
+  created_at_ms bigint not null,
+  unique (routine_id, date)
+);
+
 create index if not exists goals_user_active_order_idx
   on public.goals (user_id, position asc, created_at_ms desc)
   where deleted_at_ms is null and archived_at_ms is null;
@@ -76,7 +97,15 @@ create index if not exists todos_user_created_idx
 create index if not exists todos_user_position_idx
   on public.todos (user_id, position asc, created_at_ms desc);
 
+create index if not exists routines_user_position_idx
+  on public.routines (user_id, position asc, created_at_ms desc);
+
+create index if not exists routine_marks_routine_date_idx
+  on public.routine_marks (routine_id, date asc);
+
 alter table public.app_users enable row level security;
 alter table public.goals enable row level security;
 alter table public.progress_entries enable row level security;
 alter table public.todos enable row level security;
+alter table public.routines enable row level security;
+alter table public.routine_marks enable row level security;

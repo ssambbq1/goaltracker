@@ -39,6 +39,7 @@ export type EntryPatchInput = Partial<NewEntryInput>;
 
 const TODO_GOAL_MEMO = "__boostmaster_todo__";
 const TODO_GOAL_UNIT = "__todo__";
+const ROUTINE_GOAL_UNIT = "__routine__";
 
 function applyGoalPatch(
   goal: Goal,
@@ -82,7 +83,9 @@ async function readStoredGoals() {
 
   if (goalsError) throw goalsError;
 
-  const visibleGoalRows = goalRows.filter((goal) => goal.memo !== TODO_GOAL_MEMO || goal.unit !== TODO_GOAL_UNIT);
+  const visibleGoalRows = goalRows.filter(
+    (goal) => (goal.memo !== TODO_GOAL_MEMO || goal.unit !== TODO_GOAL_UNIT) && goal.unit !== ROUTINE_GOAL_UNIT,
+  );
   if (!visibleGoalRows.length) return [];
 
   const goalIds = visibleGoalRows.map((goal) => goal.id);

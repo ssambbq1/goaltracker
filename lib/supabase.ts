@@ -109,6 +109,64 @@ export type Database = {
           },
         ];
       };
+      routines: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          memo: string;
+          start_date: string;
+          end_date: string;
+          created_at_ms: number;
+          position: number;
+        };
+        Insert: {
+          id: string;
+          user_id: string;
+          title: string;
+          memo?: string;
+          start_date: string;
+          end_date: string;
+          created_at_ms: number;
+          position?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["routines"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "routines_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "app_users";
+            referencedColumns: ["login_id"];
+          },
+        ];
+      };
+      routine_marks: {
+        Row: {
+          id: string;
+          routine_id: string;
+          date: string;
+          status: "success" | "failure";
+          created_at_ms: number;
+        };
+        Insert: {
+          id: string;
+          routine_id: string;
+          date: string;
+          status: "success" | "failure";
+          created_at_ms: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["routine_marks"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "routine_marks_routine_id_fkey";
+            columns: ["routine_id"];
+            isOneToOne: false;
+            referencedRelation: "routines";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

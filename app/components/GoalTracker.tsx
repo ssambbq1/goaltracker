@@ -1,7 +1,16 @@
 ﻿"use client";
 
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ProgressChart from "./ProgressChart";
+import RoutineTracker from "./RoutineTracker";
 
 type ProgressEntry = {
   id: string;
@@ -39,9 +48,22 @@ type Todo = {
   title: string;
   completed: boolean;
   createdAt: number;
+  deletedAt?: number;
+  archivedAt?: number;
 };
 
-type TrackerView = "list" | "todo" | "archive" | "trash" | "detail" | "user";
+type RoutineSummary = {
+  id: string;
+  title: string;
+  memo: string;
+  startDate: string;
+  endDate: string;
+  createdAt: number;
+  deletedAt?: number;
+  archivedAt?: number;
+};
+
+type TrackerView = "list" | "todo" | "routine" | "archive" | "trash" | "detail" | "user";
 
 type Session = {
   loginId: string | null;
@@ -166,7 +188,7 @@ function isNavigationState(value: unknown): value is NavigationState {
   return (
     record.boostmaster === true &&
     typeof record.view === "string" &&
-    ["list", "todo", "archive", "trash", "detail", "user"].includes(record.view)
+    ["list", "todo", "routine", "archive", "trash", "detail", "user"].includes(record.view)
   );
 }
 
@@ -199,6 +221,34 @@ async function fetchArchivedGoals() {
   const data = (await response.json()) as { error?: string; goals?: Goal[] };
   if (!response.ok) throw new Error(data.error || "Failed to load archive");
   return Array.isArray(data.goals) ? data.goals : [];
+}
+
+async function fetchArchivedTodos() {
+  const response = await fetch("/api/todos/archive", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load archived todos");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
+async function fetchDeletedTodos() {
+  const response = await fetch("/api/todos/trash", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load deleted todos");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
+async function fetchArchivedRoutines() {
+  const response = await fetch("/api/routines/archive", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; routines?: RoutineSummary[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load archived routines");
+  return Array.isArray(data.routines) ? data.routines : [];
+}
+
+async function fetchDeletedRoutines() {
+  const response = await fetch("/api/routines/trash", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; routines?: RoutineSummary[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load deleted routines");
+  return Array.isArray(data.routines) ? data.routines : [];
 }
 
 async function createGoal(input: typeof emptyGoalForm) {
@@ -270,6 +320,27 @@ async function removeTodo(todoId: string) {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
+async function archiveExistingTodo(todoId: string) {
+  const response = await fetch(`/api/todos/${todoId}/archive`, { method: "PATCH" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to archive todo");
+  return Array.isArray(data.todos) ? data.todos : [];
+}
+
+async function restoreStoredTodo(todoId: string) {
+  const response = await fetch(`/api/todos/${todoId}/restore`, { method: "PATCH" });
+  const data = (await response.json()) as { error?: string; todos?: Todo[]; archivedTodos?: Todo[]; deletedTodos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to restore todo");
+  return data;
+}
+
+async function permanentlyRemoveTodo(todoId: string) {
+  const response = await fetch(`/api/todos/${todoId}/permanent`, { method: "DELETE" });
+  const data = (await response.json()) as { error?: string; deletedTodos?: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to permanently delete todo");
+  return data;
+}
+
 async function patchGoal(goalId: string, patch: GoalPatch) {
   const response = await fetch(`/api/goals/${goalId}`, {
     method: "PATCH",
@@ -323,6 +394,25 @@ async function permanentlyRemoveGoal(goalId: string) {
   };
 }
 
+async function restoreStoredRoutine(routineId: string) {
+  const response = await fetch(`/api/routines/${routineId}/restore`, { method: "PATCH" });
+  const data = (await response.json()) as {
+    error?: string;
+    routines?: RoutineSummary[];
+    archivedRoutines?: RoutineSummary[];
+    deletedRoutines?: RoutineSummary[];
+  };
+  if (!response.ok) throw new Error(data.error || "Failed to restore routine");
+  return data;
+}
+
+async function permanentlyRemoveRoutine(routineId: string) {
+  const response = await fetch(`/api/routines/${routineId}/permanent`, { method: "DELETE" });
+  const data = (await response.json()) as { error?: string; deletedRoutines?: RoutineSummary[] };
+  if (!response.ok) throw new Error(data.error || "Failed to permanently delete routine");
+  return data;
+}
+
 async function createEntry(goalId: string, input: Pick<ProgressEntry, "value" | "memo" | "createdAt">) {
   const response = await fetch(`/api/goals/${goalId}/entries`, {
     method: "POST",
@@ -366,6 +456,11 @@ export default function GoalTracker() {
   const [deletedGoals, setDeletedGoals] = useState<Goal[]>([]);
   const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [deletedTodos, setDeletedTodos] = useState<Todo[]>([]);
+  const [archivedTodos, setArchivedTodos] = useState<Todo[]>([]);
+  const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
+  const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
+  const [routineListResetKey, setRoutineListResetKey] = useState(0);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
@@ -450,10 +545,22 @@ export default function GoalTracker() {
 
         setLoginId(session.loginId);
         setLoginForm(session.loginId);
-        const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
+        const [
+          loadedGoals,
+          loadedDeletedGoals,
+          loadedArchivedGoals,
+          loadedDeletedTodos,
+          loadedArchivedTodos,
+          loadedDeletedRoutines,
+          loadedArchivedRoutines,
+        ] = await Promise.all([
           fetchGoals(),
           fetchDeletedGoals(),
           fetchArchivedGoals(),
+          fetchDeletedTodos(),
+          fetchArchivedTodos(),
+          fetchDeletedRoutines(),
+          fetchArchivedRoutines(),
         ]);
         const firstGoal = loadedGoals[0] ?? null;
         const firstLatestEntry = firstGoal ? getLatestEntry(firstGoal.entries) : null;
@@ -461,6 +568,10 @@ export default function GoalTracker() {
         setGoals(loadedGoals);
         setDeletedGoals(loadedDeletedGoals);
         setArchivedGoals(loadedArchivedGoals);
+        setDeletedTodos(loadedDeletedTodos);
+        setArchivedTodos(loadedArchivedTodos);
+        setDeletedRoutines(loadedDeletedRoutines);
+        setArchivedRoutines(loadedArchivedRoutines);
         setActiveGoalId(firstGoal?.id ?? null);
         setIsEditingGoal(false);
         setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
@@ -585,6 +696,8 @@ export default function GoalTracker() {
   const latestValue = latestEntry?.value ?? 0;
   const progressPercent = activeGoal ? clampProgress(latestValue, activeGoal.target) : 0;
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
+  const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
+  const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
 
   useEffect(() => {
     const textarea = goalMemoTextareaRef.current;
@@ -611,6 +724,10 @@ export default function GoalTracker() {
     setDeletedGoals([]);
     setArchivedGoals([]);
     setTodos([]);
+    setDeletedTodos([]);
+    setArchivedTodos([]);
+    setDeletedRoutines([]);
+    setArchivedRoutines([]);
     setActiveGoalId(null);
     setCurrentView("list");
     setIsEditingGoal(false);
@@ -642,12 +759,28 @@ export default function GoalTracker() {
   }
 
   async function loadGoalData() {
-    const [loadedGoals, loadedDeletedGoals, loadedArchivedGoals] = await Promise.all([
+    const [
+      loadedGoals,
+      loadedDeletedGoals,
+      loadedArchivedGoals,
+      loadedDeletedTodos,
+      loadedArchivedTodos,
+      loadedDeletedRoutines,
+      loadedArchivedRoutines,
+    ] = await Promise.all([
       fetchGoals(),
       fetchDeletedGoals(),
       fetchArchivedGoals(),
+      fetchDeletedTodos(),
+      fetchArchivedTodos(),
+      fetchDeletedRoutines(),
+      fetchArchivedRoutines(),
     ]);
     applyLoadedGoals(loadedGoals, loadedDeletedGoals, loadedArchivedGoals);
+    setDeletedTodos(loadedDeletedTodos);
+    setArchivedTodos(loadedArchivedTodos);
+    setDeletedRoutines(loadedDeletedRoutines);
+    setArchivedRoutines(loadedArchivedRoutines);
 
     try {
       setTodos(await fetchTodos());
@@ -796,6 +929,34 @@ export default function GoalTracker() {
       setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder goals");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function refreshArchiveTrashData() {
+    try {
+      const [
+        loadedDeletedGoals,
+        loadedArchivedGoals,
+        loadedDeletedTodos,
+        loadedArchivedTodos,
+        loadedDeletedRoutines,
+        loadedArchivedRoutines,
+      ] = await Promise.all([
+        fetchDeletedGoals(),
+        fetchArchivedGoals(),
+        fetchDeletedTodos(),
+        fetchArchivedTodos(),
+        fetchDeletedRoutines(),
+        fetchArchivedRoutines(),
+      ]);
+      setDeletedGoals(loadedDeletedGoals);
+      setArchivedGoals(loadedArchivedGoals);
+      setDeletedTodos(loadedDeletedTodos);
+      setArchivedTodos(loadedArchivedTodos);
+      setDeletedRoutines(loadedDeletedRoutines);
+      setArchivedRoutines(loadedArchivedRoutines);
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : "Failed to load archive and trash");
     }
   }
 
@@ -1071,10 +1232,31 @@ export default function GoalTracker() {
 
     try {
       setTodos(await removeTodo(todoId));
+      setDeletedTodos(await fetchDeletedTodos());
       setTodoToDelete(null);
     } catch (deleteError) {
       setTodos(previousTodos);
       setError(deleteError instanceof Error ? deleteError.message : "Failed to delete todo");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function archiveTodoItem(todoId: string) {
+    if (!loginId) return;
+
+    const previousTodos = todos;
+    setTodos((current) => current.filter((todo) => todo.id !== todoId));
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await archiveExistingTodo(todoId));
+      setArchivedTodos(await fetchArchivedTodos());
+    } catch (archiveError) {
+      setTodos(previousTodos);
+      setError(archiveError instanceof Error ? archiveError.message : "Failed to archive todo");
     } finally {
       setIsSaving(false);
     }
@@ -1310,6 +1492,66 @@ export default function GoalTracker() {
     }
   }
 
+  async function restoreTodo(todoId: string) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await restoreStoredTodo(todoId);
+      setTodos(Array.isArray(result.todos) ? result.todos : []);
+      setArchivedTodos(Array.isArray(result.archivedTodos) ? result.archivedTodos : []);
+      setDeletedTodos(Array.isArray(result.deletedTodos) ? result.deletedTodos : []);
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore todo");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function permanentlyDeleteTodo(todoId: string) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await permanentlyRemoveTodo(todoId);
+      setDeletedTodos(Array.isArray(result.deletedTodos) ? result.deletedTodos : []);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete todo");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function restoreRoutine(routineId: string) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await restoreStoredRoutine(routineId);
+      setArchivedRoutines(Array.isArray(result.archivedRoutines) ? result.archivedRoutines : []);
+      setDeletedRoutines(Array.isArray(result.deletedRoutines) ? result.deletedRoutines : []);
+      setRoutineListResetKey((key) => key + 1);
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore routine");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function permanentlyDeleteRoutine(routineId: string) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await permanentlyRemoveRoutine(routineId);
+      setDeletedRoutines(Array.isArray(result.deletedRoutines) ? result.deletedRoutines : []);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete routine");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function selectGoal(goal: Goal) {
     const goalLatestEntry = getLatestEntry(goal.entries);
     flashMovedItem("goal", goal.id);
@@ -1475,12 +1717,13 @@ export default function GoalTracker() {
           </div>
         )}
 
-        <nav className="sticky top-0 z-40 grid grid-cols-4 gap-1 rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
+        <nav className="sticky top-0 z-40 grid grid-cols-5 gap-1 rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
           {[
-            { id: "list", label: "Goal list", shortLabel: "Goals", count: goals.length },
-            { id: "todo", label: "To do list", shortLabel: "To do", count: todos.length },
-            { id: "archive", label: "Archive", shortLabel: "Archive", count: archivedGoals.length },
-            { id: "trash", label: "휴지통", shortLabel: "Trash", count: deletedGoals.length },
+            { id: "list", label: "Goal list", shortLabel: "Goals", count:  null },
+            { id: "todo", label: "To do list", shortLabel: "To do", count:  null},
+            { id: "routine", label: "Routine list", shortLabel: "Routine", count: null },
+            { id: "archive", label: "Archive", shortLabel: "Archive", count:  null },
+            { id: "trash", label: "휴지통", shortLabel: "Trash", count:  null },
           ].map((item) => (
             <button
               key={item.id}
@@ -1496,6 +1739,8 @@ export default function GoalTracker() {
                 setTodoToDelete(null);
                 setEditingTodoId(null);
                 setEditingTodoTitle("");
+                if (item.id === "routine") setRoutineListResetKey((key) => key + 1);
+                if (item.id === "archive" || item.id === "trash") void refreshArchiveTrashData();
               }}
               className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
                 currentView === item.id
@@ -1505,6 +1750,7 @@ export default function GoalTracker() {
             >
               {item.id === "list" && <ListIcon />}
               {item.id === "todo" && <TodoIcon />}
+              {item.id === "routine" && <RoutineIcon />}
               {item.id === "archive" && <ArchiveIcon />}
               {item.id === "trash" && <TrashIcon />}
               <span className="min-w-0 truncate sm:hidden">{item.shortLabel}</span>
@@ -1541,11 +1787,11 @@ export default function GoalTracker() {
                   </div>
                   <div className="rounded-md bg-stone-100 p-3">
                     <dt className="text-xs font-medium text-stone-500">Archived</dt>
-                    <dd className="mt-1 font-semibold">{archivedGoals.length}</dd>
+                    <dd className="mt-1 font-semibold">{archivedItemCount}</dd>
                   </div>
                   <div className="rounded-md bg-stone-100 p-3">
                     <dt className="text-xs font-medium text-stone-500">Trash</dt>
-                    <dd className="mt-1 font-semibold">{deletedGoals.length}</dd>
+                    <dd className="mt-1 font-semibold">{deletedItemCount}</dd>
                   </div>
                 </dl>
               </div>
@@ -1833,6 +2079,14 @@ export default function GoalTracker() {
                               </button>
                               <button
                                 type="button"
+                                onClick={() => archiveTodoItem(todo.id)}
+                                disabled={isSaving || editingTodoId !== null}
+                                className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                              >
+                                Archive
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => setTodoToDelete(todo)}
                                 disabled={isSaving || editingTodoId !== null}
                                 className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
@@ -1850,6 +2104,15 @@ export default function GoalTracker() {
               )}
             </div>
 
+            <div className={currentView === "routine" ? "" : "hidden"}>
+              <RoutineTracker
+                key={routineListResetKey}
+                isSaving={isSaving}
+                onSavingChange={setIsSaving}
+                onError={setError}
+              />
+            </div>
+
             <div
               className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
                 currentView === "archive" ? "" : "hidden"
@@ -1861,7 +2124,7 @@ export default function GoalTracker() {
                   Archive
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{archivedGoals.length}</span>
+                  <span className="text-xs font-medium text-stone-500">{archivedItemCount}</span>
                   <button
                     type="button"
                     aria-expanded={currentView === "archive"}
@@ -1874,45 +2137,55 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "archive" && (
-              <div className="max-h-64 space-y-2 overflow-auto">
-                {archivedGoals.length === 0 ? (
+              <div className="max-h-[32rem] space-y-4 overflow-auto">
+                {archivedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                    Archived goals will appear here.
+                    Archived items will appear here.
                   </p>
                 ) : (
-                  archivedGoals.map((goal) => {
-                    const latest = getLatestEntry(goal.entries)?.value ?? 0;
-
-                    return (
-                      <div key={goal.id} className="rounded-md border border-stone-200 p-3">
-                        <div className="font-medium">{goal.title}</div>
-                        <div className="mt-1 text-xs text-stone-600">
-                          Archived: {goal.archivedAt ? formatDateTime(goal.archivedAt) : "unknown"}
-                        </div>
-                        <div className="mt-1 text-xs text-stone-600">
-                          Last progress: {latest} / {goal.target} {goal.unit}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => restoreGoal(goal.id)}
-                            disabled={isSaving}
-                            className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Restore
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteGoal(goal.id)}
-                            disabled={isSaving}
-                            className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Move to trash
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
+                  <>
+                    <ArchiveGroup title="Goal list" count={archivedGoals.length}>
+                      {archivedGoals.map((goal) => {
+                        const latest = getLatestEntry(goal.entries)?.value ?? 0;
+                        return (
+                          <StoredItemCard
+                            key={goal.id}
+                            title={goal.title}
+                            meta={`Archived: ${goal.archivedAt ? formatDateTime(goal.archivedAt) : "unknown"}`}
+                            detail={`Last progress: ${latest} / ${goal.target} ${goal.unit}`}
+                            isSaving={isSaving}
+                            onRestore={() => restoreGoal(goal.id)}
+                            onDelete={() => deleteGoal(goal.id)}
+                            deleteLabel="Move to trash"
+                          />
+                        );
+                      })}
+                    </ArchiveGroup>
+                    <ArchiveGroup title="To do list" count={archivedTodos.length}>
+                      {archivedTodos.map((todo) => (
+                        <StoredItemCard
+                          key={todo.id}
+                          title={todo.title}
+                          meta={`Archived: ${todo.archivedAt ? formatDateTime(todo.archivedAt) : "unknown"}`}
+                          detail={todo.completed ? "Completed" : "Not completed"}
+                          isSaving={isSaving}
+                          onRestore={() => restoreTodo(todo.id)}
+                        />
+                      ))}
+                    </ArchiveGroup>
+                    <ArchiveGroup title="Routine list" count={archivedRoutines.length}>
+                      {archivedRoutines.map((routine) => (
+                        <StoredItemCard
+                          key={routine.id}
+                          title={routine.title}
+                          meta={`Archived: ${routine.archivedAt ? formatDateTime(routine.archivedAt) : "unknown"}`}
+                          detail={`${routine.startDate} - ${routine.endDate}`}
+                          isSaving={isSaving}
+                          onRestore={() => restoreRoutine(routine.id)}
+                        />
+                      ))}
+                    </ArchiveGroup>
+                  </>
                 )}
               </div>
               )}
@@ -1929,7 +2202,7 @@ export default function GoalTracker() {
                   Trash
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{deletedGoals.length}</span>
+                  <span className="text-xs font-medium text-stone-500">{deletedItemCount}</span>
                   <button
                     type="button"
                     aria-expanded={currentView === "trash"}
@@ -1942,45 +2215,59 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "trash" && (
-              <div className="max-h-64 space-y-2 overflow-auto">
-                {deletedGoals.length === 0 ? (
+              <div className="max-h-[32rem] space-y-4 overflow-auto">
+                {deletedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                    Deleted goals will appear here.
+                    Deleted items will appear here.
                   </p>
                 ) : (
-                  deletedGoals.map((goal) => {
-                    const latest = getLatestEntry(goal.entries)?.value ?? 0;
-
-                    return (
-                      <div key={goal.id} className="rounded-md border border-stone-200 p-3">
-                        <div className="font-medium">{goal.title}</div>
-                        <div className="mt-1 text-xs text-stone-600">
-                          Deleted: {goal.deletedAt ? formatDateTime(goal.deletedAt) : "unknown"}
-                        </div>
-                        <div className="mt-1 text-xs text-stone-600">
-                          Last progress: {latest} / {goal.target} {goal.unit}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => restoreGoal(goal.id)}
-                            disabled={isSaving}
-                            className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Restore
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => permanentlyDeleteGoal(goal.id)}
-                            disabled={isSaving}
-                            className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Delete forever
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
+                  <>
+                    <ArchiveGroup title="Goal list" count={deletedGoals.length}>
+                      {deletedGoals.map((goal) => {
+                        const latest = getLatestEntry(goal.entries)?.value ?? 0;
+                        return (
+                          <StoredItemCard
+                            key={goal.id}
+                            title={goal.title}
+                            meta={`Deleted: ${goal.deletedAt ? formatDateTime(goal.deletedAt) : "unknown"}`}
+                            detail={`Last progress: ${latest} / ${goal.target} ${goal.unit}`}
+                            isSaving={isSaving}
+                            onRestore={() => restoreGoal(goal.id)}
+                            onDelete={() => permanentlyDeleteGoal(goal.id)}
+                            deleteLabel="Delete forever"
+                          />
+                        );
+                      })}
+                    </ArchiveGroup>
+                    <ArchiveGroup title="To do list" count={deletedTodos.length}>
+                      {deletedTodos.map((todo) => (
+                        <StoredItemCard
+                          key={todo.id}
+                          title={todo.title}
+                          meta={`Deleted: ${todo.deletedAt ? formatDateTime(todo.deletedAt) : "unknown"}`}
+                          detail={todo.completed ? "Completed" : "Not completed"}
+                          isSaving={isSaving}
+                          onRestore={() => restoreTodo(todo.id)}
+                          onDelete={() => permanentlyDeleteTodo(todo.id)}
+                          deleteLabel="Delete forever"
+                        />
+                      ))}
+                    </ArchiveGroup>
+                    <ArchiveGroup title="Routine list" count={deletedRoutines.length}>
+                      {deletedRoutines.map((routine) => (
+                        <StoredItemCard
+                          key={routine.id}
+                          title={routine.title}
+                          meta={`Deleted: ${routine.deletedAt ? formatDateTime(routine.deletedAt) : "unknown"}`}
+                          detail={`${routine.startDate} - ${routine.endDate}`}
+                          isSaving={isSaving}
+                          onRestore={() => restoreRoutine(routine.id)}
+                          onDelete={() => permanentlyDeleteRoutine(routine.id)}
+                          deleteLabel="Delete forever"
+                        />
+                      ))}
+                    </ArchiveGroup>
+                  </>
                 )}
               </div>
               )}
@@ -2637,6 +2924,68 @@ export default function GoalTracker() {
   );
 }
 
+function ArchiveGroup({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+  return (
+    <section className="rounded-md border border-stone-200 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-stone-900">{title}</h3>
+        <span className="text-xs font-medium text-stone-500">{count}</span>
+      </div>
+      {count === 0 ? (
+        <p className="rounded-md bg-stone-100 px-3 py-3 text-sm text-stone-600">No items.</p>
+      ) : (
+        <div className="space-y-2">{children}</div>
+      )}
+    </section>
+  );
+}
+
+function StoredItemCard({
+  title,
+  meta,
+  detail,
+  isSaving,
+  onRestore,
+  onDelete,
+  deleteLabel,
+}: {
+  title: string;
+  meta: string;
+  detail: string;
+  isSaving: boolean;
+  onRestore: () => void;
+  onDelete?: () => void;
+  deleteLabel?: string;
+}) {
+  return (
+    <div className="rounded-md border border-stone-200 p-3">
+      <div className="font-medium">{title}</div>
+      <div className="mt-1 text-xs text-stone-600">{meta}</div>
+      <div className="mt-1 text-xs text-stone-600">{detail}</div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onRestore}
+          disabled={isSaving}
+          className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          Restore
+        </button>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isSaving}
+            className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+          >
+            {deleteLabel ?? "Delete"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LoadingScreen() {
   return (
     <main
@@ -2985,6 +3334,24 @@ function TodoIcon() {
     >
       <path d="M9 11l2 2 4-4" />
       <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+    </svg>
+  );
+}
+
+function RoutineIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07" />
     </svg>
   );
 }
