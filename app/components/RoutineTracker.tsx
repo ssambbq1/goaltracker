@@ -107,9 +107,10 @@ function getRoutineStats(routine: Routine) {
   const statusByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
   const success = dates.filter((date) => statusByDate.get(date) === "success").length;
   const failure = dates.filter((date) => statusByDate.get(date) === "failure").length;
-  const missed = dates.length - success - failure;
-  const rate = dates.length ? Math.round((success / dates.length) * 100) : 0;
-  return { total: dates.length, success, failure, missed, rate };
+  const total = success + failure;
+  const missed = dates.length - total;
+  const rate = total ? Math.round((success / total) * 100) : 0;
+  return { total, success, failure, missed, rate };
 }
 
 async function fetchRoutines() {
@@ -534,7 +535,7 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
         <section className="grid gap-4">
           {routines.length === 0 ? (
             <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+              <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">Routine list</h2>
                 <button
                   type="button"
@@ -542,9 +543,9 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
                   aria-label="Add routine"
                   onClick={() => setIsRoutineModalOpen(true)}
                   disabled={schemaMissing}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <AddIcon />
+                  추가+
                 </button>
               </div>
               <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -553,9 +554,9 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
             </section>
           ) : (
             <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+              <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">Routine list</h2>
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{routines.length}</span>
                   <button
                     type="button"
@@ -563,9 +564,9 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
                     aria-label="Add routine"
                     onClick={() => setIsRoutineModalOpen(true)}
                     disabled={schemaMissing}
-                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <AddIcon />
+                    추가+
                   </button>
                 </div>
               </div>
@@ -970,8 +971,9 @@ function RoutineSuccessGraph({ routine }: { routine: Routine }) {
   const stats = getRoutineStats(routine);
   const dates = getDateRange(routine.startDate, routine.endDate).filter((date) => date <= todayIso);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
-  const points = dates.map((date, index) => {
-    const success = dates.slice(0, index + 1).filter((item) => markByDate.get(item) === "success").length;
+  const scoredDates = dates.filter((date) => markByDate.get(date) === "success" || markByDate.get(date) === "failure");
+  const points = scoredDates.map((date, index) => {
+    const success = scoredDates.slice(0, index + 1).filter((item) => markByDate.get(item) === "success").length;
     return Math.round((success / (index + 1)) * 100);
   });
 
@@ -984,7 +986,7 @@ function RoutineSuccessGraph({ routine }: { routine: Routine }) {
         </div>
         <div className="text-right text-xs text-stone-600">
           <div>{stats.success} / {stats.total}</div>
-          <div>{stats.total ? `${formatShortDate(dates[0])} - ${formatShortDate(dates.at(-1) ?? dates[0])}` : "No days"}</div>
+          <div>{scoredDates.length ? `${formatShortDate(scoredDates[0])} - ${formatShortDate(scoredDates.at(-1) ?? scoredDates[0])}` : "No scored days"}</div>
         </div>
       </div>
       <div className="mt-4">
@@ -1033,23 +1035,6 @@ function LegendSwatch({ className, label }: { className: string; label: string }
       <span className={`h-3 w-3 rounded-sm ${className}`} />
       {label}
     </span>
-  );
-}
-
-function AddIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="2"
-    >
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
   );
 }
 

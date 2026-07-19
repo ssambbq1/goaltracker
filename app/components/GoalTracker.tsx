@@ -1878,9 +1878,9 @@ export default function GoalTracker() {
                 currentView === "list" ? "" : "hidden"
               }`}
             >
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+              <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">Goal list</h2>
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{goals.length}</span>
                   <button
                     type="button"
@@ -1890,9 +1890,9 @@ export default function GoalTracker() {
                       setCurrentView("list");
                       setIsGoalModalOpen(true);
                     }}
-                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                   >
-                    <AddIcon />
+                    추가+
                   </button>
                 </div>
               </div>
@@ -2071,27 +2071,33 @@ export default function GoalTracker() {
                             <>
                               <button
                                 type="button"
+                                aria-label={`Edit ${todo.title}`}
+                                title="Edit"
                                 onClick={() => startEditingTodo(todo)}
                                 disabled={isSaving || editingTodoId !== null}
-                                className="rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
                               >
-                                Edit
+                                <EditIcon />
                               </button>
                               <button
                                 type="button"
+                                aria-label={`Archive ${todo.title}`}
+                                title="Archive"
                                 onClick={() => archiveTodoItem(todo.id)}
                                 disabled={isSaving || editingTodoId !== null}
-                                className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                               >
-                                Archive
+                                <ArchiveIcon />
                               </button>
                               <button
                                 type="button"
+                                aria-label={`Delete ${todo.title}`}
+                                title="Delete"
                                 onClick={() => setTodoToDelete(todo)}
                                 disabled={isSaving || editingTodoId !== null}
-                                className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                               >
-                                Delete
+                                <TrashIcon />
                               </button>
                             </>
                           )}
@@ -3040,6 +3046,24 @@ function ArchiveIcon() {
       <path d="M3 4h18v5H3z" />
       <path d="M5 9v11h14V9" />
       <path d="M10 13h4" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
     </svg>
   );
 }
