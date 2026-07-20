@@ -1739,7 +1739,6 @@ export default function GoalTracker() {
                 setTodoToDelete(null);
                 setEditingTodoId(null);
                 setEditingTodoTitle("");
-                if (item.id === "routine") setRoutineListResetKey((key) => key + 1);
                 if (item.id === "archive" || item.id === "trash") void refreshArchiveTrashData();
               }}
               className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
