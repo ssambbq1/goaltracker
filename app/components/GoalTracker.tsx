@@ -32,7 +32,7 @@ type Goal = {
   entries: ProgressEntry[];
 };
 
-type GoalPatch = Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline">>;
+type GoalPatch = Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>;
 
 type GoalDraft = {
   goalId: string;
@@ -40,6 +40,7 @@ type GoalDraft = {
   memo: string;
   target: string;
   unit: string;
+  startDate: string;
   deadline: string;
 };
 
@@ -70,9 +71,16 @@ type Session = {
 };
 
 type NavigationState = {
-  boostmaster: true;
+  boostMastery: true;
   view: TrackerView;
   goalId: string | null;
+};
+
+type NavDragState = {
+  pointerId: number;
+  startX: number;
+  scrollLeft: number;
+  didMove: boolean;
 };
 
 const emptyGoalForm = {
@@ -80,8 +88,11 @@ const emptyGoalForm = {
   memo: "",
   target: 100,
   unit: "units",
+  startDate: toDateInputValue(),
   deadline: "",
 };
+
+const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
 
 async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -126,10 +137,9 @@ async function deleteAccount(password: string) {
   if (!response.ok) throw new Error(data.error || "Failed to delete account");
 }
 
-function formatDateTime(ts: number) {
+function formatDate(ts: number) {
   return new Intl.DateTimeFormat("ko-KR", {
     dateStyle: "medium",
-    timeStyle: "short",
   }).format(new Date(ts));
 }
 
@@ -145,13 +155,15 @@ function getLatestEntry(entries: ProgressEntry[]) {
   );
 }
 
-function toDateTimeLocalValue(date = new Date()) {
-  const localTime = date.getTime() - date.getTimezoneOffset() * 60_000;
-  return new Date(localTime).toISOString().slice(0, 16);
+function toDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function parseDateTimeLocalValue(value: string) {
-  const timestamp = new Date(value).getTime();
+function parseDateInputValue(value: string) {
+  const timestamp = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`).getTime() : NaN;
   return Number.isFinite(timestamp) ? timestamp : Date.now();
 }
 
@@ -162,6 +174,7 @@ function toGoalDraft(goal: Goal): GoalDraft {
     memo: goal.memo,
     target: String(goal.target),
     unit: goal.unit,
+    startDate: toDateInputValue(new Date(goal.createdAt)),
     deadline: goal.deadline,
   };
 }
@@ -176,7 +189,7 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
 
 function makeNavigationState(view: TrackerView, goalId: string | null): NavigationState {
   return {
-    boostmaster: true,
+    boostMastery: true,
     view,
     goalId: view === "detail" ? goalId : null,
   };
@@ -186,7 +199,7 @@ function isNavigationState(value: unknown): value is NavigationState {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
-    record.boostmaster === true &&
+    record.boostMastery === true &&
     typeof record.view === "string" &&
     ["list", "todo", "routine", "archive", "trash", "detail", "user"].includes(record.view)
   );
@@ -194,6 +207,33 @@ function isNavigationState(value: unknown): value is NavigationState {
 
 function navigationKey(state: NavigationState) {
   return `${state.view}:${state.goalId ?? ""}`;
+}
+
+function readStoredNavigationState() {
+  try {
+    const stored = window.localStorage.getItem(NAVIGATION_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as unknown;
+    return isNavigationState(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredNavigationState(state: NavigationState) {
+  try {
+    window.localStorage.setItem(NAVIGATION_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore unavailable storage. Browser history still works for the current session.
+  }
+}
+
+function clearStoredNavigationState() {
+  try {
+    window.localStorage.removeItem(NAVIGATION_STORAGE_KEY);
+  } catch {
+    // Ignore unavailable storage.
+  }
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -251,7 +291,7 @@ async function fetchDeletedRoutines() {
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
-async function createGoal(input: typeof emptyGoalForm) {
+async function createGoal(input: Omit<typeof emptyGoalForm, "startDate"> & { createdAt: number }) {
   const response = await fetch("/api/goals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -482,11 +522,11 @@ export default function GoalTracker() {
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
   const [entryMemo, setEntryMemo] = useState("");
-  const [entryRecordedAt, setEntryRecordedAt] = useState(() => toDateTimeLocalValue());
+  const [entryRecordedAt, setEntryRecordedAt] = useState(() => toDateInputValue());
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editEntryValue, setEditEntryValue] = useState(0);
   const [editEntryMemo, setEditEntryMemo] = useState("");
-  const [editEntryRecordedAt, setEditEntryRecordedAt] = useState(() => toDateTimeLocalValue());
+  const [editEntryRecordedAt, setEditEntryRecordedAt] = useState(() => toDateInputValue());
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -508,6 +548,9 @@ export default function GoalTracker() {
   const latestDraggedGoals = useRef<Goal[] | null>(null);
   const latestDraggedTodos = useRef<Todo[] | null>(null);
   const dragImageClone = useRef<HTMLElement | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
+  const navDragState = useRef<NavDragState | null>(null);
+  const suppressNextNavClick = useRef(false);
 
   const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
     if (highlightTimers.current[kind]) clearTimeout(highlightTimers.current[kind]);
@@ -563,7 +606,17 @@ export default function GoalTracker() {
           fetchArchivedRoutines(),
         ]);
         const firstGoal = loadedGoals[0] ?? null;
-        const firstLatestEntry = firstGoal ? getLatestEntry(firstGoal.entries) : null;
+        const storedNavigation = readStoredNavigationState();
+        const storedGoalId =
+          storedNavigation?.goalId && loadedGoals.some((goal) => goal.id === storedNavigation.goalId)
+            ? storedNavigation.goalId
+            : null;
+        const nextGoal = storedGoalId
+          ? loadedGoals.find((goal) => goal.id === storedGoalId) ?? firstGoal
+          : firstGoal;
+        const nextView =
+          storedNavigation?.view === "detail" && !nextGoal ? "list" : storedNavigation?.view ?? "list";
+        const nextLatestEntry = nextGoal ? getLatestEntry(nextGoal.entries) : null;
         if (!isActive) return;
         setGoals(loadedGoals);
         setDeletedGoals(loadedDeletedGoals);
@@ -572,10 +625,12 @@ export default function GoalTracker() {
         setArchivedTodos(loadedArchivedTodos);
         setDeletedRoutines(loadedDeletedRoutines);
         setArchivedRoutines(loadedArchivedRoutines);
-        setActiveGoalId(firstGoal?.id ?? null);
+        setActiveGoalId(nextGoal?.id ?? null);
+        setCurrentView(nextView);
+        previousView.current = nextView;
         setIsEditingGoal(false);
-        setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
-        setEntryValue(firstLatestEntry?.value ?? 0);
+        setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
+        setEntryValue(nextLatestEntry?.value ?? 0);
 
         try {
           const loadedTodos = await fetchTodos();
@@ -644,6 +699,7 @@ export default function GoalTracker() {
 
     const state = makeNavigationState(currentView, activeGoalId);
     const key = navigationKey(state);
+    writeStoredNavigationState(state);
 
     if (!hasNavigationState.current) {
       window.history.replaceState(state, "", window.location.href);
@@ -716,6 +772,7 @@ export default function GoalTracker() {
   }, [activeGoalId, currentView, flashMovedItem]);
 
   function resetGoalState() {
+    clearStoredNavigationState();
     hasNavigationState.current = false;
     isApplyingBrowserNavigation.current = false;
     lastNavigationKey.current = "";
@@ -892,6 +949,7 @@ export default function GoalTracker() {
         memo: goalForm.memo,
         target: goalForm.target,
         unit: goalForm.unit.trim() || "units",
+        createdAt: parseDateInputValue(goalForm.startDate),
         deadline: goalForm.deadline,
       });
       setGoals(result.goals);
@@ -902,9 +960,9 @@ export default function GoalTracker() {
       setGoalDraft(toGoalDraft(result.goal));
       setEntryValue(0);
       setEntryMemo("");
-      setEntryRecordedAt(toDateTimeLocalValue());
+      setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
-      setGoalForm(emptyGoalForm);
+      setGoalForm({ ...emptyGoalForm, startDate: toDateInputValue() });
       setIsGoalModalOpen(false);
       setCurrentView("detail");
     } catch (addError) {
@@ -995,6 +1053,50 @@ export default function GoalTracker() {
     if (!dragImageClone.current) return;
     dragImageClone.current.style.left = `${clientX - offsetX}px`;
     dragImageClone.current.style.top = `${clientY - offsetY}px`;
+  }
+
+  function startNavDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    const nav = navRef.current;
+    if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+
+    navDragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: nav.scrollLeft,
+      didMove: false,
+    };
+    nav.setPointerCapture(event.pointerId);
+  }
+
+  function moveNavDrag(event: ReactPointerEvent<HTMLElement>) {
+    const dragState = navDragState.current;
+    const nav = navRef.current;
+    if (!dragState || !nav || dragState.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - dragState.startX;
+    if (Math.abs(deltaX) > 4) {
+      dragState.didMove = true;
+      suppressNextNavClick.current = true;
+    }
+    if (dragState.didMove) event.preventDefault();
+    nav.scrollLeft = dragState.scrollLeft - deltaX;
+  }
+
+  function endNavDrag(event: ReactPointerEvent<HTMLElement>) {
+    const dragState = navDragState.current;
+    const nav = navRef.current;
+    if (!dragState || !nav || dragState.pointerId !== event.pointerId) return;
+
+    if (nav.hasPointerCapture(event.pointerId)) {
+      nav.releasePointerCapture(event.pointerId);
+    }
+    navDragState.current = null;
+    if (dragState.didMove) {
+      window.setTimeout(() => {
+        suppressNextNavClick.current = false;
+      }, 0);
+    }
   }
 
   function startGoalDrag(event: ReactPointerEvent, goalId: string) {
@@ -1354,6 +1456,14 @@ export default function GoalTracker() {
     if (field === "deadline") {
       const deadline = rawValue ?? draft.deadline;
       if (deadline !== activeGoal.deadline) updateActiveGoal({ deadline });
+      return;
+    }
+
+    if (field === "startDate") {
+      const startDate = rawValue ?? draft.startDate;
+      const createdAt = parseDateInputValue(startDate);
+      if (createdAt !== activeGoal.createdAt) updateActiveGoal({ createdAt });
+      setGoalDraft((draft) => (draft ? { ...draft, startDate: toDateInputValue(new Date(createdAt)) } : draft));
     }
   }
 
@@ -1363,6 +1473,7 @@ export default function GoalTracker() {
     commitGoalDraft("memo", activeGoalDraft.memo);
     commitGoalDraft("target", activeGoalDraft.target);
     commitGoalDraft("unit", activeGoalDraft.unit);
+    commitGoalDraft("startDate", activeGoalDraft.startDate);
     commitGoalDraft("deadline", activeGoalDraft.deadline);
     setIsEditingGoal(false);
   }
@@ -1382,11 +1493,11 @@ export default function GoalTracker() {
       const savedGoals = await createEntry(activeGoal.id, {
         value: Math.max(0, entryValue),
         memo: entryMemo.trim(),
-        createdAt: parseDateTimeLocalValue(entryRecordedAt),
+        createdAt: parseDateInputValue(entryRecordedAt),
       });
       setGoals(savedGoals);
       setEntryMemo("");
-      setEntryRecordedAt(toDateTimeLocalValue());
+      setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
       setIsEntryModalOpen(false);
     } catch (entryError) {
@@ -1466,7 +1577,7 @@ export default function GoalTracker() {
       setGoalDraft(restoredGoal ? toGoalDraft(restoredGoal) : result.goals[0] ? toGoalDraft(result.goals[0]) : null);
       setEntryValue(restoredLatestEntry?.value ?? getLatestEntry(result.goals[0]?.entries ?? [])?.value ?? 0);
       setEntryMemo("");
-      setEntryRecordedAt(toDateTimeLocalValue());
+      setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
       setIsEntryModalOpen(false);
       setCurrentView("detail");
@@ -1561,7 +1672,7 @@ export default function GoalTracker() {
     setGoalDraft(toGoalDraft(goal));
     setEntryValue(goalLatestEntry?.value ?? 0);
     setEntryMemo("");
-    setEntryRecordedAt(toDateTimeLocalValue());
+    setEntryRecordedAt(toDateInputValue());
     setEditingEntryId(null);
     setIsEntryModalOpen(false);
   }
@@ -1570,7 +1681,7 @@ export default function GoalTracker() {
     setEditingEntryId(entry.id);
     setEditEntryValue(entry.value);
     setEditEntryMemo(entry.memo);
-    setEditEntryRecordedAt(toDateTimeLocalValue(new Date(entry.createdAt)));
+    setEditEntryRecordedAt(toDateInputValue(new Date(entry.createdAt)));
     setError("");
   }
 
@@ -1584,7 +1695,7 @@ export default function GoalTracker() {
       const savedGoals = await patchEntry(activeGoal.id, entryId, {
         value: Math.max(0, editEntryValue),
         memo: editEntryMemo.trim(),
-        createdAt: parseDateTimeLocalValue(editEntryRecordedAt),
+        createdAt: parseDateInputValue(editEntryRecordedAt),
       });
       setGoals(savedGoals);
       setEditingEntryId(null);
@@ -1634,32 +1745,17 @@ export default function GoalTracker() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f7f4] text-stone-950">
+    <main className="min-h-screen bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-emerald-700">Master plan for everything</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              GOAL TRACKER
+            <p className="text-sm font-medium text-emerald-700">Design your life</p>
+            <h1 className="mt-2 block max-w-full bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-4xl font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
+              BOOST MASTERY
             </h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.history.back()}
-              aria-label="Go back"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
-            >
-              <ArrowLeftIcon />
-            </button>
-            <button
-              type="button"
-              onClick={() => window.history.forward()}
-              aria-label="Go forward"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
-            >
-              <ArrowRightIcon />
-            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -1717,7 +1813,14 @@ export default function GoalTracker() {
           </div>
         )}
 
-        <nav className="sticky top-0 z-40 grid grid-cols-5 gap-1 rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
+        <nav
+          ref={navRef}
+          onPointerDown={startNavDrag}
+          onPointerMove={moveNavDrag}
+          onPointerUp={endNavDrag}
+          onPointerCancel={endNavDrag}
+          className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-40 flex cursor-grab gap-1 overflow-x-auto rounded-full border border-stone-300 bg-white/95 p-1 shadow-lg backdrop-blur overscroll-x-contain active:cursor-grabbing [scrollbar-width:none] sm:sticky sm:top-0 sm:bottom-auto sm:inset-x-auto sm:shadow-sm [&::-webkit-scrollbar]:hidden"
+        >
           {[
             { id: "list", label: "Goal list", shortLabel: "Goals", count:  null },
             { id: "todo", label: "To do list", shortLabel: "To do", count:  null},
@@ -1728,7 +1831,11 @@ export default function GoalTracker() {
             <button
               key={item.id}
               type="button"
-              onClick={() => {
+              onClick={(event) => {
+                if (suppressNextNavClick.current) {
+                  event.preventDefault();
+                  return;
+                }
                 setCurrentView(item.id as TrackerView);
                 setIsEditingGoal(false);
                 setIsAccountDeleteOpen(false);
@@ -1741,7 +1848,7 @@ export default function GoalTracker() {
                 setEditingTodoTitle("");
                 if (item.id === "archive" || item.id === "trash") void refreshArchiveTrashData();
               }}
-              className={`flex h-10 min-w-0 items-center justify-center gap-1 rounded-full px-1 text-xs font-semibold transition sm:gap-2 sm:px-3 sm:text-sm ${
+              className={`flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:px-2 sm:text-xs ${
                 currentView === item.id
                   ? "bg-emerald-700 text-white shadow-sm"
                   : "text-stone-700 hover:bg-stone-100"
@@ -1752,8 +1859,8 @@ export default function GoalTracker() {
               {item.id === "routine" && <RoutineIcon />}
               {item.id === "archive" && <ArchiveIcon />}
               {item.id === "trash" && <TrashIcon />}
-              <span className="min-w-0 truncate sm:hidden">{item.shortLabel}</span>
-              <span className="hidden min-w-0 truncate sm:inline">{item.label}</span>
+              <span className="max-w-full truncate whitespace-nowrap sm:hidden">{item.shortLabel}</span>
+              <span className="hidden max-w-full truncate whitespace-nowrap sm:inline">{item.label}</span>
               {item.count !== null && (
                 <span
                   className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
@@ -1934,24 +2041,25 @@ export default function GoalTracker() {
                               : "border-stone-200 bg-white hover:border-stone-400"
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-2">
-                              <span className="min-w-0 font-medium">{goal.title}</span>
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-start justify-between gap-2">
+                                <span className="min-w-0 font-medium">{goal.title}</span>
+                                <span className="shrink-0 text-sm text-stone-600">
+                                  {latest} / {goal.target} {goal.unit}
+                                </span>
+                              </div>
+                              <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
+                                <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
+                              </div>
                             </div>
-                            <div className="flex shrink-0 items-start gap-2">
-                              <span className="pt-1 text-sm text-stone-600">{percent}%</span>
+                            <div className="flex shrink-0 justify-end">
                               <ReorderHandle
                                 disabled={isSaving}
                                 label={`Drag ${goal.title} to reorder`}
                                 onPointerDown={(event) => startGoalDrag(event, goal.id)}
                               />
                             </div>
-                          </div>
-                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
-                            <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
-                          </div>
-                          <div className="mt-2 text-xs text-stone-600">
-                            {latest} / {goal.target} {goal.unit}
                           </div>
                         </div>
                       );
@@ -2039,13 +2147,8 @@ export default function GoalTracker() {
                               {todo.title}
                             </div>
                           )}
-                          <div className="mt-1 text-xs text-stone-500">{formatDateTime(todo.createdAt)}</div>
+                          <div className="mt-1 text-xs text-stone-500">{formatDate(todo.createdAt)}</div>
                         </div>
-                        <ReorderHandle
-                          disabled={isSaving || editingTodoId !== null}
-                          label={`Drag ${todo.title} to reorder`}
-                          onPointerDown={(event) => startTodoDrag(event, todo.id)}
-                        />
                         <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
                           {isEditingTodo ? (
                             <>
@@ -2070,13 +2173,13 @@ export default function GoalTracker() {
                             <>
                               <button
                                 type="button"
-                                aria-label={`Edit ${todo.title}`}
-                                title="Edit"
-                                onClick={() => startEditingTodo(todo)}
+                                aria-label={`Delete ${todo.title}`}
+                                title="Delete"
+                                onClick={() => setTodoToDelete(todo)}
                                 disabled={isSaving || editingTodoId !== null}
-                                className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                               >
-                                <EditIcon />
+                                <TrashIcon />
                               </button>
                               <button
                                 type="button"
@@ -2090,17 +2193,22 @@ export default function GoalTracker() {
                               </button>
                               <button
                                 type="button"
-                                aria-label={`Delete ${todo.title}`}
-                                title="Delete"
-                                onClick={() => setTodoToDelete(todo)}
+                                aria-label={`Edit ${todo.title}`}
+                                title="Edit"
+                                onClick={() => startEditingTodo(todo)}
                                 disabled={isSaving || editingTodoId !== null}
-                                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
                               >
-                                <TrashIcon />
+                                <EditIcon />
                               </button>
                             </>
                           )}
                         </div>
+                        <ReorderHandle
+                          disabled={isSaving || editingTodoId !== null}
+                          label={`Drag ${todo.title} to reorder`}
+                          onPointerDown={(event) => startTodoDrag(event, todo.id)}
+                        />
                       </div>
                       );
                     })
@@ -2156,7 +2264,7 @@ export default function GoalTracker() {
                           <StoredItemCard
                             key={goal.id}
                             title={goal.title}
-                            meta={`Archived: ${goal.archivedAt ? formatDateTime(goal.archivedAt) : "unknown"}`}
+                            meta={`Archived: ${goal.archivedAt ? formatDate(goal.archivedAt) : "unknown"}`}
                             detail={`Last progress: ${latest} / ${goal.target} ${goal.unit}`}
                             isSaving={isSaving}
                             onRestore={() => restoreGoal(goal.id)}
@@ -2171,7 +2279,7 @@ export default function GoalTracker() {
                         <StoredItemCard
                           key={todo.id}
                           title={todo.title}
-                          meta={`Archived: ${todo.archivedAt ? formatDateTime(todo.archivedAt) : "unknown"}`}
+                          meta={`Archived: ${todo.archivedAt ? formatDate(todo.archivedAt) : "unknown"}`}
                           detail={todo.completed ? "Completed" : "Not completed"}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
@@ -2183,7 +2291,7 @@ export default function GoalTracker() {
                         <StoredItemCard
                           key={routine.id}
                           title={routine.title}
-                          meta={`Archived: ${routine.archivedAt ? formatDateTime(routine.archivedAt) : "unknown"}`}
+                          meta={`Archived: ${routine.archivedAt ? formatDate(routine.archivedAt) : "unknown"}`}
                           detail={`${routine.startDate} - ${routine.endDate}`}
                           isSaving={isSaving}
                           onRestore={() => restoreRoutine(routine.id)}
@@ -2234,7 +2342,7 @@ export default function GoalTracker() {
                           <StoredItemCard
                             key={goal.id}
                             title={goal.title}
-                            meta={`Deleted: ${goal.deletedAt ? formatDateTime(goal.deletedAt) : "unknown"}`}
+                            meta={`Deleted: ${goal.deletedAt ? formatDate(goal.deletedAt) : "unknown"}`}
                             detail={`Last progress: ${latest} / ${goal.target} ${goal.unit}`}
                             isSaving={isSaving}
                             onRestore={() => restoreGoal(goal.id)}
@@ -2249,7 +2357,7 @@ export default function GoalTracker() {
                         <StoredItemCard
                           key={todo.id}
                           title={todo.title}
-                          meta={`Deleted: ${todo.deletedAt ? formatDateTime(todo.deletedAt) : "unknown"}`}
+                          meta={`Deleted: ${todo.deletedAt ? formatDate(todo.deletedAt) : "unknown"}`}
                           detail={todo.completed ? "Completed" : "Not completed"}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
@@ -2263,7 +2371,7 @@ export default function GoalTracker() {
                         <StoredItemCard
                           key={routine.id}
                           title={routine.title}
-                          meta={`Deleted: ${routine.deletedAt ? formatDateTime(routine.deletedAt) : "unknown"}`}
+                          meta={`Deleted: ${routine.deletedAt ? formatDate(routine.deletedAt) : "unknown"}`}
                           detail={`${routine.startDate} - ${routine.endDate}`}
                           isSaving={isSaving}
                           onRestore={() => restoreRoutine(routine.id)}
@@ -2301,72 +2409,10 @@ export default function GoalTracker() {
                         <h2 className="break-words py-1 text-2xl font-semibold">{activeGoal.title}</h2>
                       )}
                       <div className="mt-2 flex flex-wrap gap-2 text-sm text-stone-600">
-                        <span>Created: {formatDateTime(activeGoal.createdAt)}</span>
-                        <span>Latest: {latestEntry ? formatDateTime(latestEntry.createdAt) : "none"}</span>
+                        <span>Start: {formatDate(activeGoal.createdAt)}</span>
+                        <span>Latest: {latestEntry ? formatDate(latestEntry.createdAt) : "none"}</span>
                         <span>Deadline: {activeGoal.deadline || "not set"}</span>
                       </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 self-start">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
-                          setIsEditingGoal(false);
-                          setIsEntryModalOpen(false);
-                          setCurrentView("list");
-                        }}
-                        className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
-                      >
-                        Back to list
-                      </button>
-                      {isEditingGoal ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={finishEditingGoal}
-                            disabled={isSaving}
-                            className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Done
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEditingGoal}
-                            disabled={isSaving}
-                            className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setGoalDraft(toGoalDraft(activeGoal));
-                            setIsEditingGoal(true);
-                          }}
-                          disabled={isSaving}
-                          className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          Edit
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => archiveGoal(activeGoal.id)}
-                        disabled={isSaving || isEditingGoal}
-                        className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        Archive
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteGoal(activeGoal.id)}
-                        disabled={isSaving || isEditingGoal}
-                        className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        Delete
-                      </button>
                     </div>
                   </div>
 
@@ -2388,7 +2434,7 @@ export default function GoalTracker() {
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
-                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,160px)_minmax(0,180px)]">
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,160px)]">
                         <label className="grid min-w-0 gap-1 text-sm font-medium">
                           Target
                           <input
@@ -2419,6 +2465,23 @@ export default function GoalTracker() {
                             className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           />
                         </label>
+                      </div>
+                      <div className="grid gap-3 rounded-md bg-stone-100 p-3 sm:grid-cols-2">
+                        <label className="grid min-w-0 gap-1 text-sm font-medium">
+                          Start date
+                          <input
+                            type="date"
+                            value={activeGoalDraft?.startDate ?? ""}
+                            onChange={(event) =>
+                              setGoalDraft((draft) =>
+                                draft
+                                  ? { ...draft, startDate: event.target.value }
+                                  : { ...toGoalDraft(activeGoal), startDate: event.target.value },
+                              )
+                            }
+                            className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          />
+                        </label>
                         <label className="grid min-w-0 gap-1 text-sm font-medium">
                           Deadline
                           <input
@@ -2431,7 +2494,7 @@ export default function GoalTracker() {
                                   : { ...toGoalDraft(activeGoal), deadline: event.target.value },
                               )
                             }
-                            className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                            className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           />
                         </label>
                       </div>
@@ -2463,6 +2526,94 @@ export default function GoalTracker() {
                     </div>
                   )}
 
+                  <div className="mt-3 flex w-full flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      aria-label="Back to list"
+                      title="Back to list"
+                      onClick={() => {
+                        if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
+                        setIsEditingGoal(false);
+                        setIsEntryModalOpen(false);
+                        setCurrentView("list");
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                    >
+                      <BackIcon />
+                    </button>
+                    {isEditingGoal ? (
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Done editing goal"
+                          title="Done"
+                          onClick={finishEditingGoal}
+                          disabled={isSaving}
+                          className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <CheckIcon />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Cancel editing goal"
+                          title="Cancel"
+                          onClick={cancelEditingGoal}
+                          disabled={isSaving}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <CloseIcon />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${activeGoal.title}`}
+                        title="Delete"
+                        onClick={() => deleteGoal(activeGoal.id)}
+                        disabled={isSaving}
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={`Archive ${activeGoal.title}`}
+                      title="Archive"
+                      onClick={() => archiveGoal(activeGoal.id)}
+                      disabled={isSaving || isEditingGoal}
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <ArchiveIcon />
+                    </button>
+                    {isEditingGoal ? (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${activeGoal.title}`}
+                        title="Delete"
+                        onClick={() => deleteGoal(activeGoal.id)}
+                        disabled
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <TrashIcon />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`Edit ${activeGoal.title}`}
+                        title="Edit"
+                        onClick={() => {
+                          setGoalDraft(toGoalDraft(activeGoal));
+                          setIsEditingGoal(true);
+                        }}
+                        disabled={isSaving}
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <EditIcon />
+                      </button>
+                    )}
+                  </div>
+
                   <div className="mt-5 h-3 overflow-hidden rounded-full bg-stone-200">
                     <div
                       className="h-full bg-emerald-700 transition-all"
@@ -2476,7 +2627,7 @@ export default function GoalTracker() {
                       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <h2 className="text-base font-semibold">Progress chart</h2>
-                          <p className="text-sm text-stone-600">Records are plotted by saved date and time.</p>
+                          <p className="text-sm text-stone-600">Records are plotted by saved date.</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-emerald-700">
@@ -2486,13 +2637,13 @@ export default function GoalTracker() {
                             type="button"
                             aria-label="Add progress record"
                             onClick={() => {
-                              setEntryRecordedAt(toDateTimeLocalValue());
+                              setEntryRecordedAt(toDateInputValue());
                               setIsEntryModalOpen(true);
                             }}
                             disabled={isSaving}
-                            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                            className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                           >
-                            <AddIcon />
+                            추가+
                           </button>
                         </div>
                       </div>
@@ -2509,7 +2660,7 @@ export default function GoalTracker() {
                       <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                         {activeGoal.entries.length === 0 ? (
                           <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                            No records yet. Saved records will be written to data/goals.json with their timestamp.
+                            No records yet. Saved records will be written with their date.
                           </p>
                         ) : (
                           activeGoal.entries
@@ -2530,9 +2681,9 @@ export default function GoalTracker() {
                                       />
                                     </label>
                                     <label className="grid min-w-0 gap-1 text-sm font-medium">
-                                      Date and time
+                                      Date
                                       <input
-                                        type="datetime-local"
+                                        type="date"
                                         value={editEntryRecordedAt}
                                         onChange={(event) => setEditEntryRecordedAt(event.target.value)}
                                         className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
@@ -2550,27 +2701,33 @@ export default function GoalTracker() {
                                   <div className="flex flex-wrap gap-2">
                                     <button
                                       type="button"
+                                      aria-label="Save progress record"
+                                      title="Save"
                                       onClick={() => updateEntryRecord(entry.id)}
                                       disabled={isSaving}
-                                      className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      Save
+                                      <CheckIcon />
                                     </button>
                                     <button
                                       type="button"
+                                      aria-label="Cancel editing progress record"
+                                      title="Cancel"
                                       onClick={() => setEditingEntryId(null)}
                                       disabled={isSaving}
-                                      className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      Cancel
+                                      <CloseIcon />
                                     </button>
                                     <button
                                       type="button"
+                                      aria-label="Delete progress record"
+                                      title="Delete"
                                       onClick={() => deleteEntryRecord(entry.id)}
                                       disabled={isSaving}
-                                      className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      Delete
+                                      <TrashIcon />
                                     </button>
                                   </div>
                                 </div>
@@ -2583,18 +2740,20 @@ export default function GoalTracker() {
                                     <div className="font-semibold">
                                       {entry.value} {activeGoal.unit}
                                     </div>
-                                    <div className="text-xs text-stone-500">{formatDateTime(entry.createdAt)}</div>
+                                    <div className="text-xs text-stone-500">{formatDate(entry.createdAt)}</div>
                                     <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-sm text-stone-700">
                                       {entry.memo || "No memo"}
                                     </p>
                                   </div>
                                   <button
                                     type="button"
+                                    aria-label="Edit progress record"
+                                    title="Edit"
                                     onClick={() => startEditingEntry(entry)}
                                     disabled={isSaving}
-                                    className="shrink-0 self-start rounded-md border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                                    className="flex h-8 w-8 shrink-0 items-center justify-center self-start rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
                                   >
-                                    Edit
+                                    <EditIcon />
                                   </button>
                                 </div>
                               ),
@@ -2651,20 +2810,20 @@ export default function GoalTracker() {
                   className="w-full accent-emerald-700"
                 />
                 <label className="grid min-w-0 gap-1 text-sm font-medium">
-                  Record date and time
+                  Record date
                   <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                     <input
-                      type="datetime-local"
+                      type="date"
                       value={entryRecordedAt}
                       onChange={(event) => setEntryRecordedAt(event.target.value)}
                       className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     />
                     <button
                       type="button"
-                      onClick={() => setEntryRecordedAt(toDateTimeLocalValue())}
+                      onClick={() => setEntryRecordedAt(toDateInputValue())}
                       className="w-full rounded-md border border-stone-300 px-3 py-2 font-normal text-stone-700 hover:bg-stone-100 sm:w-auto"
                     >
-                      Now
+                      Today
                     </button>
                   </div>
                 </label>
@@ -2805,15 +2964,26 @@ export default function GoalTracker() {
                     />
                   </label>
                 </div>
-                <label className="grid gap-1 text-sm font-medium">
-                  Deadline
-                  <input
-                    type="date"
-                    value={goalForm.deadline}
-                    onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
-                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                  />
-                </label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="grid gap-1 text-sm font-medium">
+                    Start
+                    <input
+                      type="date"
+                      value={goalForm.startDate}
+                      onChange={(event) => setGoalForm((form) => ({ ...form, startDate: event.target.value }))}
+                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-sm font-medium">
+                    Deadline
+                    <input
+                      type="date"
+                      value={goalForm.deadline}
+                      onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
+                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    />
+                  </label>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -3067,6 +3237,41 @@ function EditIcon() {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.5"
+    >
+      <path d="m5 12 4 4L19 6" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+  );
+}
+
 function UserIcon() {
   return (
     <svg
@@ -3288,40 +3493,6 @@ function ArrowDownIcon() {
   );
 }
 
-function ArrowLeftIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
-  );
-}
-
-function ArrowRightIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="m9 18 6-6-6-6" />
-    </svg>
-  );
-}
-
 function ListIcon() {
   return (
     <svg
@@ -3395,4 +3566,3 @@ function CloseIcon() {
     </svg>
   );
 }
-

@@ -45,6 +45,7 @@ export async function POST(request: Request) {
       target: typeof body?.target === "number" ? body.target : Number(body?.target),
       unit: typeof body?.unit === "string" ? body.unit : "units",
       deadline: typeof body?.deadline === "string" ? body.deadline : "",
+      createdAt: typeof body?.createdAt === "number" ? body.createdAt : Number(body?.createdAt),
     });
 
     return Response.json(result, { status: 201 });

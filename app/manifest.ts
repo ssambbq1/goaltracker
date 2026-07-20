@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Boostmaster",
-    short_name: "Boostmaster",
-    description: "Track goals, todos, and routines.",
+    name: "BOOST MASTERY",
+    short_name: "BOOST",
+    description: "BOOST MASTERY helps you track goals, todos, and routines.",
     start_url: "/",
     scope: "/",
     display: "standalone",

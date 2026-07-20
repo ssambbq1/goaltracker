@@ -55,8 +55,9 @@ export default function ProgressChart({
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const latestRecordTs = sorted[sorted.length - 1].createdAt;
-  const minTs = Math.min(sorted[0].createdAt, todayTs);
   const deadlineTs = parseDeadlineEnd(deadline);
+  const hasPassedDeadline = deadlineTs !== null && deadlineTs < todayTs;
+  const minTs = Math.min(sorted[0].createdAt, todayTs, hasPassedDeadline ? deadlineTs : sorted[0].createdAt);
   const maxTs = Math.max(latestRecordTs, deadlineTs ?? latestRecordTs, todayTs);
   const maxValue = Math.max(target, ...sorted.map((entry) => entry.value), 1);
   const yMax = Math.ceil(maxValue * 1.1);
@@ -78,6 +79,7 @@ export default function ProgressChart({
   )} ${padding.top + plotHeight} Z`;
   const goalY = yFor(target);
   const todayX = xFor(todayTs);
+  const deadlineX = hasPassedDeadline && deadlineTs !== null ? xFor(deadlineTs) : null;
   const latestRecordX = xFor(latestRecordTs);
   const ticks = [0, target / 2, target];
 
@@ -125,6 +127,28 @@ export default function ProgressChart({
         <text x={padding.left + plotWidth - 4} y={goalY - 8} textAnchor="end" className="fill-amber-700 text-xs">
           Target {target} {unit}
         </text>
+
+        {deadlineX !== null && (
+          <>
+            <line
+              x1={deadlineX}
+              x2={deadlineX}
+              y1={padding.top}
+              y2={padding.top + plotHeight}
+              stroke="#dc2626"
+              strokeDasharray="5 5"
+              strokeWidth="2"
+            />
+            <text
+              x={Math.min(deadlineX + 6, padding.left + plotWidth - 4)}
+              y={padding.top + 32}
+              textAnchor={deadlineX > padding.left + plotWidth - 80 ? "end" : "start"}
+              className="fill-red-600 text-xs"
+            >
+              Target date
+            </text>
+          </>
+        )}
 
         <line
           x1={todayX}

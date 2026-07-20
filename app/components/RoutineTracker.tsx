@@ -504,28 +504,22 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
 
       {activeRoutine ? (
         <section className="rounded-lg border border-stone-300 bg-white p-4 shadow-sm">
-          {editingRoutineId === activeRoutine.id ? (
-            <RoutineEditForm
-              value={editForm}
-              isSaving={isSaving}
-              onChange={setEditForm}
-              onCancel={() => setEditingRoutineId(null)}
-              onSave={() => saveEdit(activeRoutine.id)}
-            />
-          ) : (
-            <RoutineCard
-              routine={activeRoutine}
-              isSaving={isSaving}
-              onBack={() => {
-                setActiveRoutineId(null);
-                setEditingRoutineId(null);
-              }}
-              onEdit={() => startEditing(activeRoutine)}
-              onArchive={() => archiveRoutine(activeRoutine.id)}
-              onDelete={() => deleteRoutine(activeRoutine.id)}
-              onMark={markDate}
-            />
-          )}
+          <RoutineCard
+            routine={activeRoutine}
+            isSaving={isSaving}
+            editValue={editingRoutineId === activeRoutine.id ? editForm : null}
+            onEditChange={setEditForm}
+            onBack={() => {
+              setActiveRoutineId(null);
+              setEditingRoutineId(null);
+            }}
+            onEdit={() => startEditing(activeRoutine)}
+            onCancelEdit={() => setEditingRoutineId(null)}
+            onSaveEdit={() => saveEdit(activeRoutine.id)}
+            onArchive={() => archiveRoutine(activeRoutine.id)}
+            onDelete={() => deleteRoutine(activeRoutine.id)}
+            onMark={markDate}
+          />
         </section>
       ) : isLoading ? (
         <section className="rounded-lg border border-stone-300 bg-white p-8 text-center text-sm text-stone-600">
@@ -744,92 +738,27 @@ function RoutineListItem({
   );
 }
 
-function RoutineEditForm({
-  value,
-  isSaving,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  value: typeof emptyRoutineForm;
-  isSaving: boolean;
-  onChange: (value: typeof emptyRoutineForm) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,150px)_minmax(0,150px)]">
-        <label className="grid gap-1 text-sm font-medium">
-          Routine
-          <input
-            value={value.title}
-            onChange={(event) => onChange({ ...value, title: event.target.value })}
-            className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-          />
-        </label>
-        <label className="grid gap-1 text-sm font-medium">
-          Start
-          <input
-            type="date"
-            value={value.startDate}
-            onChange={(event) => onChange({ ...value, startDate: event.target.value })}
-            className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-          />
-        </label>
-        <label className="grid gap-1 text-sm font-medium">
-          End
-          <input
-            type="date"
-            value={value.endDate}
-            onChange={(event) => onChange({ ...value, endDate: event.target.value })}
-            className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-          />
-        </label>
-      </div>
-      <label className="grid gap-1 text-sm font-medium">
-        Memo
-        <textarea
-          value={value.memo}
-          onChange={(event) => onChange({ ...value, memo: event.target.value })}
-          className="min-h-20 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-        />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={isSaving || !value.title.trim()}
-          className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={isSaving}
-          className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function RoutineCard({
   routine,
   isSaving,
+  editValue,
+  onEditChange,
   onBack,
   onEdit,
+  onCancelEdit,
+  onSaveEdit,
   onArchive,
   onDelete,
   onMark,
 }: {
   routine: Routine;
   isSaving: boolean;
+  editValue: typeof emptyRoutineForm | null;
+  onEditChange: (value: typeof emptyRoutineForm) => void;
   onBack: () => void;
   onEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
   onArchive: () => void;
   onDelete: () => void;
   onMark: (routine: Routine, date: string, status: RoutineMarkStatus | undefined) => void;
@@ -837,52 +766,150 @@ function RoutineCard({
   const stats = getRoutineStats(routine);
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
+  const memoRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = memoRef.current;
+    if (!textarea || !editValue) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 96)}px`;
+  }, [editValue]);
 
   return (
     <div className="grid gap-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
-          <h3 className="break-words text-lg font-semibold">{routine.title}</h3>
+          {editValue ? (
+            <input
+              value={editValue.title}
+              onChange={(event) => onEditChange({ ...editValue, title: event.target.value })}
+              className="w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
+              aria-label="Edit routine title"
+            />
+          ) : (
+            <h3 className="break-words py-1 text-lg font-semibold">{routine.title}</h3>
+          )}
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
             <span>{routine.startDate} - {routine.endDate}</span>
             <span>{stats.success} success</span>
             <span>{stats.failure} failure</span>
             <span>{stats.missed} missed</span>
           </div>
-          {routine.memo && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-stone-700">{routine.memo}</p>}
+          {editValue ? (
+            <>
+              <textarea
+                ref={memoRef}
+                value={editValue.memo}
+                onChange={(event) => onEditChange({ ...editValue, memo: event.target.value })}
+                className="mt-2 min-h-24 w-full resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                aria-label="Edit routine memo"
+                placeholder="Memo"
+              />
+              <div className="mt-3 grid gap-2 rounded-md bg-stone-100 p-3 sm:grid-cols-2">
+                <label className="grid min-w-0 gap-1">
+                  <span className="text-xs font-medium text-stone-500">Start date</span>
+                  <input
+                    type="date"
+                    value={editValue.startDate}
+                    onChange={(event) => onEditChange({ ...editValue, startDate: event.target.value })}
+                    className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-emerald-600"
+                  />
+                </label>
+                <label className="grid min-w-0 gap-1">
+                  <span className="text-xs font-medium text-stone-500">End date</span>
+                  <input
+                    type="date"
+                    value={editValue.endDate}
+                    onChange={(event) => onEditChange({ ...editValue, endDate: event.target.value })}
+                    className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-emerald-600"
+                  />
+                </label>
+              </div>
+            </>
+          ) : (
+            routine.memo && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-stone-700">{routine.memo}</p>
+          )}
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">
           <button
             type="button"
+            aria-label="Back to list"
+            title="Back to list"
             onClick={onBack}
-            className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
-          >
-            Back to list
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
             disabled={isSaving}
-            className="rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
           >
-            Edit
+            <BackIcon />
           </button>
+          {editValue ? (
+            <>
+              <button
+                type="button"
+                aria-label="Save routine"
+                title="Save"
+                onClick={onSaveEdit}
+                disabled={isSaving || !editValue.title.trim()}
+                className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <CheckIcon />
+              </button>
+              <button
+                type="button"
+                aria-label="Cancel editing routine"
+                title="Cancel"
+                onClick={onCancelEdit}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <CloseIcon />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              aria-label={`Delete ${routine.title}`}
+              title="Delete"
+              onClick={onDelete}
+              disabled={isSaving}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <TrashIcon />
+            </button>
+          )}
           <button
             type="button"
+            aria-label={`Archive ${routine.title}`}
+            title="Archive"
             onClick={onArchive}
-            disabled={isSaving}
-            className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+            disabled={isSaving || editValue !== null}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
           >
-            Archive
+            <ArchiveIcon />
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={isSaving}
-            className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-          >
-            Delete
-          </button>
+          {editValue ? (
+            <button
+              type="button"
+              aria-label={`Delete ${routine.title}`}
+              title="Delete"
+              onClick={onDelete}
+              disabled
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <TrashIcon />
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label={`Edit ${routine.title}`}
+              title="Edit"
+              onClick={onEdit}
+              disabled={isSaving}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <EditIcon />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1035,6 +1062,100 @@ function LegendSwatch({ className, label }: { className: string; label: string }
       <span className={`h-3 w-3 rounded-sm ${className}`} />
       {label}
     </span>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M4 7h16" />
+      <path d="M6 7v13h12V7" />
+      <path d="M9 11h6" />
+      <path d="M8 4h8l2 3H6l2-3z" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.5"
+    >
+      <path d="m5 12 4 4L19 6" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
   );
 }
 

@@ -27,6 +27,7 @@ export type NewGoalInput = {
   target: number;
   unit: string;
   deadline: string;
+  createdAt?: number;
 };
 
 export type NewEntryInput = {
@@ -43,7 +44,7 @@ const ROUTINE_GOAL_UNIT = "__routine__";
 
 function applyGoalPatch(
   goal: Goal,
-  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline">>,
+  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>,
 ) {
   return {
     ...goal,
@@ -52,6 +53,7 @@ function applyGoalPatch(
     target: patch.target !== undefined && patch.target > 0 ? patch.target : goal.target,
     unit: patch.unit !== undefined && patch.unit.trim() ? patch.unit.trim() : goal.unit,
     deadline: patch.deadline !== undefined ? patch.deadline : goal.deadline,
+    createdAt: patch.createdAt !== undefined && Number.isFinite(patch.createdAt) ? patch.createdAt : goal.createdAt,
   };
 }
 
@@ -226,7 +228,7 @@ export async function addGoal(input: NewGoalInput) {
     target: Number.isFinite(input.target) && input.target > 0 ? input.target : 1,
     unit: input.unit.trim() || "units",
     deadline: input.deadline,
-    createdAt: Date.now(),
+    createdAt: typeof input.createdAt === "number" && Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
     entries: [],
   };
 
@@ -248,7 +250,7 @@ export async function addGoal(input: NewGoalInput) {
 
 export async function updateGoal(
   goalId: string,
-  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline">>,
+  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>,
 ) {
   const loginId = await requireLoginId();
   const goal = (await readGoals()).find((item) => item.id === goalId);
@@ -264,6 +266,7 @@ export async function updateGoal(
       target: nextGoal.target,
       unit: nextGoal.unit,
       deadline: nextGoal.deadline,
+      created_at_ms: nextGoal.createdAt,
     })
     .eq("id", goalId)
     .eq("user_id", loginId)

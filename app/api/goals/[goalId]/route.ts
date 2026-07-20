@@ -15,6 +15,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/goals/
       target: typeof body?.target === "number" ? body.target : undefined,
       unit: typeof body?.unit === "string" && body.unit.trim() ? body.unit.trim() : undefined,
       deadline: typeof body?.deadline === "string" ? body.deadline : undefined,
+      createdAt: typeof body?.createdAt === "number" ? body.createdAt : undefined,
     });
 
     return Response.json({ goals });

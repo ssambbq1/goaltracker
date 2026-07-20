@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Boostmaster",
-  description: "정량 목표와 자기개발 진행 기록을 관리하는 웹앱",
+  title: "BOOST MASTERY",
+  description: "BOOST MASTERY helps you track goals, todos, and routines.",
 };
 
 export default function RootLayout({
