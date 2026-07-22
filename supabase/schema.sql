@@ -49,11 +49,13 @@ create table if not exists public.todos (
   title text not null,
   completed boolean not null default false,
   created_at_ms bigint not null,
+  target_date date,
   position integer not null default 0
 );
 
 alter table public.todos
-  add column if not exists position integer not null default 0;
+  add column if not exists position integer not null default 0,
+  add column if not exists target_date date;
 
 create table if not exists public.routines (
   id text primary key,

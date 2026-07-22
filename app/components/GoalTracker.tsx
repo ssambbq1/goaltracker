@@ -49,6 +49,7 @@ type Todo = {
   title: string;
   completed: boolean;
   createdAt: number;
+  targetDate?: string;
   deletedAt?: number;
   archivedAt?: number;
 };
@@ -165,6 +166,22 @@ function toDateInputValue(date = new Date()) {
 function parseDateInputValue(value: string) {
   const timestamp = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`).getTime() : NaN;
   return Number.isFinite(timestamp) ? timestamp : Date.now();
+}
+
+function getTodoTargetStatus(targetDate?: string) {
+  if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return "Target not set";
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${targetDate}T00:00:00`);
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+
+  if (diffDays > 0) return `Target: ${targetDate} · ${diffDays} day${diffDays === 1 ? "" : "s"} left`;
+  if (diffDays < 0) {
+    const delayedDays = Math.abs(diffDays);
+    return `Target: ${targetDate} · ${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
+  }
+  return `Target: ${targetDate} · due today`;
 }
 
 function toGoalDraft(goal: Goal): GoalDraft {
@@ -320,11 +337,11 @@ async function fetchTodos() {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function createTodo(title: string) {
+async function createTodo(title: string, targetDate: string) {
   const response = await fetch("/api/todos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, targetDate }),
   });
   const data = (await response.json()) as { error?: string; todo?: Todo; todos?: Todo[] };
   if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add todo");
@@ -342,7 +359,7 @@ async function reorderTodoList(todoIds: string[]) {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed">>) {
+async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate">>) {
   const response = await fetch(`/api/todos/${todoId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -355,16 +372,12 @@ async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "co
 
 async function removeTodo(todoId: string) {
   const response = await fetch(`/api/todos/${todoId}`, { method: "DELETE" });
-  const data = (await response.json()) as { error?: string; todos?: Todo[] };
+  const data = (await response.json()) as { error?: string; todos?: Todo[]; deletedTodos?: Todo[] };
   if (!response.ok) throw new Error(data.error || "Failed to delete todo");
-  return Array.isArray(data.todos) ? data.todos : [];
-}
-
-async function archiveExistingTodo(todoId: string) {
-  const response = await fetch(`/api/todos/${todoId}/archive`, { method: "PATCH" });
-  const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to archive todo");
-  return Array.isArray(data.todos) ? data.todos : [];
+  return {
+    todos: Array.isArray(data.todos) ? data.todos : [],
+    deletedTodos: Array.isArray(data.deletedTodos) ? data.deletedTodos : [],
+  };
 }
 
 async function restoreStoredTodo(todoId: string) {
@@ -501,6 +514,7 @@ export default function GoalTracker() {
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
   const [routineListResetKey, setRoutineListResetKey] = useState(0);
+  const [routineReloadKey, setRoutineReloadKey] = useState(0);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
@@ -511,6 +525,7 @@ export default function GoalTracker() {
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editingTodoTitle, setEditingTodoTitle] = useState("");
+  const [editingTodoTargetDate, setEditingTodoTargetDate] = useState("");
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [draggingGoalId, setDraggingGoalId] = useState<string | null>(null);
@@ -519,6 +534,7 @@ export default function GoalTracker() {
   const [todoDropTargetId, setTodoDropTargetId] = useState<string | null>(null);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [todoTitle, setTodoTitle] = useState("");
+  const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
   const [entryMemo, setEntryMemo] = useState("");
@@ -794,9 +810,11 @@ export default function GoalTracker() {
     setTodoToDelete(null);
     setEditingTodoId(null);
     setEditingTodoTitle("");
+    setEditingTodoTargetDate("");
     setHighlightedGoalId(null);
     setHighlightedTodoId(null);
     setTodoTitle("");
+    setTodoTargetDate(toDateInputValue());
     setGoalDraft(null);
     setEntryValue(0);
     setEntryMemo("");
@@ -1166,15 +1184,17 @@ export default function GoalTracker() {
 
   async function addTodoItem() {
     const title = todoTitle.trim();
-    if (!title || !loginId) return;
+    const targetDate = todoTargetDate.trim();
+    if (!title || !targetDate || !loginId) return;
 
     setIsSaving(true);
     setError("");
 
     try {
-      const result = await createTodo(title);
+      const result = await createTodo(title, targetDate);
       setTodos(result.todos);
       setTodoTitle("");
+      setTodoTargetDate(toDateInputValue());
       setIsTodoModalOpen(false);
       setCurrentView("todo");
     } catch (addError) {
@@ -1187,35 +1207,43 @@ export default function GoalTracker() {
   function startEditingTodo(todo: Todo) {
     setEditingTodoId(todo.id);
     setEditingTodoTitle(todo.title);
+    setEditingTodoTargetDate(todo.targetDate ?? toDateInputValue());
     setTodoToDelete(null);
   }
 
   function cancelEditingTodo() {
     setEditingTodoId(null);
     setEditingTodoTitle("");
+    setEditingTodoTargetDate("");
   }
 
   async function saveTodoTitle(todo: Todo) {
     if (!loginId) return;
 
     const title = editingTodoTitle.trim();
+    const targetDate = editingTodoTargetDate.trim();
     if (!title) {
       setError("Todo title is required");
       return;
     }
 
-    if (title === todo.title) {
+    if (!targetDate) {
+      setError("Todo target date is required");
+      return;
+    }
+
+    if (title === todo.title && targetDate === (todo.targetDate ?? "")) {
       cancelEditingTodo();
       return;
     }
 
     const previousTodos = todos;
-    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, title } : item)));
+    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, title, targetDate } : item)));
     setIsSaving(true);
     setError("");
 
     try {
-      setTodos(await patchTodo(todo.id, { title }));
+      setTodos(await patchTodo(todo.id, { title, targetDate }));
       cancelEditingTodo();
     } catch (updateError) {
       setTodos(previousTodos);
@@ -1333,32 +1361,13 @@ export default function GoalTracker() {
     setError("");
 
     try {
-      setTodos(await removeTodo(todoId));
-      setDeletedTodos(await fetchDeletedTodos());
+      const result = await removeTodo(todoId);
+      setTodos(result.todos);
+      setDeletedTodos(result.deletedTodos);
       setTodoToDelete(null);
     } catch (deleteError) {
       setTodos(previousTodos);
       setError(deleteError instanceof Error ? deleteError.message : "Failed to delete todo");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function archiveTodoItem(todoId: string) {
-    if (!loginId) return;
-
-    const previousTodos = todos;
-    setTodos((current) => current.filter((todo) => todo.id !== todoId));
-
-    setIsSaving(true);
-    setError("");
-
-    try {
-      setTodos(await archiveExistingTodo(todoId));
-      setArchivedTodos(await fetchArchivedTodos());
-    } catch (archiveError) {
-      setTodos(previousTodos);
-      setError(archiveError instanceof Error ? archiveError.message : "Failed to archive todo");
     } finally {
       setIsSaving(false);
     }
@@ -1641,7 +1650,7 @@ export default function GoalTracker() {
       const result = await restoreStoredRoutine(routineId);
       setArchivedRoutines(Array.isArray(result.archivedRoutines) ? result.archivedRoutines : []);
       setDeletedRoutines(Array.isArray(result.deletedRoutines) ? result.deletedRoutines : []);
-      setRoutineListResetKey((key) => key + 1);
+      setRoutineReloadKey((key) => key + 1);
     } catch (restoreError) {
       setError(restoreError instanceof Error ? restoreError.message : "Failed to restore routine");
     } finally {
@@ -1846,6 +1855,8 @@ export default function GoalTracker() {
                 setTodoToDelete(null);
                 setEditingTodoId(null);
                 setEditingTodoTitle("");
+                setEditingTodoTargetDate("");
+                if (item.id === "routine") setRoutineListResetKey((key) => key + 1);
                 if (item.id === "archive" || item.id === "trash") void refreshArchiveTrashData();
               }}
               className={`flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:px-2 sm:text-xs ${
@@ -2131,13 +2142,22 @@ export default function GoalTracker() {
                         />
                         <div className="min-w-0">
                           {isEditingTodo ? (
-                            <input
-                              value={editingTodoTitle}
-                              onChange={(event) => setEditingTodoTitle(event.target.value)}
-                              autoFocus
-                              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
-                              aria-label={`Edit ${todo.title}`}
-                            />
+                            <div className="grid gap-2">
+                              <input
+                                value={editingTodoTitle}
+                                onChange={(event) => setEditingTodoTitle(event.target.value)}
+                                autoFocus
+                                className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
+                                aria-label={`Edit ${todo.title}`}
+                              />
+                              <input
+                                type="date"
+                                value={editingTodoTargetDate}
+                                onChange={(event) => setEditingTodoTargetDate(event.target.value)}
+                                className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
+                                aria-label={`Edit target date for ${todo.title}`}
+                              />
+                            </div>
                           ) : (
                             <div
                               className={`break-words text-sm font-medium ${
@@ -2147,7 +2167,7 @@ export default function GoalTracker() {
                               {todo.title}
                             </div>
                           )}
-                          <div className="mt-1 text-xs text-stone-500">{formatDate(todo.createdAt)}</div>
+                          <div className="mt-1 text-xs text-stone-500">{getTodoTargetStatus(todo.targetDate)}</div>
                         </div>
                         <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
                           {isEditingTodo ? (
@@ -2155,7 +2175,7 @@ export default function GoalTracker() {
                               <button
                                 type="button"
                                 onClick={() => saveTodoTitle(todo)}
-                                disabled={isSaving || !editingTodoTitle.trim()}
+                                disabled={isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim()}
                                 className="rounded-md bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
                               >
                                 Save
@@ -2180,16 +2200,6 @@ export default function GoalTracker() {
                                 className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                               >
                                 <TrashIcon />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Archive ${todo.title}`}
-                                title="Archive"
-                                onClick={() => archiveTodoItem(todo.id)}
-                                disabled={isSaving || editingTodoId !== null}
-                                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                              >
-                                <ArchiveIcon />
                               </button>
                               <button
                                 type="button"
@@ -2219,8 +2229,9 @@ export default function GoalTracker() {
 
             <div className={currentView === "routine" ? "" : "hidden"}>
               <RoutineTracker
-                key={routineListResetKey}
                 isSaving={isSaving}
+                resetSignal={routineListResetKey}
+                reloadSignal={routineReloadKey}
                 onSavingChange={setIsSaving}
                 onError={setError}
               />
@@ -2280,7 +2291,7 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`Archived: ${todo.archivedAt ? formatDate(todo.archivedAt) : "unknown"}`}
-                          detail={todo.completed ? "Completed" : "Not completed"}
+                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}`}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
                         />
@@ -2358,7 +2369,7 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`Deleted: ${todo.deletedAt ? formatDate(todo.deletedAt) : "unknown"}`}
-                          detail={todo.completed ? "Completed" : "Not completed"}
+                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}`}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
                           onDelete={() => permanentlyDeleteTodo(todo.id)}
@@ -3033,6 +3044,16 @@ export default function GoalTracker() {
                     placeholder="Write a task"
                   />
                 </label>
+                <label className="grid gap-1 text-sm font-medium">
+                  Target date
+                  <input
+                    type="date"
+                    value={todoTargetDate}
+                    onChange={(event) => setTodoTargetDate(event.target.value)}
+                    onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  />
+                </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -3045,7 +3066,7 @@ export default function GoalTracker() {
                   <button
                     type="button"
                     onClick={addTodoItem}
-                    disabled={isSaving || !todoTitle.trim()}
+                    disabled={isSaving || !todoTitle.trim() || !todoTargetDate.trim()}
                     className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                   >
                     Add

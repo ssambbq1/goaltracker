@@ -193,14 +193,17 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
-export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
+export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
   isSaving: boolean;
+  resetSignal: number;
+  reloadSignal: number;
   onSavingChange: (isSaving: boolean) => void;
   onError: (error: string) => void;
 }) {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [form, setForm] = useState(emptyRoutineForm);
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
+  const [activeRoutineResetSignal, setActiveRoutineResetSignal] = useState(resetSignal);
   const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyRoutineForm);
@@ -236,7 +239,7 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
     return () => {
       isActive = false;
     };
-  }, [onError]);
+  }, [onError, reloadSignal]);
 
   useEffect(() => {
     return () => {
@@ -245,7 +248,10 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
     };
   }, []);
 
-  const activeRoutine = routines.find((routine) => routine.id === activeRoutineId) ?? null;
+  const activeRoutine =
+    activeRoutineResetSignal === resetSignal
+      ? routines.find((routine) => routine.id === activeRoutineId) ?? null
+      : null;
 
   async function addRoutine() {
     const title = form.title.trim();
@@ -257,6 +263,7 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
       const result = await createRoutine(form);
       setRoutines(result.routines);
       setActiveRoutineId(result.routine.id);
+      setActiveRoutineResetSignal(resetSignal);
       setIsRoutineModalOpen(false);
       setForm({ ...emptyRoutineForm, startDate: todayIso, endDate: todayIso });
     } catch (error) {
@@ -575,6 +582,7 @@ export default function RoutineTracker({ isSaving, onSavingChange, onError }: {
                     isDropTarget={routineDropTargetId === routine.id && draggingRoutineId !== routine.id}
                     onSelect={() => {
                       setActiveRoutineId(routine.id);
+                      setActiveRoutineResetSignal(resetSignal);
                       setEditingRoutineId(null);
                     }}
                     onDrag={(event) => startRoutineDrag(event, routine.id)}
@@ -1025,7 +1033,7 @@ function RoutineSuccessGraph({ routine }: { routine: Routine }) {
 
 function MiniLineChart({ points }: { points: number[] }) {
   if (!points.length) {
-    return <div className="flex h-32 items-center justify-center rounded-md bg-white text-sm text-stone-500">No tracked days</div>;
+    return <div className="flex h-32 items-center justify-center rounded-md bg-white px-3 text-center text-sm text-stone-500">No routine marks yet. Mark a day to draw the graph.</div>;
   }
 
   const width = 300;

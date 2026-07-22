@@ -43,7 +43,7 @@ export default function ProgressChart({
   if (entries.length === 0) {
     return (
       <div className="flex h-72 items-center justify-center rounded-md bg-stone-100 px-4 text-center text-sm text-stone-600">
-        泥?湲곕줉????ν븯硫??ъ꽦??蹂??洹몃옒?꾧? ?쒖떆?⑸땲??
+        No progress records yet. Add a record to draw the chart.
       </div>
     );
   }

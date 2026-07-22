@@ -11,6 +11,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/todos/
     const todos = await updateTodo(todoId, {
       title: typeof body?.title === "string" ? body.title : undefined,
       completed: typeof body?.completed === "boolean" ? body.completed : undefined,
+      targetDate: typeof body?.targetDate === "string" ? body.targetDate : undefined,
     });
 
     return Response.json({ todos });
@@ -24,8 +25,8 @@ export async function PATCH(request: Request, context: RouteContext<"/api/todos/
 export async function DELETE(_request: Request, context: RouteContext<"/api/todos/[todoId]">) {
   try {
     const { todoId } = await context.params;
-    const todos = await deleteTodo(todoId);
-    return Response.json({ todos });
+    const result = await deleteTodo(todoId);
+    return Response.json(result);
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
     const message = getErrorMessage(error, "Failed to delete todo");
