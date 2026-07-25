@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import ProgressChart from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
 
@@ -297,10 +298,12 @@ function isEditableTarget(target: EventTarget | null) {
 
 function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return true;
+  if (isEditableTarget(target)) return true;
+  if (target.closest("[data-screen-swipe-surface]")) return false;
   return Boolean(
     target.closest(
       "button, a, input, textarea, select, label, summary, [data-swipe-ignore]",
-    ) || isEditableTarget(target),
+    ),
   );
 }
 
@@ -2476,7 +2479,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "archive" && (
-              <div className="max-h-[32rem] space-y-4 overflow-auto">
+              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto">
                 {archivedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                     Archived items will appear here.
@@ -2554,7 +2557,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "bin" && (
-              <div className="max-h-[32rem] space-y-4 overflow-auto">
+              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto">
                 {deletedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                     Deleted items will appear here.
@@ -3090,202 +3093,203 @@ export default function GoalTracker() {
           </div>
         )}
 
-        {isGoalModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
-            <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">Add goal</h2>
-                <button
-                  type="button"
-                  aria-label="Close add goal"
-                  onClick={() => setIsGoalModalOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3">
-                <label className="grid gap-1 text-sm font-medium">
-                  Goal name
+      </div>
+      {typeof document !== "undefined" && isGoalModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/40">
+          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Add goal</h2>
+              <button
+                type="button"
+                aria-label="Close add goal"
+                onClick={() => setIsGoalModalOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <label className="grid gap-1 text-sm font-medium">
+                Goal name
+                <input
+                  value={goalForm.title}
+                  onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
+                  onKeyDown={(event) => event.key === "Enter" && addGoal()}
+                  autoFocus
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  placeholder="Example: TOEIC 900"
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                Goal memo
+                <textarea
+                  value={goalForm.memo}
+                  onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
+                  className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  placeholder="Describe the final goal or why it matters."
+                />
+              </label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,96px)]">
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
+                  Target
                   <input
-                    value={goalForm.title}
-                    onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
-                    onKeyDown={(event) => event.key === "Enter" && addGoal()}
-                    autoFocus
-                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    placeholder="Example: TOEIC 900"
+                    type="number"
+                    min={1}
+                    value={goalForm.target}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))}
+                    className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
-                <label className="grid gap-1 text-sm font-medium">
-                  Goal memo
-                  <textarea
-                    value={goalForm.memo}
-                    onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
-                    className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    placeholder="Describe the final goal or why it matters."
-                  />
-                </label>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,96px)]">
-                  <label className="grid min-w-0 gap-1 text-sm font-medium">
-                    Target
-                    <input
-                      type="number"
-                      min={1}
-                      value={goalForm.target}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))}
-                      className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    />
-                  </label>
-                  <label className="grid min-w-0 gap-1 text-sm font-medium">
-                    Unit
-                    <input
-                      value={goalForm.unit}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
-                      className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    />
-                  </label>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className="grid gap-1 text-sm font-medium">
-                    Start
-                    <input
-                      type="date"
-                      value={goalForm.startDate}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, startDate: event.target.value }))}
-                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    />
-                  </label>
-                  <label className="grid gap-1 text-sm font-medium">
-                    Deadline
-                    <input
-                      type="date"
-                      value={goalForm.deadline}
-                      onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
-                      className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    />
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsGoalModalOpen(false)}
-                    disabled={isSaving}
-                    className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addGoal}
-                    disabled={isSaving}
-                    className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    ADD+
-                  </button>
-                </div>
-              </div>
-            </section>
-          </div>
-        )}
-
-        {isTodoModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
-            <section className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">Add todo</h2>
-                <button
-                  type="button"
-                  aria-label="Close add todo"
-                  onClick={() => setIsTodoModalOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3">
-                <label className="grid gap-1 text-sm font-medium">
-                  Todo
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
+                  Unit
                   <input
-                    value={todoTitle}
-                    onChange={(event) => setTodoTitle(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
-                    autoFocus
-                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    placeholder="Write a task"
+                    value={goalForm.unit}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
+                    className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
-                  Target date
+                  Start
                   <input
                     type="date"
-                    value={todoTargetDate}
-                    onChange={(event) => setTodoTargetDate(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                    value={goalForm.startDate}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, startDate: event.target.value }))}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsTodoModalOpen(false)}
-                    disabled={isSaving}
-                    className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addTodoItem}
-                    disabled={isSaving || !todoTitle.trim() || !todoTargetDate.trim()}
-                    className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    ADD+
-                  </button>
-                </div>
+                <label className="grid gap-1 text-sm font-medium">
+                  Deadline
+                  <input
+                    type="date"
+                    value={goalForm.deadline}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  />
+                </label>
               </div>
-            </section>
-          </div>
-        )}
-
-        {todoToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
-            <section className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">Delete todo?</h2>
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  aria-label="Close delete todo"
-                  onClick={() => setTodoToDelete(null)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-              <div className="mt-4 rounded-md bg-stone-100 p-3 text-sm text-stone-800">
-                {todoToDelete.title}
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTodoToDelete(null)}
+                  onClick={() => setIsGoalModalOpen(false)}
                   disabled={isSaving}
                   className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="button"
-                  onClick={() => deleteTodoItem(todoToDelete.id)}
+                  onClick={addGoal}
                   disabled={isSaving}
-                  className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Delete
+                  ADD+
                 </button>
               </div>
-            </section>
-          </div>
-        )}
-      </div>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {typeof document !== "undefined" && isTodoModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/40">
+          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Add todo</h2>
+              <button
+                type="button"
+                aria-label="Close add todo"
+                onClick={() => setIsTodoModalOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <label className="grid gap-1 text-sm font-medium">
+                Todo
+                <input
+                  value={todoTitle}
+                  onChange={(event) => setTodoTitle(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  autoFocus
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  placeholder="Write a task"
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                Target date
+                <input
+                  type="date"
+                  value={todoTargetDate}
+                  onChange={(event) => setTodoTargetDate(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTodoModalOpen(false)}
+                  disabled={isSaving}
+                  className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={addTodoItem}
+                  disabled={isSaving || !todoTitle.trim() || !todoTargetDate.trim()}
+                  className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  ADD+
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {typeof document !== "undefined" && todoToDelete && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/40">
+          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Delete todo?</h2>
+              <button
+                type="button"
+                aria-label="Close delete todo"
+                onClick={() => setTodoToDelete(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="mt-4 rounded-md bg-stone-100 p-3 text-sm text-stone-800">
+              {todoToDelete.title}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setTodoToDelete(null)}
+                disabled={isSaving}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteTodoItem(todoToDelete.id)}
+                disabled={isSaving}
+                className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
       <nav
         data-swipe-ignore
         className="fixed inset-x-0 bottom-0 z-40 flex gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur sm:hidden"
@@ -3394,7 +3398,7 @@ export default function GoalTracker() {
 
 function ArchiveGroup({ title, count, children }: { title: string; count: number; children: ReactNode }) {
   return (
-    <section className="rounded-md border border-stone-200 p-3">
+    <section data-screen-swipe-surface className="rounded-md border border-stone-200 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-stone-900">{title}</h3>
         <span className="text-xs font-medium text-stone-500">{count}</span>
@@ -3426,7 +3430,7 @@ function StoredItemCard({
   deleteLabel?: string;
 }) {
   return (
-    <div className="rounded-md border border-stone-200 p-3">
+    <div data-screen-swipe-surface className="rounded-md border border-stone-200 p-3">
       <div className="font-medium">{title}</div>
       <div className="mt-1 text-xs text-stone-600">{meta}</div>
       <div className="mt-1 text-xs text-stone-600">{detail}</div>

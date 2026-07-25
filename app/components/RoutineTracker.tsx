@@ -4,6 +4,7 @@ import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
 import youIcon from "../YOU-transparent.png";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type RoutineMarkStatus = "success" | "failure";
 
@@ -854,9 +855,9 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
         </div>
       )}
 
-      {isRoutineModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
-          <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+      {typeof document !== "undefined" && isRoutineModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/40">
+          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">Add routine</h2>
               <button
@@ -933,7 +934,8 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
               </div>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
