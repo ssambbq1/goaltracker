@@ -84,6 +84,13 @@ type NavDragState = {
   didMove: boolean;
 };
 
+type ScreenSwipeState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  didSwipe: boolean;
+};
+
 const emptyGoalForm = {
   title: "",
   memo: "",
@@ -94,6 +101,9 @@ const emptyGoalForm = {
 };
 
 const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
+const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "trash"];
+const SWIPE_MIN_DISTANCE = 72;
+const SWIPE_MAX_VERTICAL_DRIFT = 56;
 
 async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -257,6 +267,25 @@ function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
+function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return true;
+  return Boolean(
+    target.closest(
+      "button, a, input, textarea, select, label, summary, [data-swipe-ignore]",
+    ) || isEditableTarget(target),
+  );
+}
+
+function getSwipeTargetView(currentView: TrackerView, deltaX: number) {
+  if (currentView === "detail") return deltaX > 0 ? "list" : null;
+
+  const currentIndex = SWIPE_NAVIGATION_ORDER.indexOf(currentView);
+  if (currentIndex < 0) return null;
+
+  const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1;
+  return SWIPE_NAVIGATION_ORDER[nextIndex] ?? null;
 }
 
 async function fetchGoals() {
@@ -566,7 +595,9 @@ export default function GoalTracker() {
   const dragImageClone = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
   const navDragState = useRef<NavDragState | null>(null);
+  const screenSwipeState = useRef<ScreenSwipeState | null>(null);
   const suppressNextNavClick = useRef(false);
+  const suppressNextScreenClick = useRef(false);
 
   const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
     if (highlightTimers.current[kind]) clearTimeout(highlightTimers.current[kind]);
@@ -786,6 +817,22 @@ export default function GoalTracker() {
     }
     previousView.current = currentView;
   }, [activeGoalId, currentView, flashMovedItem]);
+
+  function navigateToView(view: TrackerView) {
+    setCurrentView(view);
+    setIsEditingGoal(false);
+    setIsAccountDeleteOpen(false);
+    setIsManualModalOpen(false);
+    setIsGoalModalOpen(false);
+    setIsTodoModalOpen(false);
+    setIsEntryModalOpen(false);
+    setTodoToDelete(null);
+    setEditingTodoId(null);
+    setEditingTodoTitle("");
+    setEditingTodoTargetDate("");
+    if (view === "routine") setRoutineListResetKey((key) => key + 1);
+    if (view === "archive" || view === "trash") void refreshArchiveTrashData();
+  }
 
   function resetGoalState() {
     clearStoredNavigationState();
@@ -1115,6 +1162,69 @@ export default function GoalTracker() {
         suppressNextNavClick.current = false;
       }, 0);
     }
+  }
+
+  function startScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
+    if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+    if (isSwipeNavigationBlockedTarget(event.target)) return;
+    if (currentView !== "detail" && !SWIPE_NAVIGATION_ORDER.includes(currentView)) return;
+
+    screenSwipeState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      didSwipe: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
+    const swipeState = screenSwipeState.current;
+    if (!swipeState || swipeState.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - swipeState.startX;
+    const deltaY = event.clientY - swipeState.startY;
+    if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      swipeState.didSwipe = true;
+      event.preventDefault();
+    }
+  }
+
+  function endScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
+    const swipeState = screenSwipeState.current;
+    if (!swipeState || swipeState.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    screenSwipeState.current = null;
+
+    const deltaX = event.clientX - swipeState.startX;
+    const deltaY = event.clientY - swipeState.startY;
+    const isHorizontalSwipe =
+      Math.abs(deltaX) >= SWIPE_MIN_DISTANCE &&
+      Math.abs(deltaY) <= SWIPE_MAX_VERTICAL_DRIFT &&
+      Math.abs(deltaX) > Math.abs(deltaY) * 1.25;
+    if (!isHorizontalSwipe) return;
+
+    const nextView = getSwipeTargetView(currentView, deltaX);
+    if (!nextView) return;
+
+    suppressNextScreenClick.current = true;
+    navigateToView(nextView);
+    window.setTimeout(() => {
+      suppressNextScreenClick.current = false;
+    }, 350);
+  }
+
+  function cancelScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
+    const swipeState = screenSwipeState.current;
+    if (!swipeState || swipeState.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    screenSwipeState.current = null;
   }
 
   function startGoalDrag(event: ReactPointerEvent, goalId: string) {
@@ -1754,7 +1864,19 @@ export default function GoalTracker() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0">
+    <main
+      onPointerDown={startScreenSwipe}
+      onPointerMove={moveScreenSwipe}
+      onPointerUp={endScreenSwipe}
+      onPointerCancel={cancelScreenSwipe}
+      onClickCapture={(event) => {
+        if (!suppressNextScreenClick.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextScreenClick.current = false;
+      }}
+      className="min-h-screen touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
+    >
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
           <div className="min-w-0">
@@ -1824,6 +1946,7 @@ export default function GoalTracker() {
 
         <nav
           ref={navRef}
+          data-swipe-ignore
           onPointerDown={startNavDrag}
           onPointerMove={moveNavDrag}
           onPointerUp={endNavDrag}
@@ -1845,19 +1968,7 @@ export default function GoalTracker() {
                   event.preventDefault();
                   return;
                 }
-                setCurrentView(item.id as TrackerView);
-                setIsEditingGoal(false);
-                setIsAccountDeleteOpen(false);
-                setIsManualModalOpen(false);
-                setIsGoalModalOpen(false);
-                setIsTodoModalOpen(false);
-                setIsEntryModalOpen(false);
-                setTodoToDelete(null);
-                setEditingTodoId(null);
-                setEditingTodoTitle("");
-                setEditingTodoTargetDate("");
-                if (item.id === "routine") setRoutineListResetKey((key) => key + 1);
-                if (item.id === "archive" || item.id === "trash") void refreshArchiveTrashData();
+                navigateToView(item.id as TrackerView);
               }}
               className={`flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:px-2 sm:text-xs ${
                 currentView === item.id
