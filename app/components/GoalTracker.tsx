@@ -181,17 +181,28 @@ function parseDateInputValue(value: string) {
 function getTodoTargetStatus(targetDate?: string) {
   if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return "Target not set";
 
+  return `Target: ${targetDate} · ${getTodoTargetTiming(targetDate)}`;
+}
+
+function getTodoTargetTiming(targetDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return "target date required";
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(`${targetDate}T00:00:00`);
   const diffDays = Math.round((target.getTime() - today.getTime()) / 86_400_000);
 
-  if (diffDays > 0) return `Target: ${targetDate} · ${diffDays} day${diffDays === 1 ? "" : "s"} left`;
+  if (diffDays > 0) return `${diffDays} day${diffDays === 1 ? "" : "s"} left`;
   if (diffDays < 0) {
     const delayedDays = Math.abs(diffDays);
-    return `Target: ${targetDate} · ${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
+    return `${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
   }
-  return `Target: ${targetDate} · due today`;
+  return "due today";
+}
+
+function getTodoEditRows(value: string) {
+  const lineCount = value.split(/\r\n|\r|\n/).reduce((count, line) => count + Math.max(1, Math.ceil(line.length / 30)), 0);
+  return Math.max(2, lineCount);
 }
 
 function toGoalDraft(goal: Goal): GoalDraft {
@@ -1259,6 +1270,7 @@ export default function GoalTracker() {
     setScreenSwipeOffset(deltaX > 0 ? window.innerWidth : -window.innerWidth);
     screenSwipeAnimationTimer.current = window.setTimeout(() => {
       navigateToView(nextView);
+      window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
       setIsScreenSwipeAnimating(false);
       setScreenSwipeOffset(0);
       setScreenSwipeTargetView(null);
@@ -1951,14 +1963,17 @@ export default function GoalTracker() {
           transform: `translateX(${screenSwipeOffset}px)`,
         }}
       >
-        <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
-          <div className="min-w-0">
+        <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
+          <div className="flex min-w-0 items-end gap-2 sm:gap-3">
+            <div className="min-w-0">
             <p className="text-sm font-medium text-emerald-700">Design your life</p>
-            <h1 className="mt-2 block max-w-full bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-4xl font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
-              BOOST MASTERY
+            <h1 className="mt-2 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-[clamp(1.65rem,8vw,2.25rem)] font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
+              PlanTree
             </h1>
+            </div>
+           
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
 
             <button
               type="button"
@@ -1972,7 +1987,7 @@ export default function GoalTracker() {
                 setEditingTodoTitle("");
               }}
               aria-label="Open manual"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
             >
               <BookIcon />
             </button>
@@ -1990,7 +2005,7 @@ export default function GoalTracker() {
                 setEditingTodoTitle("");
               }}
               aria-label="Open user page"
-              className={`flex h-11 w-11 items-center justify-center rounded-full border shadow-sm transition ${
+              className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition sm:h-11 sm:w-11 ${
                 currentView === "user"
                   ? "border-emerald-700 bg-emerald-700 text-white"
                   : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
@@ -2024,14 +2039,14 @@ export default function GoalTracker() {
           onPointerMove={moveNavDrag}
           onPointerUp={endNavDrag}
           onPointerCancel={endNavDrag}
-          className="fixed inset-x-0 bottom-0 z-40 flex cursor-grab gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur active:cursor-grabbing sm:sticky sm:top-0 sm:bottom-auto sm:inset-x-auto sm:gap-1 sm:overflow-x-auto sm:rounded-full sm:border sm:p-1 sm:shadow-sm sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
+          className="sticky top-0 z-40 hidden cursor-grab gap-1 overflow-x-auto rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur active:cursor-grabbing sm:flex sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
         >
           {[
-            { id: "list", label: "Goal list", shortLabel: "Goals", count:  null },
-            { id: "todo", label: "To do list", shortLabel: "To do", count:  null},
+            { id: "list", label: "Goal list", shortLabel: "Goals", count: null },
+            { id: "todo", label: "To do list", shortLabel: "To do", count: null },
             { id: "routine", label: "Routine list", shortLabel: "Routine", count: null },
-            { id: "archive", label: "Archive", shortLabel: "Archive", count:  null },
-            { id: "trash", label: "휴지통", shortLabel: "Trash", count:  null },
+            { id: "archive", label: "Archive", shortLabel: "Archive", count: null },
+            { id: "trash", label: "휴지통", shortLabel: "Trash", count: null },
           ].map((item) => (
             <button
               key={item.id}
@@ -2043,7 +2058,7 @@ export default function GoalTracker() {
                 }
                 navigateToView(item.id as TrackerView);
               }}
-              className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:rounded-full sm:px-2 sm:text-xs ${
+              className={`flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 text-xs font-semibold leading-none transition ${
                 currentView === item.id
                   ? "bg-emerald-700 text-white shadow-sm"
                   : "text-stone-700 hover:bg-stone-100"
@@ -2054,8 +2069,7 @@ export default function GoalTracker() {
               {item.id === "routine" && <RoutineIcon />}
               {item.id === "archive" && <ArchiveIcon />}
               {item.id === "trash" && <TrashIcon />}
-              <span className="max-w-full truncate whitespace-nowrap sm:hidden">{item.shortLabel}</span>
-              <span className="hidden max-w-full truncate whitespace-nowrap sm:inline">{item.label}</span>
+              <span className="max-w-full truncate whitespace-nowrap">{item.label}</span>
               {item.count !== null && (
                 <span
                   className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
@@ -2306,7 +2320,9 @@ export default function GoalTracker() {
                         data-reorder-card
                         data-reorder-kind="todo"
                         data-reorder-id={todo.id}
-                        className={`grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
+                        className={`grid ${
+                          isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
+                        } items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
                           highlightedTodoId === todo.id
                             ? "border-emerald-500 bg-emerald-100 shadow-sm"
                             : todoDropTargetId === todo.id && draggingTodoId !== todo.id
@@ -2326,21 +2342,44 @@ export default function GoalTracker() {
                         />
                         <div className="min-w-0">
                           {isEditingTodo ? (
-                            <div className="grid gap-2">
-                              <input
+                            <div className="grid min-w-0 gap-2">
+                              <textarea
                                 value={editingTodoTitle}
                                 onChange={(event) => setEditingTodoTitle(event.target.value)}
                                 autoFocus
-                                className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
+                                rows={getTodoEditRows(editingTodoTitle)}
+                                className="w-full resize-none overflow-hidden rounded-md border border-stone-300 px-2 py-1 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
                                 aria-label={`Edit ${todo.title}`}
                               />
-                              <input
-                                type="date"
-                                value={editingTodoTargetDate}
-                                onChange={(event) => setEditingTodoTargetDate(event.target.value)}
-                                className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-600"
-                                aria-label={`Edit target date for ${todo.title}`}
-                              />
+                              <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-stone-500">
+                                <span>Target:</span>
+                                <input
+                                  type="date"
+                                  value={editingTodoTargetDate}
+                                  onChange={(event) => setEditingTodoTargetDate(event.target.value)}
+                                  className="h-6 rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                                  aria-label={`Edit target date for ${todo.title}`}
+                                />
+                                <span>· {getTodoTargetTiming(editingTodoTargetDate)}</span>
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => saveTodoTitle(todo)}
+                                  disabled={isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim()}
+                                  className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditingTodo}
+                                  disabled={isSaving}
+                                  className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <div
@@ -2351,53 +2390,34 @@ export default function GoalTracker() {
                               {todo.title}
                             </div>
                           )}
-                          <div className="mt-1 text-xs text-stone-500">{getTodoTargetStatus(todo.targetDate)}</div>
-                        </div>
-                        <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
-                          {isEditingTodo ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => saveTodoTitle(todo)}
-                                disabled={isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim()}
-                                className="rounded-md bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
-                              >
-                                Save
-                              </button>
-                              <button
-                                type="button"
-                                onClick={cancelEditingTodo}
-                                disabled={isSaving}
-                                className="rounded-md border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:py-2 sm:text-sm"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                aria-label={`Delete ${todo.title}`}
-                                title="Delete"
-                                onClick={() => setTodoToDelete(todo)}
-                                disabled={isSaving || editingTodoId !== null}
-                                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                              >
-                                <TrashIcon />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Edit ${todo.title}`}
-                                title="Edit"
-                                onClick={() => startEditingTodo(todo)}
-                                disabled={isSaving || editingTodoId !== null}
-                                className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                              >
-                                <EditIcon />
-                              </button>
-                            </>
+                          {!isEditingTodo && (
+                            <div className="mt-1 text-xs text-stone-500">{getTodoTargetStatus(todo.targetDate)}</div>
                           )}
                         </div>
+                        {!isEditingTodo && (
+                          <div className="flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start">
+                            <button
+                              type="button"
+                              aria-label={`Delete ${todo.title}`}
+                              title="Delete"
+                              onClick={() => setTodoToDelete(todo)}
+                              disabled={isSaving || editingTodoId !== null}
+                              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <TrashIcon />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Edit ${todo.title}`}
+                              title="Edit"
+                              onClick={() => startEditingTodo(todo)}
+                              disabled={isSaving || editingTodoId !== null}
+                              className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <EditIcon />
+                            </button>
+                          </div>
+                        )}
                         <ReorderHandle
                           disabled={isSaving || editingTodoId !== null}
                           label={`Drag ${todo.title} to reorder`}
@@ -2604,9 +2624,47 @@ export default function GoalTracker() {
                         <h2 className="break-words py-1 text-2xl font-semibold">{activeGoal.title}</h2>
                       )}
                       <div className="mt-2 flex flex-wrap gap-2 text-sm text-stone-600">
-                        <span>Start: {formatDate(activeGoal.createdAt)}</span>
+                        <span className="inline-flex items-center gap-1">
+                          Start:{" "}
+                          {isEditingGoal ? (
+                            <input
+                              type="date"
+                              value={activeGoalDraft?.startDate ?? ""}
+                              onChange={(event) =>
+                                setGoalDraft((draft) =>
+                                  draft
+                                    ? { ...draft, startDate: event.target.value }
+                                    : { ...toGoalDraft(activeGoal), startDate: event.target.value },
+                                )
+                              }
+                              className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                              aria-label="Edit goal start date"
+                            />
+                          ) : (
+                            formatDate(activeGoal.createdAt)
+                          )}
+                        </span>
                         <span>Latest: {latestEntry ? formatDate(latestEntry.createdAt) : "none"}</span>
-                        <span>Deadline: {activeGoal.deadline || "not set"}</span>
+                        <span className="inline-flex items-center gap-1">
+                          Deadline:{" "}
+                          {isEditingGoal ? (
+                            <input
+                              type="date"
+                              value={activeGoalDraft?.deadline ?? ""}
+                              onChange={(event) =>
+                                setGoalDraft((draft) =>
+                                  draft
+                                    ? { ...draft, deadline: event.target.value }
+                                    : { ...toGoalDraft(activeGoal), deadline: event.target.value },
+                                )
+                              }
+                              className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                              aria-label="Edit goal deadline"
+                            />
+                          ) : (
+                            activeGoal.deadline || "not set"
+                          )}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2629,9 +2687,13 @@ export default function GoalTracker() {
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
-                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,160px)]">
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Target
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md bg-stone-100 px-3 py-2 text-sm">
+                        <span>
+                          <span className="font-medium text-stone-500">Current</span>{" "}
+                          <span className="font-semibold text-stone-900">{latestValue}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="font-medium text-stone-500">Target</span>{" "}
                           <input
                             type="number"
                             min={1}
@@ -2643,11 +2705,12 @@ export default function GoalTracker() {
                                   : { ...toGoalDraft(activeGoal), target: event.target.value },
                               )
                             }
-                            className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                            className="h-6 w-16 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
+                            aria-label="Edit goal target"
                           />
-                        </label>
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Unit
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="font-medium text-stone-500">Unit</span>{" "}
                           <input
                             value={activeGoalDraft?.unit ?? ""}
                             onChange={(event) =>
@@ -2657,41 +2720,14 @@ export default function GoalTracker() {
                                   : { ...toGoalDraft(activeGoal), unit: event.target.value },
                               )
                             }
-                            className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                            className="h-6 w-20 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
+                            aria-label="Edit goal unit"
                           />
-                        </label>
-                      </div>
-                      <div className="grid gap-3 rounded-md bg-stone-100 p-3 sm:grid-cols-2">
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Start date
-                          <input
-                            type="date"
-                            value={activeGoalDraft?.startDate ?? ""}
-                            onChange={(event) =>
-                              setGoalDraft((draft) =>
-                                draft
-                                  ? { ...draft, startDate: event.target.value }
-                                  : { ...toGoalDraft(activeGoal), startDate: event.target.value },
-                              )
-                            }
-                            className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                          />
-                        </label>
-                        <label className="grid min-w-0 gap-1 text-sm font-medium">
-                          Deadline
-                          <input
-                            type="date"
-                            value={activeGoalDraft?.deadline ?? ""}
-                            onChange={(event) =>
-                              setGoalDraft((draft) =>
-                                draft
-                                  ? { ...draft, deadline: event.target.value }
-                                  : { ...toGoalDraft(activeGoal), deadline: event.target.value },
-                              )
-                            }
-                            className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                          />
-                        </label>
+                        </span>
+                        <span>
+                          <span className="font-medium text-stone-500">Progress</span>{" "}
+                          <span className="font-semibold text-emerald-700">{progressPercent}%</span>
+                        </span>
                       </div>
                     </div>
                   ) : (
@@ -2722,20 +2758,6 @@ export default function GoalTracker() {
                   )}
 
                   <div className="mt-3 flex w-full flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      aria-label="Back to list"
-                      title="Back to list"
-                      onClick={() => {
-                        if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
-                        setIsEditingGoal(false);
-                        setIsEntryModalOpen(false);
-                        setCurrentView("list");
-                      }}
-                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                    >
-                      <BackIcon />
-                    </button>
                     {isEditingGoal ? (
                       <>
                         <button
@@ -2744,9 +2766,9 @@ export default function GoalTracker() {
                           title="Done"
                           onClick={finishEditingGoal}
                           disabled={isSaving}
-                          className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                          className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                         >
-                          <CheckIcon />
+                          SAVE
                         </button>
                         <button
                           type="button"
@@ -2754,58 +2776,61 @@ export default function GoalTracker() {
                           title="Cancel"
                           onClick={cancelEditingGoal}
                           disabled={isSaving}
-                          className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                          className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                         >
-                          <CloseIcon />
+                          CANCLE
                         </button>
                       </>
                     ) : (
-                      <button
-                        type="button"
-                        aria-label={`Delete ${activeGoal.title}`}
-                        title="Delete"
-                        onClick={() => deleteGoal(activeGoal.id)}
-                        disabled={isSaving}
-                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        <TrashIcon />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      aria-label={`Archive ${activeGoal.title}`}
-                      title="Archive"
-                      onClick={() => archiveGoal(activeGoal.id)}
-                      disabled={isSaving || isEditingGoal}
-                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      <ArchiveIcon />
-                    </button>
-                    {isEditingGoal ? (
-                      <button
-                        type="button"
-                        aria-label={`Delete ${activeGoal.title}`}
-                        title="Delete"
-                        onClick={() => deleteGoal(activeGoal.id)}
-                        disabled
-                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        <TrashIcon />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        aria-label={`Edit ${activeGoal.title}`}
-                        title="Edit"
-                        onClick={() => {
-                          setGoalDraft(toGoalDraft(activeGoal));
-                          setIsEditingGoal(true);
-                        }}
-                        disabled={isSaving}
-                        className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        <EditIcon />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Back to list"
+                          title="Back to list"
+                          onClick={() => {
+                            if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
+                            setIsEditingGoal(false);
+                            setIsEntryModalOpen(false);
+                            setCurrentView("list");
+                          }}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                        >
+                          <BackToListIcon />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${activeGoal.title}`}
+                          title="Delete"
+                          onClick={() => deleteGoal(activeGoal.id)}
+                          disabled={isSaving}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <TrashIcon />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Archive ${activeGoal.title}`}
+                          title="Archive"
+                          onClick={() => archiveGoal(activeGoal.id)}
+                          disabled={isSaving}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <ArchiveIcon />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Edit ${activeGoal.title}`}
+                          title="Edit"
+                          onClick={() => {
+                            setGoalDraft(toGoalDraft(activeGoal));
+                            setIsEditingGoal(true);
+                          }}
+                          disabled={isSaving}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <EditIcon />
+                        </button>
+                      </>
                     )}
                   </div>
 
@@ -2900,9 +2925,9 @@ export default function GoalTracker() {
                                       title="Save"
                                       onClick={() => updateEntryRecord(entry.id)}
                                       disabled={isSaving}
-                                      className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      <CheckIcon />
+                                      SAVE
                                     </button>
                                     <button
                                       type="button"
@@ -2910,9 +2935,9 @@ export default function GoalTracker() {
                                       title="Cancel"
                                       onClick={() => setEditingEntryId(null)}
                                       disabled={isSaving}
-                                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      <CloseIcon />
+                                      CANCLE
                                     </button>
                                     <button
                                       type="button"
@@ -3300,6 +3325,52 @@ export default function GoalTracker() {
           </div>
         )}
       </div>
+      <nav
+        data-swipe-ignore
+        className="fixed inset-x-0 bottom-0 z-40 flex gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur sm:hidden"
+      >
+        {[
+          { id: "list", label: "Goal list", shortLabel: "Goals", count: null },
+          { id: "todo", label: "To do list", shortLabel: "To do", count: null },
+          { id: "routine", label: "Routine list", shortLabel: "Routine", count: null },
+          { id: "archive", label: "Archive", shortLabel: "Archive", count: null },
+          { id: "trash", label: "휴지통", shortLabel: "Trash", count: null },
+        ].map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={(event) => {
+              if (suppressNextNavClick.current) {
+                event.preventDefault();
+                return;
+              }
+              navigateToView(item.id as TrackerView);
+            }}
+            className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:rounded-full sm:px-2 sm:text-xs ${
+              currentView === item.id
+                ? "bg-emerald-700 text-white shadow-sm"
+                : "text-stone-700 hover:bg-stone-100"
+            }`}
+          >
+            {item.id === "list" && <ListIcon />}
+            {item.id === "todo" && <TodoIcon />}
+            {item.id === "routine" && <RoutineIcon />}
+            {item.id === "archive" && <ArchiveIcon />}
+            {item.id === "trash" && <TrashIcon />}
+            <span className="max-w-full truncate whitespace-nowrap sm:hidden">{item.shortLabel}</span>
+            <span className="hidden max-w-full truncate whitespace-nowrap sm:inline">{item.label}</span>
+            {item.count !== null && (
+              <span
+                className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
+                  currentView === item.id ? "bg-white/20 text-white" : "bg-stone-100 text-stone-600"
+                }`}
+              >
+                {item.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
       {screenSwipeTargetView && screenSwipeTargetDirection && (
         <div
           aria-hidden="true"
@@ -3312,12 +3383,15 @@ export default function GoalTracker() {
             }))`,
           }}
         >
-          <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
-            <div className="min-w-0">
+          <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
+            <div className="flex min-w-0 items-end gap-2 sm:gap-3">
+              <div className="min-w-0">
               <p className="text-sm font-medium text-emerald-700">Design your life</p>
-              <h1 className="mt-2 block max-w-full bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-4xl font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
-                BOOST MASTERY
+              <h1 className="mt-2 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-[clamp(1.65rem,8vw,2.25rem)] font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
+                PlanTree
               </h1>
+              </div>
+              <AppleTreeIcon />
             </div>
           </header>
 
@@ -3495,24 +3569,7 @@ function EditIcon() {
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2.5"
-    >
-      <path d="m5 12 4 4L19 6" />
-    </svg>
-  );
-}
-
-function BackIcon() {
+function BackToListIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -3524,8 +3581,34 @@ function BackIcon() {
       strokeLinejoin="round"
       strokeWidth="2"
     >
-      <path d="m12 19-7-7 7-7" />
-      <path d="M19 12H5" />
+      <path d="M8 6h12" />
+      <path d="M8 12h12" />
+      <path d="M8 18h12" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
+      <path d="m5 3-3 3 3 3" />
+    </svg>
+  );
+}
+
+function AppleTreeIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 64 64"
+      className="h-10 w-10 shrink-0 drop-shadow-sm sm:h-16 sm:w-16"
+      fill="none"
+    >
+      <rect x="6" y="6" width="52" height="52" rx="15" fill="#f6f7f4" stroke="#d6d3d1" />
+      <path d="M31 52V31" stroke="#5f3b1f" strokeWidth="6" strokeLinecap="round" />
+      <path d="M23 53h18" stroke="#5f3b1f" strokeWidth="5" strokeLinecap="round" />
+      <path d="M33 35c-7-1-14-7-14-16 8-2 15 2 18 9 3-7 10-11 18-9 0 9-7 15-14 16" fill="#047857" />
+      <path d="M32 31c-6-4-8-11-5-18 7 2 11 7 11 15" fill="#10b981" />
+      <circle cx="23" cy="31" r="5" fill="#ef4444" />
+      <circle cx="42" cy="28" r="5" fill="#ef4444" />
+      <circle cx="34" cy="40" r="5" fill="#ef4444" />
+      <path d="M39 15c3-5 8-6 12-4-2 5-6 8-12 7" fill="#84cc16" />
     </svg>
   );
 }

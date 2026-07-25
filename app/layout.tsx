@@ -13,8 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BOOST MASTERY",
-  description: "BOOST MASTERY helps you track goals, todos, and routines.",
+  title: "PlanTree",
+  description: "PlanTree helps you track goals, todos, and routines.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({

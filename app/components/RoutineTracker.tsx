@@ -799,7 +799,32 @@ function RoutineCard({
             <h3 className="break-words py-1 text-lg font-semibold">{routine.title}</h3>
           )}
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-stone-600">
-            <span>{routine.startDate} - {routine.endDate}</span>
+            {editValue ? (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  Start:{" "}
+                  <input
+                    type="date"
+                    value={editValue.startDate}
+                    onChange={(event) => onEditChange({ ...editValue, startDate: event.target.value })}
+                    className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                    aria-label="Edit routine start date"
+                  />
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  End:{" "}
+                  <input
+                    type="date"
+                    value={editValue.endDate}
+                    onChange={(event) => onEditChange({ ...editValue, endDate: event.target.value })}
+                    className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                    aria-label="Edit routine end date"
+                  />
+                </span>
+              </>
+            ) : (
+              <span>{routine.startDate} - {routine.endDate}</span>
+            )}
             <span>{stats.success} success</span>
             <span>{stats.failure} failure</span>
             <span>{stats.missed} missed</span>
@@ -814,42 +839,12 @@ function RoutineCard({
                 aria-label="Edit routine memo"
                 placeholder="Memo"
               />
-              <div className="mt-3 grid gap-2 rounded-md bg-stone-100 p-3 sm:grid-cols-2">
-                <label className="grid min-w-0 gap-1">
-                  <span className="text-xs font-medium text-stone-500">Start date</span>
-                  <input
-                    type="date"
-                    value={editValue.startDate}
-                    onChange={(event) => onEditChange({ ...editValue, startDate: event.target.value })}
-                    className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-emerald-600"
-                  />
-                </label>
-                <label className="grid min-w-0 gap-1">
-                  <span className="text-xs font-medium text-stone-500">End date</span>
-                  <input
-                    type="date"
-                    value={editValue.endDate}
-                    onChange={(event) => onEditChange({ ...editValue, endDate: event.target.value })}
-                    className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-emerald-600"
-                  />
-                </label>
-              </div>
             </>
           ) : (
             routine.memo && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-stone-700">{routine.memo}</p>
           )}
         </div>
         <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">
-          <button
-            type="button"
-            aria-label="Back to list"
-            title="Back to list"
-            onClick={onBack}
-            disabled={isSaving}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-          >
-            <BackIcon />
-          </button>
           {editValue ? (
             <>
               <button
@@ -858,9 +853,9 @@ function RoutineCard({
                 title="Save"
                 onClick={onSaveEdit}
                 disabled={isSaving || !editValue.title.trim()}
-                className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
               >
-                <CheckIcon />
+                SAVE
               </button>
               <button
                 type="button"
@@ -868,55 +863,54 @@ function RoutineCard({
                 title="Cancel"
                 onClick={onCancelEdit}
                 disabled={isSaving}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
               >
-                <CloseIcon />
+                CANCLE
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              aria-label={`Delete ${routine.title}`}
-              title="Delete"
-              onClick={onDelete}
-              disabled={isSaving}
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-            >
-              <TrashIcon />
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label={`Archive ${routine.title}`}
-            title="Archive"
-            onClick={onArchive}
-            disabled={isSaving || editValue !== null}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-          >
-            <ArchiveIcon />
-          </button>
-          {editValue ? (
-            <button
-              type="button"
-              aria-label={`Delete ${routine.title}`}
-              title="Delete"
-              onClick={onDelete}
-              disabled
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-            >
-              <TrashIcon />
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label={`Edit ${routine.title}`}
-              title="Edit"
-              onClick={onEdit}
-              disabled={isSaving}
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-            >
-              <EditIcon />
-            </button>
+            <>
+              <button
+                type="button"
+                aria-label="Back to routine list"
+                title="Back to routine list"
+                onClick={onBack}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <BackToListIcon />
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${routine.title}`}
+                title="Delete"
+                onClick={onDelete}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+              >
+                <TrashIcon />
+              </button>
+              <button
+                type="button"
+                aria-label={`Archive ${routine.title}`}
+                title="Archive"
+                onClick={onArchive}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <ArchiveIcon />
+              </button>
+              <button
+                type="button"
+                aria-label={`Edit ${routine.title}`}
+                title="Edit"
+                onClick={onEdit}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+              >
+                <EditIcon />
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1132,24 +1126,7 @@ function EditIcon() {
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2.5"
-    >
-      <path d="m5 12 4 4L19 6" />
-    </svg>
-  );
-}
-
-function BackIcon() {
+function BackToListIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -1161,8 +1138,13 @@ function BackIcon() {
       strokeLinejoin="round"
       strokeWidth="2"
     >
-      <path d="m12 19-7-7 7-7" />
-      <path d="M19 12H5" />
+      <path d="M8 6h12" />
+      <path d="M8 12h12" />
+      <path d="M8 18h12" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
+      <path d="m5 3-3 3 3 3" />
     </svg>
   );
 }

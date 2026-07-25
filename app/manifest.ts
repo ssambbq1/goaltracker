@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "BOOST MASTERY",
-    short_name: "BOOST",
-    description: "BOOST MASTERY helps you track goals, todos, and routines.",
+    name: "PlanTree",
+    short_name: "PlanTree",
+    description: "PlanTree helps you track goals, todos, and routines.",
     start_url: "/",
     scope: "/",
     display: "standalone",
@@ -12,9 +12,9 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#047857",
     icons: [
       {
-        src: "/icon.png",
-        sizes: "512x512",
-        type: "image/png",
+        src: "/icon.svg",
+        sizes: "any",
+        type: "image/svg+xml",
         purpose: "any",
       },
       {
