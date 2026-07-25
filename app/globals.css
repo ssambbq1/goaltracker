@@ -23,3 +23,147 @@ textarea,
 select {
   font: inherit;
 }
+
+.routine-confetti-particle {
+  position: absolute;
+  top: -1rem;
+  display: block;
+  border-radius: 2px;
+  opacity: 0;
+  transform: translate3d(0, 0, 0) rotate(0deg);
+  animation-name: routine-confetti-fall;
+  animation-timing-function: cubic-bezier(0.22, 0.72, 0.34, 1);
+  animation-fill-mode: forwards;
+}
+
+.routine-clap-burst {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  width: min(48vw, 13rem);
+  height: min(48vw, 13rem);
+  color: rgb(0 0 0 / 0.62);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.8);
+  filter: drop-shadow(0 16px 28px rgb(28 25 23 / 0.14));
+  animation: routine-clap-burst 2.4s ease-out forwards;
+}
+
+.routine-clap-burst::before {
+  position: absolute;
+  inset: 16%;
+  content: "";
+  border: 2px solid rgb(4 120 87 / 0.22);
+  border-radius: 999px;
+  transform: scale(0.5);
+  animation: routine-clap-ring 1.45s ease-out 0.18s forwards;
+}
+
+.routine-celebration-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.routine-celebration-image {
+  display: block;
+  opacity: 0.72;
+}
+
+.routine-celebration-icon-you {
+  animation: routine-celebration-you 2.4s ease-out forwards;
+}
+
+.routine-celebration-icon-best {
+  animation: routine-celebration-best 2.4s ease-out forwards;
+}
+
+@keyframes routine-confetti-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+
+  12% {
+    opacity: 0.58;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--confetti-x), 92vh, 0) rotate(var(--confetti-rotate));
+  }
+}
+
+@keyframes routine-celebration-you {
+  0% {
+    opacity: 0;
+    transform: scale(0.78) rotate(-5deg);
+  }
+
+  12%,
+  36% {
+    opacity: 0.86;
+    transform: scale(1) rotate(0deg);
+  }
+
+  48%,
+  100% {
+    opacity: 0;
+    transform: scale(1.08) rotate(4deg);
+  }
+}
+
+@keyframes routine-celebration-best {
+  0%,
+  40% {
+    opacity: 0;
+    transform: scale(0.78) rotate(5deg);
+  }
+
+  54%,
+  82% {
+    opacity: 0.86;
+    transform: scale(1) rotate(0deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.08) rotate(-4deg);
+  }
+}
+
+@keyframes routine-clap-burst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.72);
+  }
+
+  16%,
+  74% {
+    opacity: 0.9;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -58%) scale(1.08);
+  }
+}
+
+@keyframes routine-clap-ring {
+  0% {
+    opacity: 0;
+    transform: scale(0.45);
+  }
+
+  22% {
+    opacity: 0.7;
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}

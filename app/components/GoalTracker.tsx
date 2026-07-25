@@ -65,7 +65,7 @@ type RoutineSummary = {
   archivedAt?: number;
 };
 
-type TrackerView = "list" | "todo" | "routine" | "archive" | "trash" | "detail" | "user";
+type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
 
 type Session = {
   loginId: string | null;
@@ -101,7 +101,7 @@ const emptyGoalForm = {
 };
 
 const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
-const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "trash"];
+const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
 
@@ -166,6 +166,13 @@ function getLatestEntry(entries: ProgressEntry[]) {
   );
 }
 
+function needsGoalReminder(goal: Goal) {
+  const latestEntry = getLatestEntry(goal.entries);
+  if (!latestEntry) return true;
+
+  return Date.now() - latestEntry.createdAt >= 7 * 86_400_000;
+}
+
 function toDateInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -198,6 +205,14 @@ function getTodoTargetTiming(targetDate: string) {
     return `${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
   }
   return "due today";
+}
+
+function isTodoDelayed(todo: Todo) {
+  if (todo.completed || !todo.targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate)) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return new Date(`${todo.targetDate}T00:00:00`).getTime() < today.getTime();
 }
 
 function getTodoEditRows(value: string) {
@@ -239,7 +254,7 @@ function isNavigationState(value: unknown): value is NavigationState {
   return (
     record.boostMastery === true &&
     typeof record.view === "string" &&
-    ["list", "todo", "routine", "archive", "trash", "detail", "user"].includes(record.view)
+    ["list", "todo", "routine", "archive", "bin", "detail", "user"].includes(record.view)
   );
 }
 
@@ -309,8 +324,8 @@ function getTrackerViewLabel(view: TrackerView) {
       return "Routine list";
     case "archive":
       return "Archive";
-    case "trash":
-      return "Trash";
+    case "bin":
+      return "Bin";
     case "detail":
       return "Goal detail";
     case "user":
@@ -326,9 +341,9 @@ async function fetchGoals() {
 }
 
 async function fetchDeletedGoals() {
-  const response = await fetch("/api/goals/trash", { cache: "no-store" });
+  const response = await fetch("/api/goals/bin", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; goals?: Goal[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load trash");
+  if (!response.ok) throw new Error(data.error || "Failed to load bin");
   return Array.isArray(data.goals) ? data.goals : [];
 }
 
@@ -347,7 +362,7 @@ async function fetchArchivedTodos() {
 }
 
 async function fetchDeletedTodos() {
-  const response = await fetch("/api/todos/trash", { cache: "no-store" });
+  const response = await fetch("/api/todos/bin", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
   if (!response.ok) throw new Error(data.error || "Failed to load deleted todos");
   return Array.isArray(data.todos) ? data.todos : [];
@@ -361,7 +376,7 @@ async function fetchArchivedRoutines() {
 }
 
 async function fetchDeletedRoutines() {
-  const response = await fetch("/api/routines/trash", { cache: "no-store" });
+  const response = await fetch("/api/routines/bin", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: RoutineSummary[] };
   if (!response.ok) throw new Error(data.error || "Failed to load deleted routines");
   return Array.isArray(data.routines) ? data.routines : [];
@@ -577,7 +592,6 @@ export default function GoalTracker() {
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
-  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
@@ -858,7 +872,6 @@ export default function GoalTracker() {
     setCurrentView(view);
     setIsEditingGoal(false);
     setIsAccountDeleteOpen(false);
-    setIsManualModalOpen(false);
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
@@ -867,7 +880,7 @@ export default function GoalTracker() {
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
     if (view === "routine") setRoutineListResetKey((key) => key + 1);
-    if (view === "archive" || view === "trash") void refreshArchiveTrashData();
+    if (view === "archive" || view === "bin") void refreshArchiveBinData();
   }
 
   function resetGoalState() {
@@ -1091,7 +1104,7 @@ export default function GoalTracker() {
     }
   }
 
-  async function refreshArchiveTrashData() {
+  async function refreshArchiveBinData() {
     try {
       const [
         loadedDeletedGoals,
@@ -1115,7 +1128,7 @@ export default function GoalTracker() {
       setDeletedRoutines(loadedDeletedRoutines);
       setArchivedRoutines(loadedArchivedRoutines);
     } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "Failed to load archive and trash");
+      setError(archiveError instanceof Error ? archiveError.message : "Failed to load archive and bin");
     }
   }
 
@@ -1713,10 +1726,10 @@ export default function GoalTracker() {
       setIsEditingGoal(false);
       setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
       setEntryValue(nextLatestEntry?.value ?? 0);
-      setCurrentView("trash");
+      setCurrentView("bin");
     }
     setGoals(nextGoals);
-    setCurrentView("trash");
+    setCurrentView("bin");
     setIsSaving(true);
     setError("");
 
@@ -1956,7 +1969,7 @@ export default function GoalTracker() {
       className="relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
     >
       <div
-        className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10 ${
+        className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5 ${
           isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
         }`}
         style={{
@@ -1971,32 +1984,14 @@ export default function GoalTracker() {
               PlanTree
             </h1>
             </div>
-           
+            <AppleTreeIcon />
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsManualModalOpen(true);
-                setIsGoalModalOpen(false);
-                setIsTodoModalOpen(false);
-                setIsEntryModalOpen(false);
-                setTodoToDelete(null);
-                setEditingTodoId(null);
-                setEditingTodoTitle("");
-              }}
-              aria-label="Open manual"
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
-            >
-              <BookIcon />
-            </button>
             <button
               type="button"
               onClick={() => {
                 setCurrentView("user");
                 setIsEditingGoal(false);
-                setIsManualModalOpen(false);
                 setIsGoalModalOpen(false);
                 setIsTodoModalOpen(false);
                 setIsEntryModalOpen(false);
@@ -2046,7 +2041,7 @@ export default function GoalTracker() {
             { id: "todo", label: "To do list", shortLabel: "To do", count: null },
             { id: "routine", label: "Routine list", shortLabel: "Routine", count: null },
             { id: "archive", label: "Archive", shortLabel: "Archive", count: null },
-            { id: "trash", label: "휴지통", shortLabel: "Trash", count: null },
+            { id: "bin", label: "Bin", shortLabel: "Bin", count: null },
           ].map((item) => (
             <button
               key={item.id}
@@ -2068,7 +2063,7 @@ export default function GoalTracker() {
               {item.id === "todo" && <TodoIcon />}
               {item.id === "routine" && <RoutineIcon />}
               {item.id === "archive" && <ArchiveIcon />}
-              {item.id === "trash" && <TrashIcon />}
+              {item.id === "bin" && <BinIcon />}
               <span className="max-w-full truncate whitespace-nowrap">{item.label}</span>
               {item.count !== null && (
                 <span
@@ -2105,7 +2100,7 @@ export default function GoalTracker() {
                     <dd className="mt-1 font-semibold">{archivedItemCount}</dd>
                   </div>
                   <div className="rounded-md bg-stone-100 p-3">
-                    <dt className="text-xs font-medium text-stone-500">Trash</dt>
+                    <dt className="text-xs font-medium text-stone-500">Bin</dt>
                     <dd className="mt-1 font-semibold">{deletedItemCount}</dd>
                   </div>
                 </dl>
@@ -2207,7 +2202,7 @@ export default function GoalTracker() {
                     }}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                   >
-                    추가+
+                    ADD+
                   </button>
                 </div>
               </div>
@@ -2221,6 +2216,7 @@ export default function GoalTracker() {
                     goals.map((goal) => {
                       const latest = getLatestEntry(goal.entries)?.value ?? 0;
                       const percent = Math.min(100, clampProgress(latest, goal.target));
+                      const showReminder = needsGoalReminder(goal);
 
                       return (
                         <div
@@ -2240,17 +2236,24 @@ export default function GoalTracker() {
                               selectGoal(goal);
                             }
                           }}
-                          className={`w-full cursor-pointer rounded-md border p-3 text-left transition-all duration-500 ${
+                          className={`relative w-full cursor-pointer overflow-hidden rounded-md border p-3 text-left transition-all duration-500 ${
                             highlightedGoalId === goal.id
                               ? "border-emerald-500 bg-emerald-100 shadow-sm"
                               : goalDropTargetId === goal.id && draggingGoalId !== goal.id
                                 ? "border-emerald-500 bg-white shadow-sm"
-                                : draggingGoalId === goal.id
+                              : draggingGoalId === goal.id
                                   ? "border-stone-400 bg-white opacity-90 shadow-sm"
-                              : "border-stone-200 bg-white hover:border-stone-400"
+                              : showReminder
+                                ? "border-red-200 bg-red-50/70 hover:border-red-300"
+                                : "border-stone-200 bg-white hover:border-stone-400"
                           }`}
                         >
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+                          {showReminder && (
+                            <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-lg font-black tracking-wide text-red-700/15 sm:text-2xl">
+                              DON&apos;T FORGET
+                            </div>
+                          )}
+                          <div className="relative grid grid-cols-[minmax(0,1fr)_auto] gap-3">
                             <div className="min-w-0">
                               <div className="flex min-w-0 items-start justify-between gap-2">
                                 <span className="min-w-0 font-medium">{goal.title}</span>
@@ -2298,9 +2301,9 @@ export default function GoalTracker() {
                       setCurrentView("todo");
                       setIsTodoModalOpen(true);
                     }}
-                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                   >
-                    <AddIcon />
+                    ADD+
                   </button>
                 </div>
               </div>
@@ -2313,6 +2316,7 @@ export default function GoalTracker() {
                   ) : (
                     todos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
+                      const isDelayedTodo = isTodoDelayed(todo);
 
                       return (
                       <div
@@ -2320,27 +2324,34 @@ export default function GoalTracker() {
                         data-reorder-card
                         data-reorder-kind="todo"
                         data-reorder-id={todo.id}
-                        className={`grid ${
+                        className={`relative grid overflow-hidden ${
                           isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
                         } items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
                           highlightedTodoId === todo.id
                             ? "border-emerald-500 bg-emerald-100 shadow-sm"
                             : todoDropTargetId === todo.id && draggingTodoId !== todo.id
                               ? "border-emerald-500 bg-white shadow-sm"
-                              : draggingTodoId === todo.id
+                            : draggingTodoId === todo.id
                                 ? "border-stone-400 bg-white opacity-90 shadow-sm"
-                            : "border-stone-200 bg-white"
+                            : isDelayedTodo
+                              ? "border-red-200 bg-red-50/70"
+                              : "border-stone-200 bg-white"
                         }`}
                       >
+                        {isDelayedTodo && !isEditingTodo && (
+                          <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-lg font-black tracking-wide text-red-700/15 sm:text-2xl">
+                            DELAYED
+                          </div>
+                        )}
                         <input
                           type="checkbox"
                           checked={todo.completed}
                           onChange={() => toggleTodoItem(todo)}
                           disabled={isSaving || isEditingTodo}
                           aria-label={`Toggle ${todo.title}`}
-                          className="h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
+                          className="relative h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
                         />
-                        <div className="min-w-0">
+                        <div className="relative min-w-0">
                           {isEditingTodo ? (
                             <div className="grid min-w-0 gap-2">
                               <textarea
@@ -2395,7 +2406,7 @@ export default function GoalTracker() {
                           )}
                         </div>
                         {!isEditingTodo && (
-                          <div className="flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start">
+                          <div className="relative flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start">
                             <button
                               type="button"
                               aria-label={`Delete ${todo.title}`}
@@ -2404,7 +2415,7 @@ export default function GoalTracker() {
                               disabled={isSaving || editingTodoId !== null}
                               className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                             >
-                              <TrashIcon />
+                              <BinIcon />
                             </button>
                             <button
                               type="button"
@@ -2484,7 +2495,7 @@ export default function GoalTracker() {
                             isSaving={isSaving}
                             onRestore={() => restoreGoal(goal.id)}
                             onDelete={() => deleteGoal(goal.id)}
-                            deleteLabel="Move to trash"
+                            deleteLabel="Move to bin"
                           />
                         );
                       })}
@@ -2521,28 +2532,28 @@ export default function GoalTracker() {
 
             <div
               className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
-                currentView === "trash" ? "" : "hidden"
+                currentView === "bin" ? "" : "hidden"
               }`}
             >
               <div className="flex items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <TrashIcon />
-                  Trash
+                  <BinIcon />
+                  Bin
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{deletedItemCount}</span>
                   <button
                     type="button"
-                    aria-expanded={currentView === "trash"}
-                    aria-label="Trash"
-                    onClick={() => setCurrentView("trash")}
+                    aria-expanded={currentView === "bin"}
+                    aria-label="Bin"
+                    onClick={() => setCurrentView("bin")}
                     className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
                   >
-                    <TrashIcon />
+                    <BinIcon />
                   </button>
                 </div>
               </div>
-              {currentView === "trash" && (
+              {currentView === "bin" && (
               <div className="max-h-[32rem] space-y-4 overflow-auto">
                 {deletedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -2805,7 +2816,7 @@ export default function GoalTracker() {
                           disabled={isSaving}
                           className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                         >
-                          <TrashIcon />
+                          <BinIcon />
                         </button>
                         <button
                           type="button"
@@ -2863,7 +2874,7 @@ export default function GoalTracker() {
                             disabled={isSaving}
                             className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                           >
-                            추가+
+                            ADD+
                           </button>
                         </div>
                       </div>
@@ -2947,7 +2958,7 @@ export default function GoalTracker() {
                                       disabled={isSaving}
                                       className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      <TrashIcon />
+                                      <BinIcon />
                                     </button>
                                   </div>
                                 </div>
@@ -3079,56 +3090,6 @@ export default function GoalTracker() {
           </div>
         )}
 
-        {isManualModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
-            <section className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <BookIcon />
-                  Manual
-                </h2>
-                <button
-                  type="button"
-                  aria-label="Close manual"
-                  onClick={() => setIsManualModalOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
-                <section className="rounded-md bg-stone-100 p-3">
-                  <h3 className="font-semibold text-stone-950">Goal list</h3>
-                  <p className="mt-1">목표를 추가하고, 목표 카드를 눌러 상세 화면에서 진행 기록을 관리합니다.</p>
-                </section>
-                <section className="rounded-md bg-stone-100 p-3">
-                  <h3 className="font-semibold text-stone-950">Progress record</h3>
-                  <p className="mt-1">상세 화면에서 현재 값, 기록 시각, 메모를 저장하면 달성률과 기록 그래프가 갱신됩니다.</p>
-                </section>
-                <section className="rounded-md bg-stone-100 p-3">
-                  <h3 className="font-semibold text-stone-950">To do list</h3>
-                  <p className="mt-1">간단한 할 일을 추가하고 체크박스로 완료 상태를 바꿀 수 있습니다.</p>
-                </section>
-                <section className="rounded-md bg-stone-100 p-3">
-                  <h3 className="font-semibold text-stone-950">Reorder</h3>
-                  <p className="mt-1">항목 오른쪽의 위아래 화살표 핸들을 누른 채 드래그하면 목표와 할 일의 순서를 바꿀 수 있습니다.</p>
-                </section>
-                <section className="rounded-md bg-stone-100 p-3">
-                  <h3 className="font-semibold text-stone-950">Archive and trash</h3>
-                  <p className="mt-1">완료했거나 잠시 숨길 목표는 보관함으로 보내고, 삭제한 목표는 휴지통에서 복원하거나 완전히 삭제할 수 있습니다.</p>
-                </section>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsManualModalOpen(false)}
-                className="mt-4 w-full rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
-              >
-                Close
-              </button>
-            </section>
-          </div>
-        )}
-
         {isGoalModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
             <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -3219,7 +3180,7 @@ export default function GoalTracker() {
                     disabled={isSaving}
                     className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                   >
-                    Add
+                    ADD+
                   </button>
                 </div>
               </div>
@@ -3278,7 +3239,7 @@ export default function GoalTracker() {
                     disabled={isSaving || !todoTitle.trim() || !todoTargetDate.trim()}
                     className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                   >
-                    Add
+                    ADD+
                   </button>
                 </div>
               </div>
@@ -3334,7 +3295,7 @@ export default function GoalTracker() {
           { id: "todo", label: "To do list", shortLabel: "To do", count: null },
           { id: "routine", label: "Routine list", shortLabel: "Routine", count: null },
           { id: "archive", label: "Archive", shortLabel: "Archive", count: null },
-          { id: "trash", label: "휴지통", shortLabel: "Trash", count: null },
+          { id: "bin", label: "Bin", shortLabel: "Bin", count: null },
         ].map((item) => (
           <button
             key={item.id}
@@ -3356,7 +3317,7 @@ export default function GoalTracker() {
             {item.id === "todo" && <TodoIcon />}
             {item.id === "routine" && <RoutineIcon />}
             {item.id === "archive" && <ArchiveIcon />}
-            {item.id === "trash" && <TrashIcon />}
+            {item.id === "bin" && <BinIcon />}
             <span className="max-w-full truncate whitespace-nowrap sm:hidden">{item.shortLabel}</span>
             <span className="hidden max-w-full truncate whitespace-nowrap sm:inline">{item.label}</span>
             {item.count !== null && (
@@ -3374,7 +3335,7 @@ export default function GoalTracker() {
       {screenSwipeTargetView && screenSwipeTargetDirection && (
         <div
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-x-0 top-0 mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10 ${
+          className={`pointer-events-none absolute inset-x-0 top-0 mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5 ${
             isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
           }`}
           style={{
@@ -3401,7 +3362,7 @@ export default function GoalTracker() {
               {screenSwipeTargetView === "todo" && <TodoIcon />}
               {screenSwipeTargetView === "routine" && <RoutineIcon />}
               {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-              {screenSwipeTargetView === "trash" && <TrashIcon />}
+              {screenSwipeTargetView === "bin" && <BinIcon />}
               {screenSwipeTargetView === "user" && <UserIcon />}
               <span>{getTrackerViewLabel(screenSwipeTargetView)}</span>
             </div>
@@ -3414,7 +3375,7 @@ export default function GoalTracker() {
                 {screenSwipeTargetView === "todo" && <TodoIcon />}
                 {screenSwipeTargetView === "routine" && <RoutineIcon />}
                 {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-                {screenSwipeTargetView === "trash" && <TrashIcon />}
+                {screenSwipeTargetView === "bin" && <BinIcon />}
                 {screenSwipeTargetView === "user" && <UserIcon />}
                 {getTrackerViewLabel(screenSwipeTargetView)}
               </div>
@@ -3511,7 +3472,7 @@ function LoadingScreen() {
   );
 }
 
-function TrashIcon() {
+function BinIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -3631,26 +3592,6 @@ function UserIcon() {
   );
 }
 
-function BookIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
-      <path d="M8 6h8" />
-      <path d="M8 10h6" />
-    </svg>
-  );
-}
-
 function LoginScreen({
   loginId,
   password,
@@ -3677,7 +3618,7 @@ function LoginScreen({
   const primaryAction = mode === "login" ? onSubmit : onSignup;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-5 text-stone-950">
+    <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-2.5 text-stone-950">
       <section className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
         <p className="text-sm font-medium text-emerald-700">MasterPlan</p>
         <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
@@ -3780,23 +3721,6 @@ function ReorderHandle({
         <ArrowDownIcon />
       </span>
     </div>
-  );
-}
-
-function AddIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="2"
-    >
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
   );
 }
 

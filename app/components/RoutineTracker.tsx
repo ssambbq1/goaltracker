@@ -1,6 +1,9 @@
 "use client";
 
-import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import bestIcon from "../BEST-transparent.png";
+import youIcon from "../YOU-transparent.png";
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 
 type RoutineMarkStatus = "success" | "failure";
 
@@ -22,7 +25,26 @@ type Routine = {
   marks: RoutineMark[];
 };
 
+type PendingRoutineMarkSave = {
+  routineId: string;
+  date: string;
+  status: RoutineMarkStatus | null;
+  previous: Routine[];
+};
+
+type ConfettiParticle = {
+  id: string;
+  left: number;
+  size: number;
+  x: number;
+  rotate: number;
+  delay: number;
+  duration: number;
+  color: string;
+};
+
 const todayIso = new Date().toISOString().slice(0, 10);
+const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
 
 const emptyRoutineForm = {
   title: "",
@@ -193,6 +215,11 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
+function pseudoRandom(seed: number) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+}
+
 export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
   isSaving: boolean;
   resetSignal: number;
@@ -205,6 +232,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
   const [activeRoutineResetSignal, setActiveRoutineResetSignal] = useState(resetSignal);
   const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyRoutineForm);
   const [schemaMissing, setSchemaMissing] = useState(false);
@@ -212,10 +240,15 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
   const [highlightedRoutineId, setHighlightedRoutineId] = useState<string | null>(null);
   const [draggingRoutineId, setDraggingRoutineId] = useState<string | null>(null);
   const [routineDropTargetId, setRoutineDropTargetId] = useState<string | null>(null);
+  const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([]);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confettiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confettiBurstId = useRef(0);
   const routinesBeforeDrag = useRef<Routine[] | null>(null);
   const latestDraggedRoutines = useRef<Routine[] | null>(null);
   const dragImageClone = useRef<HTMLElement | null>(null);
+  const pendingMarkSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
 
   useEffect(() => {
     let isActive = true;
@@ -242,8 +275,11 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
   }, [onError, reloadSignal]);
 
   useEffect(() => {
+    const markSaveTimers = pendingMarkSaveTimers.current;
     return () => {
       if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      if (confettiTimer.current) clearTimeout(confettiTimer.current);
+      Object.values(markSaveTimers).forEach((timer) => clearTimeout(timer));
       dragImageClone.current?.remove();
     };
   }, []);
@@ -463,9 +499,9 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
     window.addEventListener("pointercancel", handlePointerUp);
   }
 
-  async function markDate(routine: Routine, date: string, currentStatus: RoutineMarkStatus | undefined) {
-    const nextStatus = currentStatus === undefined ? "success" : currentStatus === "success" ? "failure" : null;
+  function setRoutineMark(routine: Routine, date: string, nextStatus: RoutineMarkStatus | null) {
     const previous = routines;
+    const saveKey = `${routine.id}:${date}`;
     setRoutines((current) =>
       current.map((item) =>
         item.id === routine.id
@@ -489,20 +525,141 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
       ),
     );
 
-    onSavingChange(true);
+    if (pendingMarkSaveTimers.current[saveKey]) clearTimeout(pendingMarkSaveTimers.current[saveKey]);
+    pendingMarkSaves.current[saveKey] = {
+      routineId: routine.id,
+      date,
+      status: nextStatus,
+      previous,
+    };
     onError("");
+    pendingMarkSaveTimers.current[saveKey] = setTimeout(() => {
+      void flushRoutineMarkSave(saveKey);
+    }, 500);
+  }
+
+  function triggerSuccessConfetti() {
+    const burstId = confettiBurstId.current + 1;
+    confettiBurstId.current = burstId;
+    const particles = Array.from({ length: 34 }, (_, index) => ({
+      id: `${burstId}-${index}`,
+      left: 12 + pseudoRandom(burstId * 100 + index) * 76,
+      size: 6 + pseudoRandom(burstId * 200 + index) * 8,
+      x: -120 + pseudoRandom(burstId * 300 + index) * 240,
+      rotate: -180 + pseudoRandom(burstId * 400 + index) * 360,
+      delay: pseudoRandom(burstId * 500 + index) * 0.16,
+      duration: 1.9 + pseudoRandom(burstId * 600 + index) * 0.85,
+      color: confettiColors[index % confettiColors.length],
+    }));
+
+    setConfettiParticles(particles);
+    if (confettiTimer.current) clearTimeout(confettiTimer.current);
+    confettiTimer.current = setTimeout(() => setConfettiParticles([]), 3000);
+  }
+
+  function markDate(routine: Routine, date: string, currentStatus: RoutineMarkStatus | undefined) {
+    const nextStatus = currentStatus === undefined ? "success" : currentStatus === "success" ? "failure" : null;
+    setRoutineMark(routine, date, nextStatus);
+  }
+
+  function markTodayFromSummary(routine: Routine, status: RoutineMarkStatus) {
+    if (todayIso < routine.startDate || todayIso > routine.endDate) return;
+
+    const currentStatus = routine.marks.find((mark) => mark.date === todayIso)?.status;
+    setRoutineMark(routine, todayIso, currentStatus === status ? null : status);
+  }
+
+  async function flushRoutineMarkSave(saveKey: string) {
+    const pendingSave = pendingMarkSaves.current[saveKey];
+    if (!pendingSave) return;
+
+    delete pendingMarkSaves.current[saveKey];
+    delete pendingMarkSaveTimers.current[saveKey];
+
     try {
-      setRoutines(await saveRoutineMark(routine.id, date, nextStatus));
+      setRoutines(applyPendingMarkSaves(await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status)));
+      if (pendingSave.status === "success") triggerSuccessConfetti();
     } catch (error) {
-      setRoutines(previous);
+      setRoutines(applyPendingMarkSaves(pendingSave.previous));
       onError(error instanceof Error ? error.message : "Failed to update routine mark");
-    } finally {
-      onSavingChange(false);
     }
+  }
+
+  function applyPendingMarkSaves(savedRoutines: Routine[]) {
+    const pendingSaves = Object.values(pendingMarkSaves.current);
+    if (pendingSaves.length === 0) return savedRoutines;
+
+    return savedRoutines.map((routine) => {
+      const routinePendingSaves = pendingSaves.filter((save) => save.routineId === routine.id);
+      if (routinePendingSaves.length === 0) return routine;
+
+      return routinePendingSaves.reduce<Routine>((nextRoutine, save) => {
+        const marks = nextRoutine.marks.filter((mark) => mark.date !== save.date);
+        return {
+          ...nextRoutine,
+          marks:
+            save.status === null
+              ? marks
+              : [
+                  ...marks,
+                  {
+                    id: `pending-${save.routineId}-${save.date}`,
+                    routineId: save.routineId,
+                    date: save.date,
+                    status: save.status,
+                    createdAt: Date.now(),
+                  },
+                ],
+        };
+      }, routine);
+    });
   }
 
   return (
     <div className="grid gap-4">
+      {confettiParticles.length > 0 && (
+        <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
+          <div className="routine-clap-burst">
+            <span className="routine-celebration-icon routine-celebration-icon-you">
+              <Image
+                src={youIcon}
+                alt=""
+                width={260}
+                height={260}
+                className="routine-celebration-image h-full w-full object-contain"
+              />
+            </span>
+            <span className="routine-celebration-icon routine-celebration-icon-best">
+              <Image
+                src={bestIcon}
+                alt=""
+                width={260}
+                height={260}
+                className="routine-celebration-image h-full w-full object-contain"
+              />
+            </span>
+          </div>
+          {confettiParticles.map((particle) => (
+            <span
+              key={particle.id}
+              className="routine-confetti-particle"
+              style={
+                {
+                  left: `${particle.left}%`,
+                  width: `${particle.size}px`,
+                  height: `${particle.size * 1.55}px`,
+                  backgroundColor: particle.color,
+                  animationDelay: `${particle.delay}s`,
+                  animationDuration: `${particle.duration}s`,
+                  "--confetti-x": `${particle.x}px`,
+                  "--confetti-rotate": `${particle.rotate}deg`,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+      )}
+
       {schemaMissing && (
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           Routine tables are not installed yet. Apply the `supabase/schema.sql` update, then reload this page.
@@ -540,13 +697,23 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                 <h2 className="text-base font-semibold">Routine list</h2>
                 <button
                   type="button"
+                  aria-expanded={isSummaryModalOpen}
+                  aria-label="Open today's routine checklist"
+                  onClick={() => setIsSummaryModalOpen(true)}
+                  disabled={schemaMissing}
+                  className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  SUMMARY
+                </button>
+                <button
+                  type="button"
                   aria-expanded={isRoutineModalOpen}
                   aria-label="Add routine"
                   onClick={() => setIsRoutineModalOpen(true)}
                   disabled={schemaMissing}
-                  className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  추가+
+                  ADD+
                 </button>
               </div>
               <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
@@ -561,13 +728,23 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   <span className="text-xs font-medium text-stone-500">{routines.length}</span>
                   <button
                     type="button"
+                    aria-expanded={isSummaryModalOpen}
+                    aria-label="Open today's routine checklist"
+                    onClick={() => setIsSummaryModalOpen(true)}
+                    disabled={schemaMissing}
+                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    SUMMARY
+                  </button>
+                  <button
+                    type="button"
                     aria-expanded={isRoutineModalOpen}
                     aria-label="Add routine"
                     onClick={() => setIsRoutineModalOpen(true)}
                     disabled={schemaMissing}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    추가+
+                    ADD+
                   </button>
                 </div>
               </div>
@@ -592,6 +769,89 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
             </section>
           )}
         </section>
+      )}
+
+      {isSummaryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-3 py-6">
+          <section className="w-full max-w-2xl rounded-lg border border-stone-300 bg-white p-4 shadow-xl sm:p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  TODAY&apos;S CHECK LIST
+                  <CheckListIcon />
+                </h2>
+                <p className="mt-1 text-xs font-medium text-stone-500">{todayIso}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close today's routine checklist"
+                onClick={() => setIsSummaryModalOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[70vh] overflow-y-auto rounded-md border border-stone-200">
+              <table className="w-full table-fixed border-collapse text-xs sm:text-sm">
+                <thead className="sticky top-0 bg-stone-100 text-xs font-semibold uppercase text-stone-600">
+                  <tr>
+                    <th className="w-[58%] border-b border-stone-200 px-2 py-2 text-left sm:px-3">Routine</th>
+                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">Success</th>
+                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">Failure</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routines.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-5 text-center text-stone-500">
+                        No routines yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    routines.map((routine) => {
+                      const todayStatus = routine.marks.find((mark) => mark.date === todayIso)?.status;
+                      const isTodayInRange = todayIso >= routine.startDate && todayIso <= routine.endDate;
+
+                      return (
+                        <tr key={routine.id} className="border-b border-stone-100 last:border-b-0">
+                          <td className="px-2 py-2 align-middle sm:px-3">
+                            <div className="break-words font-medium text-stone-900">{routine.title}</div>
+                            {!isTodayInRange && (
+                              <div className="mt-0.5 text-xs text-stone-500">
+                                Not scheduled today
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-1 py-2 text-center align-middle sm:px-3">
+                            <input
+                              type="checkbox"
+                              checked={todayStatus === "success"}
+                              onChange={() => markTodayFromSummary(routine, "success")}
+                              disabled={isSaving || !isTodayInRange}
+                              aria-label={`Mark ${routine.title} success today`}
+                              className="h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            />
+                          </td>
+                          <td className="px-1 py-2 text-center align-middle sm:px-3">
+                            <input
+                              type="checkbox"
+                              checked={todayStatus === "failure"}
+                              onChange={() => markTodayFromSummary(routine, "failure")}
+                              disabled={isSaving || !isTodayInRange}
+                              aria-label={`Mark ${routine.title} failure today`}
+                              className="h-5 w-5 rounded border-stone-300 accent-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       )}
 
       {isRoutineModalOpen && (
@@ -668,7 +928,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   disabled={isSaving || schemaMissing || !form.title.trim()}
                   className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Add
+                  ADD+
                 </button>
               </div>
             </div>
@@ -697,6 +957,7 @@ function RoutineListItem({
   onDrag: (event: ReactPointerEvent) => void;
 }) {
   const stats = getRoutineStats(routine);
+  const needsCare = stats.rate <= 50;
 
   return (
     <div
@@ -712,17 +973,24 @@ function RoutineListItem({
           onSelect();
         }
       }}
-      className={`w-full cursor-pointer rounded-md border p-3 text-left transition-all duration-500 ${
+      className={`relative w-full cursor-pointer overflow-hidden rounded-md border p-3 text-left transition-all duration-500 ${
         isHighlighted
           ? "border-emerald-500 bg-emerald-100 shadow-sm"
           : isDropTarget
             ? "border-emerald-500 bg-white shadow-sm"
             : isDragging
               ? "border-stone-400 bg-white opacity-90 shadow-sm"
-              : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
+              : needsCare
+                ? "border-red-200 bg-red-50/70 hover:border-red-300"
+                : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
       }`}
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+      {needsCare && (
+        <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-base font-black tracking-wide text-red-700/15 sm:text-2xl">
+          NEED MORE CARE!
+        </div>
+      )}
+      <div className="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">
           <div className="break-words font-medium text-stone-950">{routine.title}</div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-600">
@@ -739,7 +1007,7 @@ function RoutineListItem({
           />
         </div>
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
+      <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
         <div className="h-full bg-emerald-700" style={{ width: `${stats.rate}%` }} />
       </div>
     </div>
@@ -888,7 +1156,7 @@ function RoutineCard({
                 disabled={isSaving}
                 className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
               >
-                <TrashIcon />
+                <BinIcon />
               </button>
               <button
                 type="button"
@@ -968,7 +1236,7 @@ function ChainCalendar({
                     onClick={() => onMark(date)}
                     disabled={isSaving || isFuture}
                     title={`${date}: ${status ?? "unmarked"}`}
-                    className={`aspect-square min-h-10 rounded-md border p-1 text-left text-[11px] font-semibold transition ${
+                    className={`relative aspect-square min-h-10 overflow-hidden rounded-md border p-1 text-left text-[11px] font-semibold transition ${
                       status === "success"
                         ? "border-emerald-600 bg-emerald-600 text-white"
                         : status === "failure"
@@ -978,7 +1246,12 @@ function ChainCalendar({
                             : "border-stone-300 bg-white text-stone-700 hover:border-emerald-500"
                     } disabled:cursor-not-allowed`}
                   >
-                    <span>{parseLocalDate(date).getDate()}</span>
+                    {(status === "success" || status === "failure") && (
+                      <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[clamp(2rem,9vw,4.5rem)] font-black leading-none text-white/35">
+                        {status === "success" ? <ThumbsUpMark /> : "X"}
+                      </span>
+                    )}
+                    <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
                   </button>
                 );
               })}
@@ -1067,7 +1340,38 @@ function LegendSwatch({ className, label }: { className: string; label: string }
   );
 }
 
-function TrashIcon() {
+function ThumbsUpMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 64 64"
+      className="h-[88%] w-[88%]"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path
+        d="M25 53H14c-3 0-5-2-5-5V30c0-3 2-5 5-5h11v28Z"
+        fill="currentColor"
+        fillOpacity="0.22"
+        strokeWidth="4"
+      />
+      <path
+        d="M25 27c6-5 9-11 10-18 0-3 3-5 6-3 3 2 4 6 3 10l-2 8h9c4 0 7 3 6 7l-4 17c-1 4-4 6-8 6H25V27Z"
+        fill="currentColor"
+        fillOpacity="0.3"
+        strokeWidth="4"
+      />
+      <path d="M16 33v13" strokeWidth="4" />
+      <path d="M43 25h8" strokeWidth="4" />
+      <path d="M42 35h10" strokeWidth="4" />
+      <path d="M40 45h9" strokeWidth="4" />
+    </svg>
+  );
+}
+
+function BinIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -1084,6 +1388,28 @@ function TrashIcon() {
       <path d="M19 6l-1 14H6L5 6" />
       <path d="M10 11v5" />
       <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function CheckListIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0 text-emerald-700"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M9 6h11" />
+      <path d="M9 12h11" />
+      <path d="M9 18h11" />
+      <path d="m3 6 1.5 1.5L7 4.5" />
+      <path d="m3 12 1.5 1.5L7 10.5" />
+      <path d="m3 18 1.5 1.5L7 16.5" />
     </svg>
   );
 }

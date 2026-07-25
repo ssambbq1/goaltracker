@@ -110,7 +110,7 @@ async function addTodoToGoalRows(loginId: string, todo: Todo) {
   if (error) throw error;
 }
 
-async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, destination: "archive" | "trash") {
+async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, destination: "archive" | "bin") {
   const supabase = getSupabaseServerClient();
   const { data: todo, error: readError } = await supabase
     .from("todos")
@@ -138,7 +138,7 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
       deadline: todo.target_date ?? "",
       created_at_ms: todo.created_at_ms,
       archived_at_ms: destination === "archive" ? movedAt : null,
-      deleted_at_ms: destination === "trash" ? movedAt : null,
+      deleted_at_ms: destination === "bin" ? movedAt : null,
       position: -1,
     });
     if (upsertError) throw upsertError;
@@ -151,7 +151,7 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
   await moveTodoInGoalRows(loginId, todoId, destination);
 }
 
-async function moveTodoInGoalRows(loginId: string, todoId: string, destination: "archive" | "trash") {
+async function moveTodoInGoalRows(loginId: string, todoId: string, destination: "archive" | "bin") {
   const supabase = getSupabaseServerClient();
   const update =
     destination === "archive"
@@ -406,7 +406,7 @@ export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "titl
 
 export async function deleteTodo(todoId: string) {
   const loginId = await requireLoginId();
-  await moveTodoFromTodosToGoalRows(loginId, todoId, "trash");
+  await moveTodoFromTodosToGoalRows(loginId, todoId, "bin");
   return {
     todos: await readTodos(),
     deletedTodos: await readDeletedTodos(),

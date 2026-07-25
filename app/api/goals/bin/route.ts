@@ -10,7 +10,7 @@ export async function GET() {
     return Response.json({ goals });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = error instanceof Error ? error.message : "Failed to load trash";
+    const message = error instanceof Error ? error.message : "Failed to load bin";
     return Response.json({ error: message }, { status: 500 });
   }
 }
