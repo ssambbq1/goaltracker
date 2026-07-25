@@ -104,8 +104,6 @@ const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "trash"];
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
-const SWIPE_PREVIEW_LIMIT = 96;
-const SWIPE_SETTLE_DISTANCE = 132;
 
 async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -288,6 +286,25 @@ function getSwipeTargetView(currentView: TrackerView, deltaX: number) {
 
   const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1;
   return SWIPE_NAVIGATION_ORDER[nextIndex] ?? null;
+}
+
+function getTrackerViewLabel(view: TrackerView) {
+  switch (view) {
+    case "list":
+      return "Goal list";
+    case "todo":
+      return "To do list";
+    case "routine":
+      return "Routine list";
+    case "archive":
+      return "Archive";
+    case "trash":
+      return "Trash";
+    case "detail":
+      return "Goal detail";
+    case "user":
+      return "User";
+  }
 }
 
 async function fetchGoals() {
@@ -578,6 +595,8 @@ export default function GoalTracker() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
+  const [screenSwipeTargetView, setScreenSwipeTargetView] = useState<TrackerView | null>(null);
+  const [screenSwipeTargetDirection, setScreenSwipeTargetDirection] = useState<-1 | 1 | null>(null);
   const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
@@ -1178,6 +1197,8 @@ export default function GoalTracker() {
     if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     setIsScreenSwipeAnimating(false);
     setScreenSwipeOffset(0);
+    setScreenSwipeTargetView(null);
+    setScreenSwipeTargetDirection(null);
     screenSwipeState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1196,7 +1217,11 @@ export default function GoalTracker() {
     if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
       swipeState.didSwipe = true;
       event.preventDefault();
-      const previewOffset = Math.max(-SWIPE_PREVIEW_LIMIT, Math.min(SWIPE_PREVIEW_LIMIT, deltaX * 0.38));
+      const nextView = getSwipeTargetView(currentView, deltaX);
+      const viewportWidth = window.innerWidth || 1;
+      const previewOffset = Math.max(-viewportWidth, Math.min(viewportWidth, deltaX));
+      setScreenSwipeTargetView(nextView);
+      setScreenSwipeTargetDirection(nextView ? (deltaX < 0 ? -1 : 1) : null);
       setScreenSwipeOffset(previewOffset);
     }
   }
@@ -1229,18 +1254,17 @@ export default function GoalTracker() {
 
     suppressNextScreenClick.current = true;
     setIsScreenSwipeAnimating(true);
-    setScreenSwipeOffset(deltaX > 0 ? SWIPE_SETTLE_DISTANCE : -SWIPE_SETTLE_DISTANCE);
+    setScreenSwipeTargetView(nextView);
+    setScreenSwipeTargetDirection(deltaX < 0 ? -1 : 1);
+    setScreenSwipeOffset(deltaX > 0 ? window.innerWidth : -window.innerWidth);
     screenSwipeAnimationTimer.current = window.setTimeout(() => {
       navigateToView(nextView);
-      setScreenSwipeOffset(deltaX > 0 ? -SWIPE_PREVIEW_LIMIT : SWIPE_PREVIEW_LIMIT);
-      window.requestAnimationFrame(() => {
-        setScreenSwipeOffset(0);
-      });
-      screenSwipeAnimationTimer.current = window.setTimeout(() => {
-        setIsScreenSwipeAnimating(false);
-        screenSwipeAnimationTimer.current = null;
-      }, 180);
-    }, 120);
+      setIsScreenSwipeAnimating(false);
+      setScreenSwipeOffset(0);
+      setScreenSwipeTargetView(null);
+      setScreenSwipeTargetDirection(null);
+      screenSwipeAnimationTimer.current = null;
+    }, 260);
     window.setTimeout(() => {
       suppressNextScreenClick.current = false;
     }, 350);
@@ -1252,8 +1276,10 @@ export default function GoalTracker() {
     if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     screenSwipeAnimationTimer.current = window.setTimeout(() => {
       setIsScreenSwipeAnimating(false);
+      setScreenSwipeTargetView(null);
+      setScreenSwipeTargetDirection(null);
       screenSwipeAnimationTimer.current = null;
-    }, 180);
+    }, 220);
   }
 
   function cancelScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
@@ -1915,14 +1941,14 @@ export default function GoalTracker() {
         event.stopPropagation();
         suppressNextScreenClick.current = false;
       }}
-      className="min-h-screen touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
+      className="relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
     >
       <div
         className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10 ${
-          isScreenSwipeAnimating ? "transition-transform duration-[180ms] ease-out" : ""
-        } ${screenSwipeOffset ? "rounded-xl shadow-xl shadow-stone-300/40" : ""}`}
+          isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
+        }`}
         style={{
-          transform: `translateX(${screenSwipeOffset}px) scale(${screenSwipeOffset ? 0.992 : 1})`,
+          transform: `translateX(${screenSwipeOffset}px)`,
         }}
       >
         <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
@@ -1998,7 +2024,7 @@ export default function GoalTracker() {
           onPointerMove={moveNavDrag}
           onPointerUp={endNavDrag}
           onPointerCancel={endNavDrag}
-          className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-40 flex cursor-grab gap-1 overflow-x-auto rounded-full border border-stone-300 bg-white/95 p-1 shadow-lg backdrop-blur overscroll-x-contain active:cursor-grabbing [scrollbar-width:none] sm:sticky sm:top-0 sm:bottom-auto sm:inset-x-auto sm:shadow-sm [&::-webkit-scrollbar]:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 flex cursor-grab gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur active:cursor-grabbing sm:sticky sm:top-0 sm:bottom-auto sm:inset-x-auto sm:gap-1 sm:overflow-x-auto sm:rounded-full sm:border sm:p-1 sm:shadow-sm sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
         >
           {[
             { id: "list", label: "Goal list", shortLabel: "Goals", count:  null },
@@ -2017,7 +2043,7 @@ export default function GoalTracker() {
                 }
                 navigateToView(item.id as TrackerView);
               }}
-              className={`flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:px-2 sm:text-xs ${
+              className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:rounded-full sm:px-2 sm:text-xs ${
                 currentView === item.id
                   ? "bg-emerald-700 text-white shadow-sm"
                   : "text-stone-700 hover:bg-stone-100"
@@ -3274,6 +3300,59 @@ export default function GoalTracker() {
           </div>
         )}
       </div>
+      {screenSwipeTargetView && screenSwipeTargetDirection && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-x-0 top-0 mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10 ${
+            isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
+          }`}
+          style={{
+            transform: `translateX(calc(${screenSwipeOffset}px + ${
+              screenSwipeTargetDirection === -1 ? "100%" : "-100%"
+            }))`,
+          }}
+        >
+          <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-emerald-700">Design your life</p>
+              <h1 className="mt-2 block max-w-full bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-4xl font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
+                BOOST MASTERY
+              </h1>
+            </div>
+          </header>
+
+          <div className="rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
+            <div className="flex h-12 items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 text-sm font-semibold text-white">
+              {screenSwipeTargetView === "list" && <ListIcon />}
+              {screenSwipeTargetView === "todo" && <TodoIcon />}
+              {screenSwipeTargetView === "routine" && <RoutineIcon />}
+              {screenSwipeTargetView === "archive" && <ArchiveIcon />}
+              {screenSwipeTargetView === "trash" && <TrashIcon />}
+              {screenSwipeTargetView === "user" && <UserIcon />}
+              <span>{getTrackerViewLabel(screenSwipeTargetView)}</span>
+            </div>
+          </div>
+
+          <section className="min-w-0">
+            <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-base font-semibold">
+                {screenSwipeTargetView === "list" && <ListIcon />}
+                {screenSwipeTargetView === "todo" && <TodoIcon />}
+                {screenSwipeTargetView === "routine" && <RoutineIcon />}
+                {screenSwipeTargetView === "archive" && <ArchiveIcon />}
+                {screenSwipeTargetView === "trash" && <TrashIcon />}
+                {screenSwipeTargetView === "user" && <UserIcon />}
+                {getTrackerViewLabel(screenSwipeTargetView)}
+              </div>
+              <div className="mt-4 space-y-2">
+                <div className="h-14 rounded-md bg-stone-100" />
+                <div className="h-14 rounded-md bg-stone-100" />
+                <div className="h-14 rounded-md bg-stone-100" />
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
