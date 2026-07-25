@@ -104,6 +104,8 @@ const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "trash"];
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
+const SWIPE_PREVIEW_LIMIT = 96;
+const SWIPE_SETTLE_DISTANCE = 132;
 
 async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -575,6 +577,8 @@ export default function GoalTracker() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
+  const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
   const goalSaveVersions = useRef<Record<string, number>>({});
@@ -596,6 +600,7 @@ export default function GoalTracker() {
   const navRef = useRef<HTMLElement | null>(null);
   const navDragState = useRef<NavDragState | null>(null);
   const screenSwipeState = useRef<ScreenSwipeState | null>(null);
+  const screenSwipeAnimationTimer = useRef<number | null>(null);
   const suppressNextNavClick = useRef(false);
   const suppressNextScreenClick = useRef(false);
 
@@ -712,6 +717,7 @@ export default function GoalTracker() {
       Object.values(highlights).forEach((timer) => {
         if (timer) clearTimeout(timer);
       });
+      if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     };
   }, []);
 
@@ -1169,6 +1175,9 @@ export default function GoalTracker() {
     if (isSwipeNavigationBlockedTarget(event.target)) return;
     if (currentView !== "detail" && !SWIPE_NAVIGATION_ORDER.includes(currentView)) return;
 
+    if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
+    setIsScreenSwipeAnimating(false);
+    setScreenSwipeOffset(0);
     screenSwipeState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1187,6 +1196,8 @@ export default function GoalTracker() {
     if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
       swipeState.didSwipe = true;
       event.preventDefault();
+      const previewOffset = Math.max(-SWIPE_PREVIEW_LIMIT, Math.min(SWIPE_PREVIEW_LIMIT, deltaX * 0.38));
+      setScreenSwipeOffset(previewOffset);
     }
   }
 
@@ -1205,16 +1216,44 @@ export default function GoalTracker() {
       Math.abs(deltaX) >= SWIPE_MIN_DISTANCE &&
       Math.abs(deltaY) <= SWIPE_MAX_VERTICAL_DRIFT &&
       Math.abs(deltaX) > Math.abs(deltaY) * 1.25;
-    if (!isHorizontalSwipe) return;
+    if (!isHorizontalSwipe) {
+      settleScreenSwipe(0);
+      return;
+    }
 
     const nextView = getSwipeTargetView(currentView, deltaX);
-    if (!nextView) return;
+    if (!nextView) {
+      settleScreenSwipe(0);
+      return;
+    }
 
     suppressNextScreenClick.current = true;
-    navigateToView(nextView);
+    setIsScreenSwipeAnimating(true);
+    setScreenSwipeOffset(deltaX > 0 ? SWIPE_SETTLE_DISTANCE : -SWIPE_SETTLE_DISTANCE);
+    screenSwipeAnimationTimer.current = window.setTimeout(() => {
+      navigateToView(nextView);
+      setScreenSwipeOffset(deltaX > 0 ? -SWIPE_PREVIEW_LIMIT : SWIPE_PREVIEW_LIMIT);
+      window.requestAnimationFrame(() => {
+        setScreenSwipeOffset(0);
+      });
+      screenSwipeAnimationTimer.current = window.setTimeout(() => {
+        setIsScreenSwipeAnimating(false);
+        screenSwipeAnimationTimer.current = null;
+      }, 180);
+    }, 120);
     window.setTimeout(() => {
       suppressNextScreenClick.current = false;
     }, 350);
+  }
+
+  function settleScreenSwipe(offset: number) {
+    setIsScreenSwipeAnimating(true);
+    setScreenSwipeOffset(offset);
+    if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
+    screenSwipeAnimationTimer.current = window.setTimeout(() => {
+      setIsScreenSwipeAnimating(false);
+      screenSwipeAnimationTimer.current = null;
+    }, 180);
   }
 
   function cancelScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
@@ -1225,6 +1264,7 @@ export default function GoalTracker() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     screenSwipeState.current = null;
+    settleScreenSwipe(0);
   }
 
   function startGoalDrag(event: ReactPointerEvent, goalId: string) {
@@ -1877,7 +1917,14 @@ export default function GoalTracker() {
       }}
       className="min-h-screen touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
     >
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10">
+      <div
+        className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-5 py-6 sm:px-8 lg:px-10 ${
+          isScreenSwipeAnimating ? "transition-transform duration-[180ms] ease-out" : ""
+        } ${screenSwipeOffset ? "rounded-xl shadow-xl shadow-stone-300/40" : ""}`}
+        style={{
+          transform: `translateX(${screenSwipeOffset}px) scale(${screenSwipeOffset ? 0.992 : 1})`,
+        }}
+      >
         <header className="flex items-end justify-between gap-4 border-b border-stone-300 pb-6">
           <div className="min-w-0">
             <p className="text-sm font-medium text-emerald-700">Design your life</p>
