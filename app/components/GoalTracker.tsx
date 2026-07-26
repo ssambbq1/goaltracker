@@ -1,6 +1,10 @@
 ﻿"use client";
 
+import Image from "next/image";
+import bestIcon from "../BEST-transparent.png";
+import youIcon from "../YOU-transparent.png";
 import {
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -92,6 +96,17 @@ type ScreenSwipeState = {
   didSwipe: boolean;
 };
 
+type ConfettiParticle = {
+  id: string;
+  left: number;
+  size: number;
+  x: number;
+  rotate: number;
+  delay: number;
+  duration: number;
+  color: string;
+};
+
 const emptyGoalForm = {
   title: "",
   memo: "",
@@ -105,6 +120,7 @@ const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
+const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
 
 async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -239,6 +255,11 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   const [item] = nextItems.splice(fromIndex, 1);
   nextItems.splice(toIndex, 0, item);
   return nextItems;
+}
+
+function pseudoRandom(seed: number) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function makeNavigationState(view: TrackerView, goalId: string | null): NavigationState {
@@ -626,6 +647,7 @@ export default function GoalTracker() {
   const [screenSwipeTargetView, setScreenSwipeTargetView] = useState<TrackerView | null>(null);
   const [screenSwipeTargetDirection, setScreenSwipeTargetDirection] = useState<-1 | 1 | null>(null);
   const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
+  const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([]);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
   const goalSaveVersions = useRef<Record<string, number>>({});
@@ -650,6 +672,8 @@ export default function GoalTracker() {
   const screenSwipeAnimationTimer = useRef<number | null>(null);
   const suppressNextNavClick = useRef(false);
   const suppressNextScreenClick = useRef(false);
+  const confettiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confettiBurstId = useRef(0);
 
   const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
     if (highlightTimers.current[kind]) clearTimeout(highlightTimers.current[kind]);
@@ -765,6 +789,7 @@ export default function GoalTracker() {
         if (timer) clearTimeout(timer);
       });
       if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
+      if (confettiTimer.current) clearTimeout(confettiTimer.current);
     };
   }, []);
 
@@ -1535,6 +1560,25 @@ export default function GoalTracker() {
     window.addEventListener("pointercancel", handlePointerUp);
   }
 
+  function triggerSuccessConfetti() {
+    const burstId = confettiBurstId.current + 1;
+    confettiBurstId.current = burstId;
+    const particles = Array.from({ length: 34 }, (_, index) => ({
+      id: `${burstId}-${index}`,
+      left: 12 + pseudoRandom(burstId * 100 + index) * 76,
+      size: 6 + pseudoRandom(burstId * 200 + index) * 8,
+      x: -120 + pseudoRandom(burstId * 300 + index) * 240,
+      rotate: -180 + pseudoRandom(burstId * 400 + index) * 360,
+      delay: pseudoRandom(burstId * 500 + index) * 0.16,
+      duration: 1.9 + pseudoRandom(burstId * 600 + index) * 0.85,
+      color: confettiColors[index % confettiColors.length],
+    }));
+
+    setConfettiParticles(particles);
+    if (confettiTimer.current) clearTimeout(confettiTimer.current);
+    confettiTimer.current = setTimeout(() => setConfettiParticles([]), 3000);
+  }
+
   async function toggleTodoItem(todo: Todo) {
     if (!loginId) return;
 
@@ -1547,6 +1591,7 @@ export default function GoalTracker() {
 
     try {
       setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
+      if (nextCompleted) triggerSuccessConfetti();
     } catch (updateError) {
       setTodos(todos);
       setError(updateError instanceof Error ? updateError.message : "Failed to update todo");
@@ -1699,6 +1744,7 @@ export default function GoalTracker() {
   async function addEntry() {
     if (!activeGoal || !Number.isFinite(entryValue)) return;
 
+    const previousLatestValue = getLatestEntry(activeGoal.entries)?.value ?? 0;
     setIsSaving(true);
     setError("");
 
@@ -1708,7 +1754,10 @@ export default function GoalTracker() {
         memo: entryMemo.trim(),
         createdAt: parseDateInputValue(entryRecordedAt),
       });
+      const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
+      const nextLatestValue = getLatestEntry(savedGoal?.entries ?? [])?.value ?? 0;
       setGoals(savedGoals);
+      if (nextLatestValue > previousLatestValue) triggerSuccessConfetti();
       setEntryMemo("");
       setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
@@ -1901,6 +1950,7 @@ export default function GoalTracker() {
   async function updateEntryRecord(entryId: string) {
     if (!activeGoal || !Number.isFinite(editEntryValue)) return;
 
+    const previousLatestValue = getLatestEntry(activeGoal.entries)?.value ?? 0;
     setIsSaving(true);
     setError("");
 
@@ -1910,7 +1960,10 @@ export default function GoalTracker() {
         memo: editEntryMemo.trim(),
         createdAt: parseDateInputValue(editEntryRecordedAt),
       });
+      const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
+      const nextLatestValue = getLatestEntry(savedGoal?.entries ?? [])?.value ?? 0;
       setGoals(savedGoals);
+      if (nextLatestValue > previousLatestValue) triggerSuccessConfetti();
       setEditingEntryId(null);
     } catch (entryError) {
       setError(entryError instanceof Error ? entryError.message : "Failed to update record");
@@ -1971,6 +2024,49 @@ export default function GoalTracker() {
       }}
       className="relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
     >
+      {confettiParticles.length > 0 && (
+        <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
+          <div className="routine-clap-burst">
+            <span className="routine-celebration-icon routine-celebration-icon-you">
+              <Image
+                src={youIcon}
+                alt=""
+                width={260}
+                height={260}
+                className="routine-celebration-image h-full w-full object-contain"
+              />
+            </span>
+            <span className="routine-celebration-icon routine-celebration-icon-best">
+              <Image
+                src={bestIcon}
+                alt=""
+                width={260}
+                height={260}
+                className="routine-celebration-image h-full w-full object-contain"
+              />
+            </span>
+          </div>
+          {confettiParticles.map((particle) => (
+            <span
+              key={particle.id}
+              className="routine-confetti-particle"
+              style={
+                {
+                  left: `${particle.left}%`,
+                  width: `${particle.size}px`,
+                  height: `${particle.size * 1.55}px`,
+                  backgroundColor: particle.color,
+                  animationDelay: `${particle.delay}s`,
+                  animationDuration: `${particle.duration}s`,
+                  "--confetti-x": `${particle.x}px`,
+                  "--confetti-rotate": `${particle.rotate}deg`,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+      )}
+
       <div
         className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5 ${
           isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
