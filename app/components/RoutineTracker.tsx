@@ -7,6 +7,7 @@ import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, 
 import { createPortal } from "react-dom";
 
 type RoutineMarkStatus = "success" | "failure";
+type AppLanguage = "en" | "ko";
 
 type RoutineMark = {
   id: string;
@@ -46,6 +47,67 @@ type ConfettiParticle = {
 
 const todayIso = new Date().toISOString().slice(0, 10);
 const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
+const ROUTINE_TEXT = {
+  en: {
+    routineList: "Routine",
+    routine: "Routine",
+    summary: "SUMMARY",
+    add: "ADD+",
+    save: "SAVE",
+    cancel: "Cancel",
+    close: "Close",
+    start: "Start",
+    end: "End",
+    memo: "Memo",
+    success: "Success",
+    failure: "Failure",
+    missed: "missed",
+    successLower: "success",
+    failureLower: "failure",
+    unmarked: "Unmarked",
+    todayChecklist: "TODAY'S CHECK LIST",
+    noRoutines: "No routines yet. Add a routine with a start and end date to build a chain calendar.",
+    noRoutinesShort: "No routines yet.",
+    notScheduled: "Not scheduled this day",
+    loading: "Loading routines...",
+    addRoutine: "Add routine",
+    successRate: "Success rate",
+    noScoredDays: "No scored days",
+    noRoutineMarks: "No routine marks yet. Mark a day to draw the graph.",
+    calendarPending: "Calendar will appear when this routine reaches the current week.",
+    weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+  },
+  ko: {
+    routineList: "습관",
+    routine: "습관",
+    summary: "요약",
+    add: "추가+",
+    save: "저장",
+    cancel: "취소",
+    close: "닫기",
+    start: "시작",
+    end: "종료",
+    memo: "메모",
+    success: "성공",
+    failure: "실패",
+    missed: "미체크",
+    successLower: "성공",
+    failureLower: "실패",
+    unmarked: "미체크",
+    todayChecklist: "오늘의 체크 리스트",
+    noRoutines: "아직 습관이 없습니다. 시작일과 종료일이 있는 습관을 추가하세요.",
+    noRoutinesShort: "아직 습관이 없습니다.",
+    notScheduled: "이 날짜에는 예정되지 않았습니다",
+    loading: "습관 불러오는 중...",
+    addRoutine: "습관 추가",
+    successRate: "성공률",
+    noScoredDays: "체크된 날짜 없음",
+    noRoutineMarks: "아직 루틴 체크가 없습니다. 날짜를 체크하면 그래프가 표시됩니다.",
+    calendarPending: "루틴 기간이 현재 주에 도달하면 캘린더가 표시됩니다.",
+    weekdays: ["일", "월", "화", "수", "목", "금", "토"],
+  },
+} as const;
+type RoutineText = (typeof ROUTINE_TEXT)[AppLanguage];
 
 const emptyRoutineForm = {
   title: "",
@@ -225,13 +287,15 @@ function pseudoRandom(seed: number) {
   return value - Math.floor(value);
 }
 
-export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
+export default function RoutineTracker({ language = "en", isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
+  language?: AppLanguage;
   isSaving: boolean;
   resetSignal: number;
   reloadSignal: number;
   onSavingChange: (isSaving: boolean) => void;
   onError: (error: string) => void;
 }) {
+  const text = ROUTINE_TEXT[language];
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [form, setForm] = useState(emptyRoutineForm);
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
@@ -693,18 +757,19 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
             onArchive={() => archiveRoutine(activeRoutine.id)}
             onDelete={() => deleteRoutine(activeRoutine.id)}
             onMark={markDate}
+            text={text}
           />
         </section>
       ) : isLoading ? (
         <section className="rounded-lg border border-stone-300 bg-white p-8 text-center text-sm text-stone-600">
-          Loading routines...
+          {text.loading}
         </section>
       ) : (
         <section className="grid gap-4">
           {routines.length === 0 ? (
             <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
               <div className="flex items-center gap-2 px-1 pb-2">
-                <h2 className="text-base font-semibold">Routine list</h2>
+                <h2 className="text-base font-semibold">{text.routineList}</h2>
                 <button
                   type="button"
                   aria-expanded={isSummaryModalOpen}
@@ -716,7 +781,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   disabled={schemaMissing}
                   className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  SUMMARY
+                  {text.summary}
                 </button>
                 <button
                   type="button"
@@ -726,17 +791,17 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   disabled={schemaMissing}
                   className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  ADD+
+                  {text.add}
                 </button>
               </div>
               <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                No routines yet. Add a routine with a start and end date to build a chain calendar.
+                {text.noRoutines}
               </div>
             </section>
           ) : (
             <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
               <div className="flex items-center gap-2 px-1 pb-2">
-                <h2 className="text-base font-semibold">Routine list</h2>
+                <h2 className="text-base font-semibold">{text.routineList}</h2>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{routines.length}</span>
                   <button
@@ -750,7 +815,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                     disabled={schemaMissing}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    SUMMARY
+                    {text.summary}
                   </button>
                   <button
                     type="button"
@@ -760,7 +825,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                     disabled={schemaMissing}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    ADD+
+                    {text.add}
                   </button>
                 </div>
               </div>
@@ -793,7 +858,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-base font-semibold">
-                  TODAY&apos;S CHECK LIST
+                  {text.todayChecklist}
                   <CheckListIcon />
                 </h2>
                 <div className="mt-1 flex items-center gap-1.5">
@@ -830,16 +895,16 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
               <table className="w-full table-fixed border-collapse text-xs sm:text-sm">
                 <thead className="sticky top-0 bg-stone-100 text-xs font-semibold uppercase text-stone-600">
                   <tr>
-                    <th className="w-[58%] border-b border-stone-200 px-2 py-2 text-left sm:px-3">Routine</th>
-                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">Success</th>
-                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">Failure</th>
+                    <th className="w-[58%] border-b border-stone-200 px-2 py-2 text-left sm:px-3">{text.routine}</th>
+                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">{text.success}</th>
+                    <th className="w-[21%] border-b border-stone-200 px-1 py-2 text-center sm:px-3">{text.failure}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {routines.length === 0 ? (
                     <tr>
                       <td colSpan={3} className="px-3 py-5 text-center text-stone-500">
-                        No routines yet.
+                        {text.noRoutinesShort}
                       </td>
                     </tr>
                   ) : (
@@ -854,7 +919,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                             <div className="break-words font-medium text-stone-900">{routine.title}</div>
                             {!isSummaryDateInRange && (
                               <div className="mt-0.5 text-xs text-stone-500">
-                                Not scheduled this day
+                                {text.notScheduled}
                               </div>
                             )}
                           </td>
@@ -893,7 +958,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold">Add routine</h2>
+              <h2 className="text-base font-semibold">{text.addRoutine}</h2>
               <button
                 type="button"
                 aria-label="Close add routine"
@@ -905,7 +970,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
             </div>
             <div className="mt-4 grid gap-3">
               <label className="grid gap-1 text-sm font-medium">
-                Routine
+                {text.routine}
                 <input
                   value={form.title}
                   onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
@@ -917,7 +982,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                 />
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Memo
+                {text.memo}
                 <textarea
                   value={form.memo}
                   onChange={(event) => setForm((current) => ({ ...current, memo: event.target.value }))}
@@ -928,7 +993,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
               </label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
-                  Start
+                  {text.start}
                   <input
                     type="date"
                     value={form.startDate}
@@ -938,7 +1003,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   />
                 </label>
                 <label className="grid gap-1 text-sm font-medium">
-                  End
+                  {text.end}
                   <input
                     type="date"
                     value={form.endDate}
@@ -955,7 +1020,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   disabled={isSaving}
                   className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Close
+                  {text.close}
                 </button>
                 <button
                   type="button"
@@ -963,7 +1028,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   disabled={isSaving || schemaMissing || !form.title.trim()}
                   className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
-                  ADD+
+                  {text.add}
                 </button>
               </div>
             </div>
@@ -1062,6 +1127,7 @@ function RoutineCard({
   onArchive,
   onDelete,
   onMark,
+  text,
 }: {
   routine: Routine;
   isSaving: boolean;
@@ -1074,6 +1140,7 @@ function RoutineCard({
   onArchive: () => void;
   onDelete: () => void;
   onMark: (routine: Routine, date: string, status: RoutineMarkStatus | undefined) => void;
+  text: RoutineText;
 }) {
   const stats = getRoutineStats(routine);
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
@@ -1106,7 +1173,7 @@ function RoutineCard({
             {editValue ? (
               <>
                 <span className="inline-flex items-center gap-1">
-                  Start:{" "}
+                  {text.start}:{" "}
                   <input
                     type="date"
                     value={editValue.startDate}
@@ -1116,7 +1183,7 @@ function RoutineCard({
                   />
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  End:{" "}
+                  {text.end}:{" "}
                   <input
                     type="date"
                     value={editValue.endDate}
@@ -1129,9 +1196,9 @@ function RoutineCard({
             ) : (
               <span>{routine.startDate} - {routine.endDate}</span>
             )}
-            <span>{stats.success} success</span>
-            <span>{stats.failure} failure</span>
-            <span>{stats.missed} missed</span>
+            <span>{stats.success} {text.successLower}</span>
+            <span>{stats.failure} {text.failureLower}</span>
+            <span>{stats.missed} {text.missed}</span>
           </div>
           {editValue ? (
             <>
@@ -1141,7 +1208,7 @@ function RoutineCard({
                 onChange={(event) => onEditChange({ ...editValue, memo: event.target.value })}
                 className="mt-2 min-h-24 w-full resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
-                placeholder="Memo"
+                placeholder={text.memo}
               />
             </>
           ) : (
@@ -1154,22 +1221,22 @@ function RoutineCard({
               <button
                 type="button"
                 aria-label="Save routine"
-                title="Save"
+                title={text.save}
                 onClick={onSaveEdit}
                 disabled={isSaving || !editValue.title.trim()}
                 className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
               >
-                SAVE
+                {text.save}
               </button>
               <button
                 type="button"
                 aria-label="Cancel editing routine"
-                title="Cancel"
+                title={text.cancel}
                 onClick={onCancelEdit}
                 disabled={isSaving}
                 className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
               >
-                CANCLE
+                {text.cancel}
               </button>
             </>
           ) : (
@@ -1220,8 +1287,8 @@ function RoutineCard({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
-        <ChainCalendar dates={dates} markByDate={markByDate} isSaving={isSaving} onMark={(date) => onMark(routine, date, markByDate.get(date))} />
-        <RoutineSuccessGraph routine={routine} />
+        <ChainCalendar dates={dates} markByDate={markByDate} isSaving={isSaving} onMark={(date) => onMark(routine, date, markByDate.get(date))} text={text} />
+        <RoutineSuccessGraph routine={routine} text={text} />
       </div>
     </div>
   );
@@ -1232,11 +1299,13 @@ function ChainCalendar({
   markByDate,
   isSaving,
   onMark,
+  text,
 }: {
   dates: string[];
   markByDate: Map<string, RoutineMarkStatus>;
   isSaving: boolean;
   onMark: (date: string) => void;
+  text: RoutineText;
 }) {
   const monthGroups = groupDatesByMonth(dates);
 
@@ -1244,7 +1313,7 @@ function ChainCalendar({
     <div className="min-w-0">
       {monthGroups.length === 0 ? (
         <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-          Calendar will appear when this routine reaches the current week.
+          {text.calendarPending}
         </div>
       ) : (
         <div className="space-y-4">
@@ -1254,7 +1323,7 @@ function ChainCalendar({
               {group.label}
             </h4>
             <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-semibold text-stone-500">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              {text.weekdays.map((day) => (
                 <div key={`${group.key}-${day}`}>{day}</div>
               ))}
             </div>
@@ -1271,7 +1340,7 @@ function ChainCalendar({
                     type="button"
                     onClick={() => onMark(date)}
                     disabled={isSaving || isFuture}
-                    title={`${date}: ${status ?? "unmarked"}`}
+                    title={`${date}: ${status ? (status === "success" ? text.success : text.failure) : text.unmarked}`}
                     className={`relative aspect-square min-h-10 overflow-hidden rounded-md border p-1 text-left text-[11px] font-semibold transition ${
                       status === "success"
                         ? "border-emerald-600 bg-emerald-600 text-white"
@@ -1297,15 +1366,15 @@ function ChainCalendar({
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-        <LegendSwatch className="bg-emerald-600" label="Success" />
-        <LegendSwatch className="bg-red-500" label="Failure" />
-        <LegendSwatch className="border border-stone-300 bg-white" label="Unmarked" />
+        <LegendSwatch className="bg-emerald-600" label={text.success} />
+        <LegendSwatch className="bg-red-500" label={text.failure} />
+        <LegendSwatch className="border border-stone-300 bg-white" label={text.unmarked} />
       </div>
     </div>
   );
 }
 
-function RoutineSuccessGraph({ routine }: { routine: Routine }) {
+function RoutineSuccessGraph({ routine, text }: { routine: Routine; text: RoutineText }) {
   const stats = getRoutineStats(routine);
   const dates = getDateRange(routine.startDate, routine.endDate).filter((date) => date <= todayIso);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
@@ -1319,24 +1388,24 @@ function RoutineSuccessGraph({ routine }: { routine: Routine }) {
     <div className="min-w-0 rounded-md bg-stone-100 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-medium text-stone-500">Success rate</div>
+          <div className="text-xs font-medium text-stone-500">{text.successRate}</div>
           <div className="mt-1 text-3xl font-semibold text-emerald-700">{stats.rate}%</div>
         </div>
         <div className="text-right text-xs text-stone-600">
           <div>{stats.success} / {stats.total}</div>
-          <div>{scoredDates.length ? `${formatShortDate(scoredDates[0])} - ${formatShortDate(scoredDates.at(-1) ?? scoredDates[0])}` : "No scored days"}</div>
+          <div>{scoredDates.length ? `${formatShortDate(scoredDates[0])} - ${formatShortDate(scoredDates.at(-1) ?? scoredDates[0])}` : text.noScoredDays}</div>
         </div>
       </div>
       <div className="mt-4">
-        <MiniLineChart points={points} />
+        <MiniLineChart points={points} text={text} />
       </div>
     </div>
   );
 }
 
-function MiniLineChart({ points }: { points: number[] }) {
+function MiniLineChart({ points, text }: { points: number[]; text: RoutineText }) {
   if (!points.length) {
-    return <div className="flex h-32 items-center justify-center rounded-md bg-white px-3 text-center text-sm text-stone-500">No routine marks yet. Mark a day to draw the graph.</div>;
+    return <div className="flex h-32 items-center justify-center rounded-md bg-white px-3 text-center text-sm text-stone-500">{text.noRoutineMarks}</div>;
   }
 
   const width = 300;
