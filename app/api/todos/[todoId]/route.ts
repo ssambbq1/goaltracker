@@ -12,6 +12,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/todos/
       title: typeof body?.title === "string" ? body.title : undefined,
       completed: typeof body?.completed === "boolean" ? body.completed : undefined,
       targetDate: typeof body?.targetDate === "string" ? body.targetDate : undefined,
+      category: typeof body?.category === "string" ? body.category : undefined,
     });
 
     return Response.json({ todos });

@@ -93,12 +93,12 @@ export default function ProgressChart({
       >
         <defs>
           <linearGradient id="progress-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#047857" stopOpacity="0.24" />
-            <stop offset="100%" stopColor="#047857" stopOpacity="0.04" />
+            <stop offset="0%" stopColor="var(--chart-primary-fill-start)" />
+            <stop offset="100%" stopColor="var(--chart-primary-fill-end)" />
           </linearGradient>
         </defs>
 
-        <rect x={padding.left} y={padding.top} width={plotWidth} height={plotHeight} fill="#fafaf9" rx="6" />
+        <rect className="goal-chart-plot-bg" x={padding.left} y={padding.top} width={plotWidth} height={plotHeight} fill="var(--chart-plot-bg)" rx="6" />
 
         {ticks.map((tick, index) => (
           <g key={`${tick}-${index}`}>
@@ -107,7 +107,8 @@ export default function ProgressChart({
               x2={padding.left + plotWidth}
               y1={yFor(tick)}
               y2={yFor(tick)}
-              stroke="#e7e5e4"
+              stroke="var(--chart-grid-line)"
+              className="goal-chart-grid-line"
             />
             <text x={padding.left - 10} y={yFor(tick) + 4} textAnchor="end" className="fill-stone-500 text-xs">
               {formatTickValue(tick)}
@@ -120,11 +121,12 @@ export default function ProgressChart({
           x2={padding.left + plotWidth}
           y1={goalY}
           y2={goalY}
-          stroke="#b45309"
+          stroke="var(--chart-target)"
           strokeDasharray="6 6"
           strokeWidth="2"
+          className="goal-chart-target-line"
         />
-        <text x={padding.left + plotWidth - 4} y={goalY - 8} textAnchor="end" className="fill-amber-700 text-xs">
+        <text x={padding.left + plotWidth - 4} y={goalY - 8} textAnchor="end" className="goal-chart-target-text fill-amber-700 text-xs">
           Target {target} {unit}
         </text>
 
@@ -135,15 +137,16 @@ export default function ProgressChart({
               x2={deadlineX}
               y1={padding.top}
               y2={padding.top + plotHeight}
-              stroke="#dc2626"
+          stroke="var(--chart-deadline)"
               strokeDasharray="5 5"
               strokeWidth="2"
+              className="goal-chart-deadline-line"
             />
             <text
               x={Math.min(deadlineX + 6, padding.left + plotWidth - 4)}
               y={padding.top + 32}
               textAnchor={deadlineX > padding.left + plotWidth - 80 ? "end" : "start"}
-              className="fill-red-600 text-xs"
+              className="goal-chart-deadline-text fill-red-600 text-xs"
             >
               Target date
             </text>
@@ -155,20 +158,21 @@ export default function ProgressChart({
           x2={todayX}
           y1={padding.top}
           y2={padding.top + plotHeight}
-          stroke="#0f766e"
+          stroke="var(--chart-today)"
           strokeDasharray="4 5"
           strokeWidth="2"
+          className="goal-chart-today-line"
         />
-        <text x={todayX + 6} y={padding.top + 14} textAnchor="start" className="fill-teal-700 text-xs">
+        <text x={todayX + 6} y={padding.top + 14} textAnchor="start" className="goal-chart-today-text fill-teal-700 text-xs">
           Today
         </text>
 
-        <path d={areaPath} fill="url(#progress-fill)" />
-        <path d={linePath} fill="none" stroke="#047857" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+        <path className="goal-chart-area" d={areaPath} fill="url(#progress-fill)" />
+        <path className="goal-chart-line" d={linePath} fill="none" stroke="var(--chart-primary)" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
 
         {sorted.map((entry) => (
           <g key={entry.id}>
-            <circle cx={xFor(entry.createdAt)} cy={yFor(entry.value)} r="5" fill="#047857" />
+            <circle className="goal-chart-dot" cx={xFor(entry.createdAt)} cy={yFor(entry.value)} r="5" fill="var(--chart-primary)" />
             <title>
               {formatShortDate(entry.createdAt)}: {entry.value} {unit}
             </title>

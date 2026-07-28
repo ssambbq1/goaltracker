@@ -55,6 +55,7 @@ type Todo = {
   completed: boolean;
   createdAt: number;
   targetDate?: string;
+  category: string;
   deletedAt?: number;
   archivedAt?: number;
 };
@@ -117,6 +118,7 @@ const emptyGoalForm = {
 };
 
 const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
+const THEME_STORAGE_KEY = "boost-mastery.theme";
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
@@ -206,6 +208,10 @@ function getTodoTargetStatus(targetDate?: string) {
   if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return "Target not set";
 
   return `Target: ${targetDate} · ${getTodoTargetTiming(targetDate)}`;
+}
+
+function getTodoCategoryLabel(category: string) {
+  return category.trim() || "No category";
 }
 
 function getTodoTargetTiming(targetDate: string) {
@@ -306,6 +312,22 @@ function writeStoredNavigationState(state: NavigationState) {
 function clearStoredNavigationState() {
   try {
     window.localStorage.removeItem(NAVIGATION_STORAGE_KEY);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function readStoredDarkMode() {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark";
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredDarkMode(isDarkMode: boolean) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? "dark" : "light");
   } catch {
     // Ignore unavailable storage.
   }
@@ -435,11 +457,11 @@ async function fetchTodos() {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function createTodo(title: string, targetDate: string) {
+async function createTodo(title: string, targetDate: string, category: string) {
   const response = await fetch("/api/todos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, targetDate }),
+    body: JSON.stringify({ title, targetDate, category }),
   });
   const data = (await response.json()) as { error?: string; todo?: Todo; todos?: Todo[] };
   if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add todo");
@@ -457,7 +479,7 @@ async function reorderTodoList(todoIds: string[]) {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate">>) {
+async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>) {
   const response = await fetch(`/api/todos/${todoId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -619,10 +641,12 @@ export default function GoalTracker() {
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
+  const [isEmptyBinModalOpen, setIsEmptyBinModalOpen] = useState(false);
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editingTodoTitle, setEditingTodoTitle] = useState("");
   const [editingTodoTargetDate, setEditingTodoTargetDate] = useState("");
+  const [editingTodoCategory, setEditingTodoCategory] = useState("");
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [draggingGoalId, setDraggingGoalId] = useState<string | null>(null);
@@ -632,6 +656,8 @@ export default function GoalTracker() {
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [todoTitle, setTodoTitle] = useState("");
   const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
+  const [todoCategory, setTodoCategory] = useState("");
+  const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>([]);
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
   const [entryMemo, setEntryMemo] = useState("");
@@ -643,6 +669,9 @@ export default function GoalTracker() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [isDarkMode, setIsDarkMode] = useState(() =>
+    typeof window === "undefined" ? false : readStoredDarkMode(),
+  );
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
   const [screenSwipeTargetView, setScreenSwipeTargetView] = useState<TrackerView | null>(null);
   const [screenSwipeTargetDirection, setScreenSwipeTargetDirection] = useState<-1 | 1 | null>(null);
@@ -794,6 +823,15 @@ export default function GoalTracker() {
   }, []);
 
   useEffect(() => {
+    document.documentElement.classList.toggle("dark-mode", isDarkMode);
+    document.body.classList.toggle("dark-mode", isDarkMode);
+    document.documentElement.dataset.theme = isDarkMode ? "dark" : "light";
+    document.body.dataset.theme = isDarkMode ? "dark" : "light";
+    document.documentElement.style.colorScheme = isDarkMode ? "dark" : "light";
+    writeStoredDarkMode(isDarkMode);
+  }, [isDarkMode]);
+
+  useEffect(() => {
     function applyBrowserNavigation(event: PopStateEvent) {
       if (!isNavigationState(event.state)) return;
 
@@ -810,6 +848,7 @@ export default function GoalTracker() {
       setIsGoalModalOpen(false);
       setIsTodoModalOpen(false);
       setIsEntryModalOpen(false);
+      setIsEmptyBinModalOpen(false);
       setTodoToDelete(null);
       setEditingTodoId(null);
       setEditingTodoTitle("");
@@ -879,6 +918,25 @@ export default function GoalTracker() {
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
   const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
   const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
+  const todoCategories = useMemo(
+    () =>
+      Array.from(new Set(todos.map((todo) => todo.category.trim()).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    [todos],
+  );
+  const activeSelectedTodoCategories = useMemo(
+    () => selectedTodoCategories.filter((category) => todoCategories.includes(category)),
+    [selectedTodoCategories, todoCategories],
+  );
+  const selectedTodoCategorySet = useMemo(() => new Set(activeSelectedTodoCategories), [activeSelectedTodoCategories]);
+  const visibleTodos = useMemo(
+    () =>
+      activeSelectedTodoCategories.length === 0
+        ? todos
+        : todos.filter((todo) => selectedTodoCategorySet.has(todo.category.trim())),
+    [activeSelectedTodoCategories.length, selectedTodoCategorySet, todos],
+  );
 
   useEffect(() => {
     const textarea = goalMemoTextareaRef.current;
@@ -903,10 +961,12 @@ export default function GoalTracker() {
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
+    setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
     setEditingTodoId(null);
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
+    setEditingTodoCategory("");
     if (view === "routine") setRoutineListResetKey((key) => key + 1);
     if (view === "archive" || view === "bin") void refreshArchiveBinData();
   }
@@ -931,14 +991,18 @@ export default function GoalTracker() {
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
+    setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
     setEditingTodoId(null);
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
+    setEditingTodoCategory("");
     setHighlightedGoalId(null);
     setHighlightedTodoId(null);
     setTodoTitle("");
     setTodoTargetDate(toDateInputValue());
+    setTodoCategory("");
+    setSelectedTodoCategories([]);
     setGoalDraft(null);
     setEntryValue(0);
     setEntryMemo("");
@@ -1414,16 +1478,18 @@ export default function GoalTracker() {
   async function addTodoItem() {
     const title = todoTitle.trim();
     const targetDate = todoTargetDate.trim();
+    const category = todoCategory.trim();
     if (!title || !targetDate || !loginId) return;
 
     setIsSaving(true);
     setError("");
 
     try {
-      const result = await createTodo(title, targetDate);
+      const result = await createTodo(title, targetDate, category);
       setTodos(result.todos);
       setTodoTitle("");
       setTodoTargetDate(toDateInputValue());
+      setTodoCategory("");
       setIsTodoModalOpen(false);
       setCurrentView("todo");
     } catch (addError) {
@@ -1437,6 +1503,7 @@ export default function GoalTracker() {
     setEditingTodoId(todo.id);
     setEditingTodoTitle(todo.title);
     setEditingTodoTargetDate(todo.targetDate ?? toDateInputValue());
+    setEditingTodoCategory(todo.category);
     setTodoToDelete(null);
   }
 
@@ -1444,6 +1511,13 @@ export default function GoalTracker() {
     setEditingTodoId(null);
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
+    setEditingTodoCategory("");
+  }
+
+  function toggleTodoCategoryFilter(category: string) {
+    setSelectedTodoCategories((current) =>
+      current.includes(category) ? current.filter((item) => item !== category) : [...current, category],
+    );
   }
 
   async function saveTodoTitle(todo: Todo) {
@@ -1451,6 +1525,7 @@ export default function GoalTracker() {
 
     const title = editingTodoTitle.trim();
     const targetDate = editingTodoTargetDate.trim();
+    const category = editingTodoCategory.trim();
     if (!title) {
       setError("Todo title is required");
       return;
@@ -1461,18 +1536,18 @@ export default function GoalTracker() {
       return;
     }
 
-    if (title === todo.title && targetDate === (todo.targetDate ?? "")) {
+    if (title === todo.title && targetDate === (todo.targetDate ?? "") && category === todo.category) {
       cancelEditingTodo();
       return;
     }
 
     const previousTodos = todos;
-    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, title, targetDate } : item)));
+    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, title, targetDate, category } : item)));
     setIsSaving(true);
     setError("");
 
     try {
-      setTodos(await patchTodo(todo.id, { title, targetDate }));
+      setTodos(await patchTodo(todo.id, { title, targetDate, category }));
       cancelEditingTodo();
     } catch (updateError) {
       setTodos(previousTodos);
@@ -1925,6 +2000,34 @@ export default function GoalTracker() {
     }
   }
 
+  async function emptyBin() {
+    if (deletedItemCount === 0) return;
+
+    const goalIds = deletedGoals.map((goal) => goal.id);
+    const todoIds = deletedTodos.map((todo) => todo.id);
+    const routineIds = deletedRoutines.map((routine) => routine.id);
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      await Promise.all([
+        ...goalIds.map((goalId) => permanentlyRemoveGoal(goalId)),
+        ...todoIds.map((todoId) => permanentlyRemoveTodo(todoId)),
+        ...routineIds.map((routineId) => permanentlyRemoveRoutine(routineId)),
+      ]);
+      setDeletedGoals([]);
+      setDeletedTodos([]);
+      setDeletedRoutines([]);
+      setIsEmptyBinModalOpen(false);
+    } catch (deleteError) {
+      await refreshArchiveBinData();
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to empty bin");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function selectGoal(goal: Goal) {
     const goalLatestEntry = getLatestEntry(goal.entries);
     flashMovedItem("goal", goal.id);
@@ -2022,7 +2125,9 @@ export default function GoalTracker() {
         event.stopPropagation();
         suppressNextScreenClick.current = false;
       }}
-      className="relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0"
+      className={`relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0 ${
+        isDarkMode ? "app-dark" : ""
+      }`}
     >
       {confettiParticles.length > 0 && (
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
@@ -2086,6 +2191,15 @@ export default function GoalTracker() {
             <AppleTreeIcon />
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => setIsDarkMode((current) => !current)}
+              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+              title={isDarkMode ? "Light mode" : "Dark mode"}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
+            >
+              {isDarkMode ? <SunIcon /> : <MoonIcon />}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -2391,7 +2505,9 @@ export default function GoalTracker() {
                   To do list
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{todos.length}</span>
+                  <span className="text-xs font-medium text-stone-500">
+                    {activeSelectedTodoCategories.length ? `${visibleTodos.length}/${todos.length}` : todos.length}
+                  </span>
                   <button
                     type="button"
                     aria-expanded={isTodoModalOpen}
@@ -2406,14 +2522,49 @@ export default function GoalTracker() {
                   </button>
                 </div>
               </div>
+              {todoCategories.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2 px-1">
+                  {todoCategories.map((category) => {
+                    const isSelected = selectedTodoCategorySet.has(category);
+                    return (
+                      <button
+                        key={category}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => toggleTodoCategoryFilter(category)}
+                        className={`min-h-8 rounded-md border px-3 py-1 text-xs font-semibold transition ${
+                          isSelected
+                            ? "border-emerald-700 bg-emerald-700 text-white"
+                            : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    );
+                  })}
+                  {activeSelectedTodoCategories.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTodoCategories([])}
+                      className="min-h-8 rounded-md border border-stone-300 px-3 py-1 text-xs font-semibold text-stone-700 hover:bg-stone-100"
+                    >
+                      All
+                    </button>
+                  )}
+                </div>
+              )}
               {currentView === "todo" && (
                 <div className="space-y-2">
                   {todos.length === 0 ? (
                     <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                       No todos yet. Add a simple task to keep it on the list.
                     </p>
+                  ) : visibleTodos.length === 0 ? (
+                    <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+                      No todos match the selected categories.
+                    </p>
                   ) : (
-                    todos.map((todo) => {
+                    visibleTodos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
                       const isDelayedTodo = isTodoDelayed(todo);
 
@@ -2472,6 +2623,16 @@ export default function GoalTracker() {
                                 />
                                 <span>· {getTodoTargetTiming(editingTodoTargetDate)}</span>
                               </div>
+                              <label className="grid gap-1 text-xs font-medium text-stone-500">
+                                Category
+                                <input
+                                  value={editingTodoCategory}
+                                  onChange={(event) => setEditingTodoCategory(event.target.value)}
+                                  className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-normal text-stone-900 outline-none focus:border-emerald-600"
+                                  aria-label={`Edit category for ${todo.title}`}
+                                  placeholder="Category"
+                                />
+                              </label>
                               <div className="flex flex-wrap justify-end gap-2 pt-1">
                                 <button
                                   type="button"
@@ -2501,7 +2662,14 @@ export default function GoalTracker() {
                             </div>
                           )}
                           {!isEditingTodo && (
-                            <div className="mt-1 text-xs text-stone-500">{getTodoTargetStatus(todo.targetDate)}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+                              {todo.category.trim() && (
+                                <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 font-medium text-stone-700">
+                                  {getTodoCategoryLabel(todo.category)}
+                                </span>
+                              )}
+                              <span>{getTodoTargetStatus(todo.targetDate)}</span>
+                            </div>
                           )}
                         </div>
                         {!isEditingTodo && (
@@ -2575,7 +2743,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "archive" && (
-              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto">
+              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {archivedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                     Archived items will appear here.
@@ -2605,7 +2773,9 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`Archived: ${todo.archivedAt ? formatDate(todo.archivedAt) : "unknown"}`}
-                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}`}
+                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}${
+                            todo.category.trim() ? ` · Category: ${todo.category}` : ""
+                          }`}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
                         />
@@ -2641,6 +2811,14 @@ export default function GoalTracker() {
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-stone-500">{deletedItemCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEmptyBinModalOpen(true)}
+                    disabled={isSaving || deletedItemCount === 0}
+                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    EMPTY
+                  </button>
                   <button
                     type="button"
                     aria-expanded={currentView === "bin"}
@@ -2683,7 +2861,9 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`Deleted: ${todo.deletedAt ? formatDate(todo.deletedAt) : "unknown"}`}
-                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}`}
+                          detail={`${todo.completed ? "Completed" : "Not completed"} · ${getTodoTargetStatus(todo.targetDate)}${
+                            todo.category.trim() ? ` · Category: ${todo.category}` : ""
+                          }`}
                           isSaving={isSaving}
                           onRestore={() => restoreTodo(todo.id)}
                           onDelete={() => permanentlyDeleteTodo(todo.id)}
@@ -3324,6 +3504,16 @@ export default function GoalTracker() {
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                 />
               </label>
+              <label className="grid gap-1 text-sm font-medium">
+                Category
+                <input
+                  value={todoCategory}
+                  onChange={(event) => setTodoCategory(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  placeholder="Category"
+                />
+              </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -3380,6 +3570,46 @@ export default function GoalTracker() {
                 className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
               >
                 Delete
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {typeof document !== "undefined" && isEmptyBinModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/40">
+          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Empty bin?</h2>
+              <button
+                type="button"
+                aria-label="Close empty bin"
+                onClick={() => setIsEmptyBinModalOpen(false)}
+                disabled={isSaving}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="mt-4 rounded-md bg-stone-100 p-3 text-sm text-stone-800">
+              Delete {deletedItemCount} item{deletedItemCount === 1 ? "" : "s"} forever. This cannot be undone.
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEmptyBinModalOpen(false)}
+                disabled={isSaving}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={emptyBin}
+                disabled={isSaving || deletedItemCount === 0}
+                className="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                Empty bin
               </button>
             </div>
           </section>
@@ -3688,6 +3918,48 @@ function UserIcon() {
     >
       <path d="M20 21a8 8 0 0 0-16 0" />
       <circle cx="12" cy="8" r="4" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a7 7 0 1 0 11 11Z" />
     </svg>
   );
 }

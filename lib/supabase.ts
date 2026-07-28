@@ -89,6 +89,7 @@ export type Database = {
           completed: boolean;
           created_at_ms: number;
           target_date: string | null;
+          category: string;
           position: number;
         };
         Insert: {
@@ -98,6 +99,7 @@ export type Database = {
           completed?: boolean;
           created_at_ms: number;
           target_date?: string | null;
+          category?: string;
           position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["todos"]["Insert"]>;

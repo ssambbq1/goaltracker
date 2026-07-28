@@ -87,6 +87,10 @@ function toIsoDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function addDaysToIsoDate(date: string, days: number) {
+  return toIsoDate(addDays(parseLocalDate(date), days));
+}
+
 function getCurrentWeekEnd() {
   const today = parseLocalDate(todayIso);
   return toIsoDate(addDays(today, 6 - today.getDay()));
@@ -234,6 +238,7 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
   const [activeRoutineResetSignal, setActiveRoutineResetSignal] = useState(resetSignal);
   const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [selectedSummaryDate, setSelectedSummaryDate] = useState(todayIso);
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyRoutineForm);
   const [schemaMissing, setSchemaMissing] = useState(false);
@@ -563,11 +568,15 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
     setRoutineMark(routine, date, nextStatus);
   }
 
-  function markTodayFromSummary(routine: Routine, status: RoutineMarkStatus) {
-    if (todayIso < routine.startDate || todayIso > routine.endDate) return;
+  function moveSummaryDate(days: number) {
+    setSelectedSummaryDate((date) => addDaysToIsoDate(date, days));
+  }
 
-    const currentStatus = routine.marks.find((mark) => mark.date === todayIso)?.status;
-    setRoutineMark(routine, todayIso, currentStatus === status ? null : status);
+  function markSummaryDate(routine: Routine, status: RoutineMarkStatus) {
+    if (selectedSummaryDate < routine.startDate || selectedSummaryDate > routine.endDate) return;
+
+    const currentStatus = routine.marks.find((mark) => mark.date === selectedSummaryDate)?.status;
+    setRoutineMark(routine, selectedSummaryDate, currentStatus === status ? null : status);
   }
 
   async function flushRoutineMarkSave(saveKey: string) {
@@ -700,7 +709,10 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   type="button"
                   aria-expanded={isSummaryModalOpen}
                   aria-label="Open today's routine checklist"
-                  onClick={() => setIsSummaryModalOpen(true)}
+                  onClick={() => {
+                    setSelectedSummaryDate(todayIso);
+                    setIsSummaryModalOpen(true);
+                  }}
                   disabled={schemaMissing}
                   className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -731,7 +743,10 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                     type="button"
                     aria-expanded={isSummaryModalOpen}
                     aria-label="Open today's routine checklist"
-                    onClick={() => setIsSummaryModalOpen(true)}
+                    onClick={() => {
+                      setSelectedSummaryDate(todayIso);
+                      setIsSummaryModalOpen(true);
+                    }}
                     disabled={schemaMissing}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -781,7 +796,25 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                   TODAY&apos;S CHECK LIST
                   <CheckListIcon />
                 </h2>
-                <p className="mt-1 text-xs font-medium text-stone-500">{todayIso}</p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Show previous day"
+                    onClick={() => moveSummaryDate(-1)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                  >
+                    <ArrowLeftIcon />
+                  </button>
+                  <p className="min-w-24 text-center text-xs font-medium text-stone-500">{selectedSummaryDate}</p>
+                  <button
+                    type="button"
+                    aria-label="Show next day"
+                    onClick={() => moveSummaryDate(1)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+                  >
+                    <ArrowRightIcon />
+                  </button>
+                </div>
               </div>
               <button
                 type="button"
@@ -811,36 +844,37 @@ export default function RoutineTracker({ isSaving, resetSignal, reloadSignal, on
                     </tr>
                   ) : (
                     routines.map((routine) => {
-                      const todayStatus = routine.marks.find((mark) => mark.date === todayIso)?.status;
-                      const isTodayInRange = todayIso >= routine.startDate && todayIso <= routine.endDate;
+                      const summaryDateStatus = routine.marks.find((mark) => mark.date === selectedSummaryDate)?.status;
+                      const isSummaryDateInRange =
+                        selectedSummaryDate >= routine.startDate && selectedSummaryDate <= routine.endDate;
 
                       return (
                         <tr key={routine.id} className="border-b border-stone-100 last:border-b-0">
                           <td className="px-2 py-2 align-middle sm:px-3">
                             <div className="break-words font-medium text-stone-900">{routine.title}</div>
-                            {!isTodayInRange && (
+                            {!isSummaryDateInRange && (
                               <div className="mt-0.5 text-xs text-stone-500">
-                                Not scheduled today
+                                Not scheduled this day
                               </div>
                             )}
                           </td>
                           <td className="px-1 py-2 text-center align-middle sm:px-3">
                             <input
                               type="checkbox"
-                              checked={todayStatus === "success"}
-                              onChange={() => markTodayFromSummary(routine, "success")}
-                              disabled={isSaving || !isTodayInRange}
-                              aria-label={`Mark ${routine.title} success today`}
+                              checked={summaryDateStatus === "success"}
+                              onChange={() => markSummaryDate(routine, "success")}
+                              disabled={isSaving || !isSummaryDateInRange}
+                              aria-label={`Mark ${routine.title} success on ${selectedSummaryDate}`}
                               className="h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
                           <td className="px-1 py-2 text-center align-middle sm:px-3">
                             <input
                               type="checkbox"
-                              checked={todayStatus === "failure"}
-                              onChange={() => markTodayFromSummary(routine, "failure")}
-                              disabled={isSaving || !isTodayInRange}
-                              aria-label={`Mark ${routine.title} failure today`}
+                              checked={summaryDateStatus === "failure"}
+                              onChange={() => markSummaryDate(routine, "failure")}
+                              disabled={isSaving || !isSummaryDateInRange}
+                              aria-label={`Mark ${routine.title} failure on ${selectedSummaryDate}`}
                               className="h-5 w-5 rounded border-stone-300 accent-red-700 disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
@@ -1315,19 +1349,19 @@ function MiniLineChart({ points }: { points: number[] }) {
   const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index)} ${yFor(point)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full" role="img" aria-label="Routine success rate graph">
-      <rect x="0" y="0" width={width} height={height} rx="6" fill="#ffffff" />
+    <svg viewBox={`0 0 ${width} ${height}`} className="routine-chart block h-auto w-full" role="img" aria-label="Routine success rate graph">
+      <rect className="routine-chart-bg" x="0" y="0" width={width} height={height} rx="6" fill="var(--chart-plot-bg)" />
       {[0, 50, 100].map((tick) => (
         <g key={tick}>
-          <line x1={padding} x2={width - padding} y1={yFor(tick)} y2={yFor(tick)} stroke="#e7e5e4" />
-          <text x={width - padding} y={yFor(tick) - 3} textAnchor="end" className="fill-stone-400 text-[10px]">
+          <line className="routine-chart-grid-line" x1={padding} x2={width - padding} y1={yFor(tick)} y2={yFor(tick)} stroke="var(--chart-grid-line)" />
+          <text x={width - padding} y={yFor(tick) - 3} textAnchor="end" className="routine-chart-text fill-stone-400 text-[10px]">
             {tick}%
           </text>
         </g>
       ))}
-      <path d={path} fill="none" stroke="#047857" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+      <path className="routine-chart-line" d={path} fill="none" stroke="var(--chart-primary)" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
       {points.map((point, index) => (
-        <circle key={`${point}-${index}`} cx={xFor(index)} cy={yFor(point)} r="3" fill="#047857" />
+        <circle className="routine-chart-dot" key={`${point}-${index}`} cx={xFor(index)} cy={yFor(point)} r="3" fill="var(--chart-primary)" />
       ))}
     </svg>
   );
@@ -1538,6 +1572,40 @@ function ArrowUpIcon() {
       strokeWidth="2"
     >
       <path d="m18 15-6-6-6 6" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m9 18 6-6-6-6" />
     </svg>
   );
 }

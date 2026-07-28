@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const targetDate = typeof body?.targetDate === "string" ? body.targetDate.trim() : "";
+    const category = typeof body?.category === "string" ? body.category.trim() : "";
 
     if (!title) {
       return Response.json({ error: "Todo title is required" }, { status: 400 });
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Todo target date is required" }, { status: 400 });
     }
 
-    const result = await addTodo(title, targetDate);
+    const result = await addTodo(title, targetDate, category);
     return Response.json(result, { status: 201 });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });

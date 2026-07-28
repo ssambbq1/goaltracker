@@ -7,11 +7,13 @@ export type Todo = {
   completed: boolean;
   createdAt: number;
   targetDate?: string;
+  category: string;
   deletedAt?: number;
   archivedAt?: number;
 };
 
 const TODO_GOAL_MEMO = "__boostmaster_todo__";
+const TODO_GOAL_MEMO_PREFIX = `${TODO_GOAL_MEMO}:`;
 const TODO_GOAL_UNIT = "__todo__";
 const TODO_COMPLETED_DEADLINE = "completed";
 const TODO_COMPLETED_TARGET = 2;
@@ -32,9 +34,38 @@ function normalizeTargetDate(targetDate: string) {
   return value;
 }
 
+function normalizeCategory(category?: string) {
+  return (category ?? "").trim().slice(0, 64);
+}
+
+function encodeTodoMemo(category: string) {
+  const normalizedCategory = normalizeCategory(category);
+  return normalizedCategory ? `${TODO_GOAL_MEMO_PREFIX}${JSON.stringify({ category: normalizedCategory })}` : TODO_GOAL_MEMO;
+}
+
+function decodeTodoCategory(memo: string) {
+  if (!memo.startsWith(TODO_GOAL_MEMO_PREFIX)) return "";
+
+  try {
+    const parsed = JSON.parse(memo.slice(TODO_GOAL_MEMO_PREFIX.length)) as { category?: unknown };
+    return typeof parsed.category === "string" ? normalizeCategory(parsed.category) : "";
+  } catch {
+    return "";
+  }
+}
+
+function isTodoMemo(memo: string) {
+  return memo === TODO_GOAL_MEMO || memo.startsWith(TODO_GOAL_MEMO_PREFIX);
+}
+
+function todoMemoFilter() {
+  return `memo.eq.${TODO_GOAL_MEMO},memo.like.${TODO_GOAL_MEMO_PREFIX}%`;
+}
+
 function todoFromGoalRow(todo: {
   id: string;
   title: string;
+  memo: string;
   target: number;
   deadline: string;
   created_at_ms: number;
@@ -49,6 +80,7 @@ function todoFromGoalRow(todo: {
     completed: todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET,
     createdAt: todo.created_at_ms,
     targetDate,
+    category: decodeTodoCategory(todo.memo),
     deletedAt: todo.deleted_at_ms ?? undefined,
     archivedAt: todo.archived_at_ms ?? undefined,
   };
@@ -57,9 +89,8 @@ function todoFromGoalRow(todo: {
 async function readTodosFromGoalRows(loginId: string) {
   const { data, error } = await getSupabaseServerClient()
     .from("goals")
-    .select("id,title,target,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
+    .select("id,title,memo,target,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
     .eq("unit", TODO_GOAL_UNIT)
     .is("deleted_at_ms", null)
     .is("archived_at_ms", null)
@@ -68,7 +99,7 @@ async function readTodosFromGoalRows(loginId: string) {
 
   if (error) throw error;
 
-  return (data ?? []).map(todoFromGoalRow);
+  return (data ?? []).filter((todo) => isTodoMemo(todo.memo)).map(todoFromGoalRow);
 }
 
 async function readStoredTodoGoalRows(
@@ -77,9 +108,8 @@ async function readStoredTodoGoalRows(
 ) {
   const query = getSupabaseServerClient()
     .from("goals")
-    .select("id,title,target,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
+    .select("id,title,memo,target,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
     .eq("unit", TODO_GOAL_UNIT);
 
   const { data, error } =
@@ -89,7 +119,7 @@ async function readStoredTodoGoalRows(
 
   if (error) throw error;
 
-  return (data ?? []).map(todoFromGoalRow);
+  return (data ?? []).filter((todo) => isTodoMemo(todo.memo)).map(todoFromGoalRow);
 }
 
 async function addTodoToGoalRows(loginId: string, todo: Todo) {
@@ -97,7 +127,7 @@ async function addTodoToGoalRows(loginId: string, todo: Todo) {
     id: todo.id,
     user_id: loginId,
     title: todo.title,
-    memo: TODO_GOAL_MEMO,
+    memo: encodeTodoMemo(todo.category),
     target: todo.completed ? TODO_COMPLETED_TARGET : 1,
     unit: TODO_GOAL_UNIT,
     deadline: todo.targetDate ?? "",
@@ -114,7 +144,7 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
   const supabase = getSupabaseServerClient();
   const { data: todo, error: readError } = await supabase
     .from("todos")
-    .select("id,title,completed,created_at_ms,target_date")
+    .select("id,title,completed,created_at_ms,target_date,category")
     .eq("id", todoId)
     .eq("user_id", loginId)
     .maybeSingle();
@@ -132,7 +162,7 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
       id: todo.id,
       user_id: loginId,
       title: todo.title,
-      memo: TODO_GOAL_MEMO,
+      memo: encodeTodoMemo(todo.category ?? ""),
       target: todo.completed ? TODO_COMPLETED_TARGET : 1,
       unit: TODO_GOAL_UNIT,
       deadline: todo.target_date ?? "",
@@ -162,7 +192,7 @@ async function moveTodoInGoalRows(loginId: string, todoId: string, destination: 
     .update(update)
     .eq("id", todoId)
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
+    .or(todoMemoFilter())
     .eq("unit", TODO_GOAL_UNIT);
   if (error) throw error;
 }
@@ -171,10 +201,10 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
   const supabase = getSupabaseServerClient();
   const { data: todo, error: readError } = await supabase
     .from("goals")
-    .select("id,title,target,deadline,created_at_ms")
+    .select("id,title,memo,target,deadline,created_at_ms")
     .eq("id", todoId)
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
+    .or(todoMemoFilter())
     .eq("unit", TODO_GOAL_UNIT)
     .maybeSingle();
   if (readError) throw readError;
@@ -187,6 +217,7 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
     completed: todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET,
     created_at_ms: todo.created_at_ms,
     target_date: /^\d{4}-\d{2}-\d{2}$/.test(todo.deadline) ? todo.deadline : null,
+    category: decodeTodoCategory(todo.memo),
     position: -1,
   });
 
@@ -197,7 +228,7 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
         .update({ deleted_at_ms: null, archived_at_ms: null, position: -1 })
         .eq("id", todoId)
         .eq("user_id", loginId)
-        .eq("memo", TODO_GOAL_MEMO)
+        .or(todoMemoFilter())
         .eq("unit", TODO_GOAL_UNIT);
       if (error) throw error;
       return;
@@ -211,9 +242,9 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
 async function updateTodoInGoalRows(
   loginId: string,
   todoId: string,
-  patch: Partial<Pick<Todo, "title" | "completed" | "targetDate">>,
+  patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>,
 ) {
-  const update: { title?: string; target?: number; deadline?: string } = {};
+  const update: { title?: string; target?: number; deadline?: string; memo?: string } = {};
 
   if (patch.title !== undefined) {
     const title = patch.title.trim();
@@ -228,6 +259,10 @@ async function updateTodoInGoalRows(
     update.deadline = patch.targetDate ? normalizeTargetDate(patch.targetDate) : "";
   }
 
+  if (patch.category !== undefined) {
+    update.memo = encodeTodoMemo(patch.category);
+  }
+
   if (!Object.keys(update).length) return;
 
   if (patch.completed === false && update.deadline === undefined) {
@@ -236,7 +271,7 @@ async function updateTodoInGoalRows(
       .select("deadline")
       .eq("id", todoId)
       .eq("user_id", loginId)
-      .eq("memo", TODO_GOAL_MEMO)
+      .or(todoMemoFilter())
       .eq("unit", TODO_GOAL_UNIT)
       .maybeSingle();
     if (readError) throw readError;
@@ -248,7 +283,7 @@ async function updateTodoInGoalRows(
     .update(update)
     .eq("id", todoId)
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
+    .or(todoMemoFilter())
     .eq("unit", TODO_GOAL_UNIT);
 
   if (error) throw error;
@@ -260,7 +295,7 @@ async function deleteTodoFromGoalRows(loginId: string, todoId: string) {
     .delete()
     .eq("id", todoId)
     .eq("user_id", loginId)
-    .eq("memo", TODO_GOAL_MEMO)
+    .or(todoMemoFilter())
     .eq("unit", TODO_GOAL_UNIT);
 
   if (error) throw error;
@@ -287,6 +322,7 @@ export async function readTodos() {
     completed: todo.completed,
     createdAt: todo.created_at_ms,
     targetDate: todo.target_date ?? undefined,
+    category: todo.category ?? "",
   }));
 }
 
@@ -298,7 +334,7 @@ export async function readDeletedTodos() {
   return readStoredTodoGoalRows(await requireLoginId(), "deleted");
 }
 
-export async function addTodo(title: string, targetDate: string) {
+export async function addTodo(title: string, targetDate: string, category = "") {
   const loginId = await requireLoginId();
   await ensureAppUser(loginId);
   const supabase = getSupabaseServerClient();
@@ -309,6 +345,7 @@ export async function addTodo(title: string, targetDate: string) {
     completed: false,
     createdAt: Date.now(),
     targetDate: normalizedTargetDate,
+    category: normalizeCategory(category),
   };
   const active = await readTodos();
 
@@ -319,6 +356,7 @@ export async function addTodo(title: string, targetDate: string) {
     completed: todo.completed,
     created_at_ms: todo.createdAt,
     target_date: todo.targetDate,
+    category: todo.category,
     position: active.length ? -1 : 0,
   });
 
@@ -370,9 +408,9 @@ export async function reorderTodos(todoIds: string[]) {
   return readTodos();
 }
 
-export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate">>) {
+export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>) {
   const loginId = await requireLoginId();
-  const update: { title?: string; completed?: boolean; target_date?: string | null } = {};
+  const update: { title?: string; completed?: boolean; target_date?: string | null; category?: string } = {};
 
   if (patch.title !== undefined) {
     const title = patch.title.trim();
@@ -383,6 +421,10 @@ export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "titl
 
   if (patch.targetDate !== undefined) {
     update.target_date = patch.targetDate ? normalizeTargetDate(patch.targetDate) : null;
+  }
+
+  if (patch.category !== undefined) {
+    update.category = normalizeCategory(patch.category);
   }
 
   if (Object.keys(update).length) {
