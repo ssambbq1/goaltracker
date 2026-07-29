@@ -56,8 +56,16 @@ type Todo = {
   createdAt: number;
   targetDate?: string;
   category: string;
+  subTodos: TodoSubTodo[];
   deletedAt?: number;
   archivedAt?: number;
+};
+
+type TodoSubTodo = {
+  id: string;
+  title: string;
+  completed: boolean;
+  createdAt: number;
 };
 
 type RoutineSummary = {
@@ -173,6 +181,9 @@ const UI_TEXT = {
     recordHistory: "Record history",
     addGoal: "Add goal",
     addTodo: "Add todo",
+    addDetail: "Add detail",
+    details: "Details",
+    detailTodo: "Detail todo",
     addProgressRecord: "Add progress record",
     goalName: "Goal name",
     goalMemo: "Goal memo",
@@ -240,6 +251,9 @@ const UI_TEXT = {
     recordHistory: "기록 내역",
     addGoal: "목표 추가",
     addTodo: "할일 추가",
+    addDetail: "상세 추가",
+    details: "상세",
+    detailTodo: "상세 할일",
     addProgressRecord: "진행 기록 추가",
     goalName: "목표 이름",
     goalMemo: "목표 메모",
@@ -373,6 +387,19 @@ function isTodoDelayed(todo: Todo) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return new Date(`${todo.targetDate}T00:00:00`).getTime() < today.getTime();
+}
+
+function isTodoCompleted(todo: Todo, subTodos = todo.subTodos) {
+  return subTodos.length > 0 ? subTodos.every((subTodo) => subTodo.completed) : todo.completed;
+}
+
+function makeSubTodo(title: string): TodoSubTodo {
+  return {
+    id: `subtodo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: title.trim(),
+    completed: false,
+    createdAt: Date.now(),
+  };
 }
 
 function getTodoEditRows(value: string) {
@@ -633,7 +660,7 @@ async function reorderTodoList(todoIds: string[]) {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>) {
+async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category" | "subTodos">>) {
   const response = await fetch(`/api/todos/${todoId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -811,6 +838,8 @@ export default function GoalTracker() {
   const [todoTitle, setTodoTitle] = useState("");
   const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
   const [todoCategory, setTodoCategory] = useState("");
+  const [expandedTodoIds, setExpandedTodoIds] = useState<string[]>([]);
+  const [subTodoTitles, setSubTodoTitles] = useState<Record<string, string>>({});
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>([]);
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
@@ -1692,6 +1721,12 @@ export default function GoalTracker() {
     );
   }
 
+  function toggleTodoDetails(todoId: string) {
+    setExpandedTodoIds((current) =>
+      current.includes(todoId) ? current.filter((item) => item !== todoId) : [...current, todoId],
+    );
+  }
+
   async function saveTodoTitle(todo: Todo) {
     if (!loginId) return;
 
@@ -1745,6 +1780,59 @@ export default function GoalTracker() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  async function saveTodoSubTodos(todo: Todo, subTodos: TodoSubTodo[], previousTodos: Todo[], shouldCelebrate: boolean) {
+    if (!loginId) return;
+
+    const completed = isTodoCompleted(todo, subTodos);
+    setTodos((current) =>
+      current.map((item) => (item.id === todo.id ? { ...item, completed, subTodos } : item)),
+    );
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await patchTodo(todo.id, { completed, subTodos }));
+      if (shouldCelebrate) triggerSuccessConfetti();
+    } catch (updateError) {
+      setTodos(previousTodos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update todo details");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function addSubTodoItem(todo: Todo) {
+    const title = (subTodoTitles[todo.id] ?? "").trim();
+    if (!title || !loginId) return;
+
+    const previousTodos = todos;
+    const subTodos = [...todo.subTodos, makeSubTodo(title)];
+    setSubTodoTitles((current) => ({ ...current, [todo.id]: "" }));
+    setExpandedTodoIds((current) => (current.includes(todo.id) ? current : [...current, todo.id]));
+    await saveTodoSubTodos(todo, subTodos, previousTodos, false);
+  }
+
+  async function toggleSubTodoItem(todo: Todo, subTodoId: string) {
+    if (!loginId) return;
+
+    const previousTodos = todos;
+    const wasCompleted = isTodoCompleted(todo);
+    const subTodos = todo.subTodos.map((subTodo) =>
+      subTodo.id === subTodoId ? { ...subTodo, completed: !subTodo.completed } : subTodo,
+    );
+    const nextCompleted = isTodoCompleted(todo, subTodos);
+    await saveTodoSubTodos(todo, subTodos, previousTodos, !wasCompleted && nextCompleted);
+  }
+
+  async function deleteSubTodoItem(todo: Todo, subTodoId: string) {
+    if (!loginId) return;
+
+    const previousTodos = todos;
+    const subTodos = todo.subTodos.filter((subTodo) => subTodo.id !== subTodoId);
+    const nextTodo = subTodos.length === 0 ? { ...todo, completed: false } : todo;
+    await saveTodoSubTodos(nextTodo, subTodos, previousTodos, false);
   }
 
   function startTodoDrag(event: ReactPointerEvent, todoId: string) {
@@ -1828,6 +1916,14 @@ export default function GoalTracker() {
 
   async function toggleTodoItem(todo: Todo) {
     if (!loginId) return;
+
+    if (todo.subTodos.length > 0) {
+      const previousTodos = todos;
+      const nextCompleted = !isTodoCompleted(todo);
+      const subTodos = todo.subTodos.map((subTodo) => ({ ...subTodo, completed: nextCompleted }));
+      await saveTodoSubTodos(todo, subTodos, previousTodos, nextCompleted);
+      return;
+    }
 
     const nextCompleted = !todo.completed;
     const nextTodos = todos.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item));
@@ -2742,6 +2838,9 @@ export default function GoalTracker() {
                     visibleTodos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
                       const isDelayedTodo = isTodoDelayed(todo);
+                      const isTodoExpanded = expandedTodoIds.includes(todo.id);
+                      const todoCompleted = isTodoCompleted(todo);
+                      const completedSubTodoCount = todo.subTodos.filter((subTodo) => subTodo.completed).length;
 
                       return (
                       <div
@@ -2770,7 +2869,7 @@ export default function GoalTracker() {
                         )}
                         <input
                           type="checkbox"
-                          checked={todo.completed}
+                          checked={todoCompleted}
                           onChange={() => toggleTodoItem(todo)}
                           disabled={isSaving || isEditingTodo}
                           aria-label={`Toggle ${todo.title}`}
@@ -2830,7 +2929,7 @@ export default function GoalTracker() {
                           ) : (
                             <div
                               className={`break-words text-sm font-medium ${
-                                todo.completed ? "text-stone-500 line-through" : "text-stone-900"
+                                todoCompleted ? "text-stone-500 line-through" : "text-stone-900"
                               }`}
                             >
                               {todo.title}
@@ -2844,11 +2943,27 @@ export default function GoalTracker() {
                                 </span>
                               )}
                               <span>{getTodoTargetStatus(todo.targetDate, language)}</span>
+                              {todo.subTodos.length > 0 && (
+                                <span>
+                                  {text.details}: {completedSubTodoCount}/{todo.subTodos.length}
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
                         {!isEditingTodo && (
                           <div className="relative flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start">
+                            <button
+                              type="button"
+                              aria-label={`${isTodoExpanded ? "Hide" : "Show"} details for ${todo.title}`}
+                              aria-expanded={isTodoExpanded}
+                              title={text.details}
+                              onClick={() => toggleTodoDetails(todo.id)}
+                              disabled={isSaving || editingTodoId !== null}
+                              className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <ChevronDownIcon className={isTodoExpanded ? "rotate-180" : ""} />
+                            </button>
                             <button
                               type="button"
                               aria-label={`Delete ${todo.title}`}
@@ -2876,6 +2991,74 @@ export default function GoalTracker() {
                           label={`Drag ${todo.title} to reorder`}
                           onPointerDown={(event) => startTodoDrag(event, todo.id)}
                         />
+                        {!isEditingTodo && (
+                          <div
+                            className={`col-span-full grid transition-[grid-template-rows] duration-300 ${
+                              isTodoExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                            }`}
+                          >
+                            <div className="overflow-hidden">
+                              <div className="mt-2 border-t border-stone-200 pt-3">
+                                <div className="grid gap-2">
+                                  {todo.subTodos.map((subTodo) => (
+                                    <div
+                                      key={subTodo.id}
+                                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-stone-50 px-2 py-2"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={subTodo.completed}
+                                        onChange={() => toggleSubTodoItem(todo, subTodo.id)}
+                                        disabled={isSaving}
+                                        aria-label={`Toggle ${subTodo.title}`}
+                                        className="h-4 w-4 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
+                                      />
+                                      <span
+                                        className={`min-w-0 break-words text-sm ${
+                                          subTodo.completed ? "text-stone-500 line-through" : "text-stone-800"
+                                        }`}
+                                      >
+                                        {subTodo.title}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        aria-label={`Delete ${subTodo.title}`}
+                                        title={text.delete}
+                                        onClick={() => deleteSubTodoItem(todo, subTodo.id)}
+                                        disabled={isSaving}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                                      >
+                                        <BinIcon />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                                    <input
+                                      value={subTodoTitles[todo.id] ?? ""}
+                                      onChange={(event) =>
+                                        setSubTodoTitles((current) => ({ ...current, [todo.id]: event.target.value }))
+                                      }
+                                      onKeyDown={(event) => event.key === "Enter" && addSubTodoItem(todo)}
+                                      disabled={isSaving}
+                                      aria-label={`Add detail todo for ${todo.title}`}
+                                      placeholder={text.detailTodo}
+                                      className="h-9 rounded-md border border-stone-300 px-3 text-sm outline-none focus:border-emerald-600 disabled:cursor-wait disabled:opacity-60"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => addSubTodoItem(todo)}
+                                      disabled={isSaving || !(subTodoTitles[todo.id] ?? "").trim()}
+                                      className="flex h-9 items-center gap-1 rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                    >
+                                      <PlusIcon />
+                                      {text.addDetail}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       );
                     })
@@ -4343,6 +4526,41 @@ function TodoIcon() {
     >
       <path d="M9 11l2 2 4-4" />
       <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className={`h-4 w-4 shrink-0 transition-transform ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
     </svg>
   );
 }

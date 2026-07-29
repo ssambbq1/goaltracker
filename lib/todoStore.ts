@@ -8,9 +8,19 @@ export type Todo = {
   createdAt: number;
   targetDate?: string;
   category: string;
+  subTodos: TodoSubTodo[];
   deletedAt?: number;
   archivedAt?: number;
 };
+
+export type TodoSubTodo = {
+  id: string;
+  title: string;
+  completed: boolean;
+  createdAt: number;
+};
+
+type TodoPatch = Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category" | "subTodos">>;
 
 const TODO_GOAL_MEMO = "__boostmaster_todo__";
 const TODO_GOAL_MEMO_PREFIX = `${TODO_GOAL_MEMO}:`;
@@ -38,19 +48,49 @@ function normalizeCategory(category?: string) {
   return (category ?? "").trim().slice(0, 64);
 }
 
-function encodeTodoMemo(category: string) {
-  const normalizedCategory = normalizeCategory(category);
-  return normalizedCategory ? `${TODO_GOAL_MEMO_PREFIX}${JSON.stringify({ category: normalizedCategory })}` : TODO_GOAL_MEMO;
+function normalizeSubTodos(subTodos?: unknown) {
+  if (!Array.isArray(subTodos)) return [];
+
+  return subTodos
+    .map((subTodo) => {
+      if (!subTodo || typeof subTodo !== "object") return null;
+      const record = subTodo as Record<string, unknown>;
+      const title = typeof record.title === "string" ? record.title.trim().slice(0, 240) : "";
+      if (!title) return null;
+      return {
+        id: typeof record.id === "string" && record.id.trim() ? record.id.trim().slice(0, 120) : makeId("subtodo"),
+        title,
+        completed: record.completed === true,
+        createdAt: typeof record.createdAt === "number" && Number.isFinite(record.createdAt) ? record.createdAt : Date.now(),
+      };
+    })
+    .filter((subTodo): subTodo is TodoSubTodo => subTodo !== null)
+    .slice(0, 100);
 }
 
-function decodeTodoCategory(memo: string) {
-  if (!memo.startsWith(TODO_GOAL_MEMO_PREFIX)) return "";
+function getTodoCompleted(completed: boolean, subTodos: TodoSubTodo[]) {
+  return subTodos.length > 0 ? subTodos.every((subTodo) => subTodo.completed) : completed;
+}
+
+function encodeTodoMemo(category: string, subTodos: TodoSubTodo[] = []) {
+  const normalizedCategory = normalizeCategory(category);
+  const normalizedSubTodos = normalizeSubTodos(subTodos);
+  if (!normalizedCategory && normalizedSubTodos.length === 0) return TODO_GOAL_MEMO;
+  return `${TODO_GOAL_MEMO_PREFIX}${JSON.stringify({ category: normalizedCategory, subTodos: normalizedSubTodos })}`;
+}
+
+function decodeTodoMetadata(memo: string) {
+  const fallback = { category: "", subTodos: [] as TodoSubTodo[] };
+  if (!memo.startsWith(TODO_GOAL_MEMO_PREFIX)) return fallback;
 
   try {
-    const parsed = JSON.parse(memo.slice(TODO_GOAL_MEMO_PREFIX.length)) as { category?: unknown };
-    return typeof parsed.category === "string" ? normalizeCategory(parsed.category) : "";
+    const parsed = JSON.parse(memo.slice(TODO_GOAL_MEMO_PREFIX.length)) as { category?: unknown; subTodos?: unknown };
+    return {
+      category: typeof parsed.category === "string" ? normalizeCategory(parsed.category) : "",
+      subTodos: normalizeSubTodos(parsed.subTodos),
+    };
   } catch {
-    return "";
+    return fallback;
   }
 }
 
@@ -73,14 +113,20 @@ function todoFromGoalRow(todo: {
   archived_at_ms: number | null;
 }) {
   const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(todo.deadline) ? todo.deadline : undefined;
+  const metadata = decodeTodoMetadata(todo.memo);
+  const completed = getTodoCompleted(
+    todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET,
+    metadata.subTodos,
+  );
 
   return {
     id: todo.id,
     title: todo.title,
-    completed: todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET,
+    completed,
     createdAt: todo.created_at_ms,
     targetDate,
-    category: decodeTodoCategory(todo.memo),
+    category: metadata.category,
+    subTodos: metadata.subTodos,
     deletedAt: todo.deleted_at_ms ?? undefined,
     archivedAt: todo.archived_at_ms ?? undefined,
   };
@@ -127,7 +173,7 @@ async function addTodoToGoalRows(loginId: string, todo: Todo) {
     id: todo.id,
     user_id: loginId,
     title: todo.title,
-    memo: encodeTodoMemo(todo.category),
+    memo: encodeTodoMemo(todo.category, todo.subTodos),
     target: todo.completed ? TODO_COMPLETED_TARGET : 1,
     unit: TODO_GOAL_UNIT,
     deadline: todo.targetDate ?? "",
@@ -144,7 +190,7 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
   const supabase = getSupabaseServerClient();
   const { data: todo, error: readError } = await supabase
     .from("todos")
-    .select("id,title,completed,created_at_ms,target_date,category")
+    .select("id,title,completed,created_at_ms,target_date,category,sub_todos")
     .eq("id", todoId)
     .eq("user_id", loginId)
     .maybeSingle();
@@ -162,8 +208,8 @@ async function moveTodoFromTodosToGoalRows(loginId: string, todoId: string, dest
       id: todo.id,
       user_id: loginId,
       title: todo.title,
-      memo: encodeTodoMemo(todo.category ?? ""),
-      target: todo.completed ? TODO_COMPLETED_TARGET : 1,
+      memo: encodeTodoMemo(todo.category ?? "", normalizeSubTodos(todo.sub_todos)),
+      target: getTodoCompleted(todo.completed, normalizeSubTodos(todo.sub_todos)) ? TODO_COMPLETED_TARGET : 1,
       unit: TODO_GOAL_UNIT,
       deadline: todo.target_date ?? "",
       created_at_ms: todo.created_at_ms,
@@ -209,15 +255,18 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
     .maybeSingle();
   if (readError) throw readError;
   if (!todo) return;
+  const metadata = decodeTodoMetadata(todo.memo);
+  const completed = getTodoCompleted(todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET, metadata.subTodos);
 
   const { error: insertError } = await supabase.from("todos").insert({
     id: todo.id,
     user_id: loginId,
     title: todo.title,
-    completed: todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET,
+    completed,
     created_at_ms: todo.created_at_ms,
     target_date: /^\d{4}-\d{2}-\d{2}$/.test(todo.deadline) ? todo.deadline : null,
-    category: decodeTodoCategory(todo.memo),
+    category: metadata.category,
+    sub_todos: metadata.subTodos,
     position: -1,
   });
 
@@ -242,7 +291,7 @@ async function restoreTodoFromGoalRows(loginId: string, todoId: string) {
 async function updateTodoInGoalRows(
   loginId: string,
   todoId: string,
-  patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>,
+  patch: TodoPatch,
 ) {
   const update: { title?: string; target?: number; deadline?: string; memo?: string } = {};
 
@@ -251,16 +300,32 @@ async function updateTodoInGoalRows(
     if (title) update.title = title;
   }
 
-  if (patch.completed !== undefined) {
-    update.target = patch.completed ? TODO_COMPLETED_TARGET : 1;
+  const shouldUpdateMemo = patch.category !== undefined || patch.subTodos !== undefined;
+  let mergedSubTodos: TodoSubTodo[] = [];
+
+  if (shouldUpdateMemo) {
+    const { data: current, error: readError } = await getSupabaseServerClient()
+      .from("goals")
+      .select("memo")
+      .eq("id", todoId)
+      .eq("user_id", loginId)
+      .or(todoMemoFilter())
+      .eq("unit", TODO_GOAL_UNIT)
+      .maybeSingle();
+    if (readError) throw readError;
+
+    const currentMetadata = decodeTodoMetadata(current?.memo ?? TODO_GOAL_MEMO);
+    const category = patch.category !== undefined ? patch.category : currentMetadata.category;
+    mergedSubTodos = patch.subTodos !== undefined ? normalizeSubTodos(patch.subTodos) : currentMetadata.subTodos;
+    update.memo = encodeTodoMemo(category, mergedSubTodos);
+  }
+
+  if (patch.completed !== undefined || patch.subTodos !== undefined) {
+    update.target = getTodoCompleted(patch.completed === true, mergedSubTodos) ? TODO_COMPLETED_TARGET : 1;
   }
 
   if (patch.targetDate !== undefined) {
     update.deadline = patch.targetDate ? normalizeTargetDate(patch.targetDate) : "";
-  }
-
-  if (patch.category !== undefined) {
-    update.memo = encodeTodoMemo(patch.category);
   }
 
   if (!Object.keys(update).length) return;
@@ -316,14 +381,18 @@ export async function readTodos() {
     throw error;
   }
 
-  return (data ?? []).map((todo) => ({
-    id: todo.id,
-    title: todo.title,
-    completed: todo.completed,
-    createdAt: todo.created_at_ms,
-    targetDate: todo.target_date ?? undefined,
-    category: todo.category ?? "",
-  }));
+  return (data ?? []).map((todo) => {
+    const subTodos = normalizeSubTodos(todo.sub_todos);
+    return {
+      id: todo.id,
+      title: todo.title,
+      completed: getTodoCompleted(todo.completed, subTodos),
+      createdAt: todo.created_at_ms,
+      targetDate: todo.target_date ?? undefined,
+      category: todo.category ?? "",
+      subTodos,
+    };
+  });
 }
 
 export async function readArchivedTodos() {
@@ -346,6 +415,7 @@ export async function addTodo(title: string, targetDate: string, category = "") 
     createdAt: Date.now(),
     targetDate: normalizedTargetDate,
     category: normalizeCategory(category),
+    subTodos: [],
   };
   const active = await readTodos();
 
@@ -357,6 +427,7 @@ export async function addTodo(title: string, targetDate: string, category = "") 
     created_at_ms: todo.createdAt,
     target_date: todo.targetDate,
     category: todo.category,
+    sub_todos: todo.subTodos,
     position: active.length ? -1 : 0,
   });
 
@@ -408,16 +479,19 @@ export async function reorderTodos(todoIds: string[]) {
   return readTodos();
 }
 
-export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>) {
+export async function updateTodo(todoId: string, patch: TodoPatch) {
   const loginId = await requireLoginId();
-  const update: { title?: string; completed?: boolean; target_date?: string | null; category?: string } = {};
+  const update: { title?: string; completed?: boolean; target_date?: string | null; category?: string; sub_todos?: TodoSubTodo[] } = {};
 
   if (patch.title !== undefined) {
     const title = patch.title.trim();
     if (title) update.title = title;
   }
 
-  if (patch.completed !== undefined) update.completed = patch.completed;
+  const normalizedSubTodos = patch.subTodos !== undefined ? normalizeSubTodos(patch.subTodos) : undefined;
+  if (patch.completed !== undefined || normalizedSubTodos !== undefined) {
+    update.completed = getTodoCompleted(patch.completed === true, normalizedSubTodos ?? []);
+  }
 
   if (patch.targetDate !== undefined) {
     update.target_date = patch.targetDate ? normalizeTargetDate(patch.targetDate) : null;
@@ -425,6 +499,11 @@ export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "titl
 
   if (patch.category !== undefined) {
     update.category = normalizeCategory(patch.category);
+  }
+
+  if (normalizedSubTodos !== undefined) {
+    update.sub_todos = normalizedSubTodos;
+    update.completed = getTodoCompleted(update.completed === true, normalizedSubTodos);
   }
 
   if (Object.keys(update).length) {

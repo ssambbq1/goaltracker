@@ -90,6 +90,7 @@ export type Database = {
           created_at_ms: number;
           target_date: string | null;
           category: string;
+          sub_todos: unknown[];
           position: number;
         };
         Insert: {
@@ -100,6 +101,7 @@ export type Database = {
           created_at_ms: number;
           target_date?: string | null;
           category?: string;
+          sub_todos?: unknown[];
           position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["todos"]["Insert"]>;

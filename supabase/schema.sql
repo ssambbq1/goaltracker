@@ -51,13 +51,15 @@ create table if not exists public.todos (
   created_at_ms bigint not null,
   target_date date,
   category text not null default '',
+  sub_todos jsonb not null default '[]'::jsonb,
   position integer not null default 0
 );
 
 alter table public.todos
   add column if not exists position integer not null default 0,
   add column if not exists target_date date,
-  add column if not exists category text not null default '';
+  add column if not exists category text not null default '',
+  add column if not exists sub_todos jsonb not null default '[]'::jsonb;
 
 create table if not exists public.routines (
   id text primary key,

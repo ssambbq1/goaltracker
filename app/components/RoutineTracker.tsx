@@ -602,6 +602,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       status: nextStatus,
       previous,
     };
+    if (nextStatus === "success") triggerSuccessConfetti();
     onError("");
     pendingMarkSaveTimers.current[saveKey] = setTimeout(() => {
       void flushRoutineMarkSave(saveKey);
@@ -652,7 +653,6 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
 
     try {
       setRoutines(applyPendingMarkSaves(await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status)));
-      if (pendingSave.status === "success") triggerSuccessConfetti();
     } catch (error) {
       setRoutines(applyPendingMarkSaves(pendingSave.previous));
       onError(error instanceof Error ? error.message : "Failed to update routine mark");

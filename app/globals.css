@@ -391,6 +391,19 @@ select {
   opacity: 0.72;
 }
 
+html.dark-mode .routine-clap-burst,
+body.dark-mode .routine-clap-burst,
+.app-dark .routine-clap-burst {
+  filter: drop-shadow(0 18px 34px rgb(255 255 255 / 0.16));
+}
+
+html.dark-mode .routine-celebration-image,
+body.dark-mode .routine-celebration-image,
+.app-dark .routine-celebration-image {
+  filter: invert(1) hue-rotate(180deg) saturate(1.15) brightness(1.08);
+  opacity: 0.9;
+}
+
 .routine-celebration-icon-you {
   animation: routine-celebration-you 2.4s ease-out forwards;
 }
