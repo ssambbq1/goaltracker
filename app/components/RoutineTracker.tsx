@@ -602,7 +602,6 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       status: nextStatus,
       previous,
     };
-    if (nextStatus === "success") triggerSuccessConfetti();
     onError("");
     pendingMarkSaveTimers.current[saveKey] = setTimeout(() => {
       void flushRoutineMarkSave(saveKey);
@@ -641,7 +640,9 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     if (selectedSummaryDate < routine.startDate || selectedSummaryDate > routine.endDate) return;
 
     const currentStatus = routine.marks.find((mark) => mark.date === selectedSummaryDate)?.status;
-    setRoutineMark(routine, selectedSummaryDate, currentStatus === status ? null : status);
+    const nextStatus = currentStatus === status ? null : status;
+    if (nextStatus === "success") triggerSuccessConfetti();
+    setRoutineMark(routine, selectedSummaryDate, nextStatus);
   }
 
   async function flushRoutineMarkSave(saveKey: string) {
