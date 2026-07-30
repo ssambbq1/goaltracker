@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import AppInstallButton from "./AppInstallButton";
 import ProgressChart from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
 
@@ -2274,6 +2275,7 @@ export default function GoalTracker() {
         loginId={loginForm}
         password={passwordForm}
         mode={authMode}
+        language={language}
         error={error}
         isSaving={isSaving}
         onLoginIdChange={setLoginForm}
@@ -2363,6 +2365,7 @@ export default function GoalTracker() {
             <AppleTreeIcon />
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+            <AppInstallButton language={language} />
             <button
               type="button"
               onClick={() => setLanguage((current) => (current === "en" ? "ko" : "en"))}
@@ -4146,6 +4149,7 @@ function LoginScreen({
   loginId,
   password,
   mode,
+  language,
   error,
   isSaving,
   onLoginIdChange,
@@ -4157,6 +4161,7 @@ function LoginScreen({
   loginId: string;
   password: string;
   mode: "login" | "signup";
+  language: AppLanguage;
   error: string;
   isSaving: boolean;
   onLoginIdChange: (loginId: string) => void;
@@ -4170,8 +4175,13 @@ function LoginScreen({
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-2.5 text-stone-950">
       <section className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-        <p className="text-sm font-medium text-emerald-700">MasterPlan</p>
-        <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-emerald-700">PlanTree</p>
+            <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
+          </div>
+          <AppInstallButton language={language} />
+        </div>
         <div className="mt-5 grid gap-3">
           <div className="grid grid-cols-2 rounded-md border border-stone-300 bg-stone-100 p-1">
             <button
