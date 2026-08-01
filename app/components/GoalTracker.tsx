@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
+import appIcon from "../icon3.png";
 import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,
@@ -4066,22 +4067,13 @@ function BackToListIcon() {
 
 function AppleTreeIcon() {
   return (
-    <svg
+    <Image
+      src={appIcon}
+      alt=""
       aria-hidden="true"
-      viewBox="0 0 64 64"
-      className="h-10 w-10 shrink-0 drop-shadow-sm sm:h-16 sm:w-16"
-      fill="none"
-    >
-      <rect x="6" y="6" width="52" height="52" rx="15" fill="#f6f7f4" stroke="#d6d3d1" />
-      <path d="M31 52V31" stroke="#5f3b1f" strokeWidth="6" strokeLinecap="round" />
-      <path d="M23 53h18" stroke="#5f3b1f" strokeWidth="5" strokeLinecap="round" />
-      <path d="M33 35c-7-1-14-7-14-16 8-2 15 2 18 9 3-7 10-11 18-9 0 9-7 15-14 16" fill="#047857" />
-      <path d="M32 31c-6-4-8-11-5-18 7 2 11 7 11 15" fill="#10b981" />
-      <circle cx="23" cy="31" r="5" fill="#ef4444" />
-      <circle cx="42" cy="28" r="5" fill="#ef4444" />
-      <circle cx="34" cy="40" r="5" fill="#ef4444" />
-      <path d="M39 15c3-5 8-6 12-4-2 5-6 8-12 7" fill="#84cc16" />
-    </svg>
+      className="h-10 w-10 shrink-0 object-contain drop-shadow-sm sm:h-16 sm:w-16"
+      priority
+    />
   );
 }
 

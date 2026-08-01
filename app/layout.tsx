@@ -16,8 +16,8 @@ export const metadata: Metadata = {
   title: "PlanTree",
   description: "PlanTree helps you track goals, todos, and routines.",
   icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
+    icon: "/icon2.png",
+    shortcut: "/icon2.png",
     apple: "/apple-icon.png",
   },
 };
