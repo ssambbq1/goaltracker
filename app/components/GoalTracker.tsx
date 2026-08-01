@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
-import appIcon from "../icon3.png";
 import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,
@@ -16,6 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import AppInstallButton from "./AppInstallButton";
+import Head from "./head";
 import ProgressChart from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
 
@@ -2347,67 +2347,25 @@ export default function GoalTracker() {
         </div>
       )}
 
-      <div
-        className={`mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5 ${
-          isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
-        }`}
-        style={{
-          transform: `translateX(${screenSwipeOffset}px)`,
-        }}
-      >
-        <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
-          <div className="flex min-w-0 items-end gap-2 sm:gap-3">
-            <div className="min-w-0">
-            <p className="text-sm font-medium text-emerald-700">{text.tagline}</p>
-            <h1 className="mt-2 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-[clamp(1.65rem,8vw,2.25rem)] font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
-              {text.appName}
-            </h1>
-            </div>
-            <AppleTreeIcon />
-          </div>
-          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <AppInstallButton language={language} />
-            <button
-              type="button"
-              onClick={() => setLanguage((current) => (current === "en" ? "ko" : "en"))}
-              aria-label={text.languageTitle}
-              title={text.languageTitle}
-              className="flex h-9 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11"
-            >
-              {text.languageToggle}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsDarkMode((current) => !current)}
-              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-              title={isDarkMode ? "Light mode" : "Dark mode"}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
-            >
-              {isDarkMode ? <SunIcon /> : <MoonIcon />}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentView("user");
-                setIsEditingGoal(false);
-                setIsGoalModalOpen(false);
-                setIsTodoModalOpen(false);
-                setIsEntryModalOpen(false);
-                setTodoToDelete(null);
-                setEditingTodoId(null);
-                setEditingTodoTitle("");
-              }}
-              aria-label="Open user page"
-              className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition sm:h-11 sm:w-11 ${
-                currentView === "user"
-                  ? "border-emerald-700 bg-emerald-700 text-white"
-                  : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-              }`}
-            >
-              <UserIcon />
-            </button>
-          </div>
-        </header>
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5">
+        <Head
+          language={language}
+          text={text}
+          isDarkMode={isDarkMode}
+          isUserView={currentView === "user"}
+          onLanguageToggle={() => setLanguage((current) => (current === "en" ? "ko" : "en"))}
+          onThemeToggle={() => setIsDarkMode((current) => !current)}
+          onUserOpen={() => {
+            setCurrentView("user");
+            setIsEditingGoal(false);
+            setIsGoalModalOpen(false);
+            setIsTodoModalOpen(false);
+            setIsEntryModalOpen(false);
+            setTodoToDelete(null);
+            setEditingTodoId(null);
+            setEditingTodoTitle("");
+          }}
+        />
 
         {(error || isSaving || isLoading) && (
           <div className="pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4">
@@ -2470,6 +2428,15 @@ export default function GoalTracker() {
           ))}
         </nav>
 
+        <div className="relative min-w-0 overflow-hidden">
+          <div
+            className={`min-w-0 transform-gpu ${
+              isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
+            }`}
+            style={{
+              transform: `translateX(${screenSwipeOffset}px)`,
+            }}
+          >
         <section className={`min-w-0 ${currentView === "user" ? "grid gap-4" : "hidden"}`}>
           <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -3320,28 +3287,23 @@ export default function GoalTracker() {
 
                 <div className="grid min-w-0 gap-4">
                     <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-                      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
                           <h2 className="text-base font-semibold">{text.progressChart}</h2>
                           <p className="text-sm text-stone-600">{text.progressChartHint}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-emerald-700">
-                            {text.target} {activeGoal.target} {activeGoal.unit}
-                          </span>
-                          <button
-                            type="button"
-                            aria-label="Add progress record"
-                            onClick={() => {
-                              setEntryRecordedAt(toDateInputValue());
-                              setIsEntryModalOpen(true);
-                            }}
-                            disabled={isSaving}
-                            className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {text.add}
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          aria-label="Add progress record"
+                          onClick={() => {
+                            setEntryRecordedAt(toDateInputValue());
+                            setIsEntryModalOpen(true);
+                          }}
+                          disabled={isSaving}
+                          className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {text.add}
+                        </button>
                       </div>
                       <ProgressChart
                         entries={activeGoal.entries}
@@ -3555,6 +3517,52 @@ export default function GoalTracker() {
           </div>
         )}
 
+          </div>
+          {screenSwipeTargetView && screenSwipeTargetDirection && (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-0 top-0 min-w-0 transform-gpu ${
+                isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
+              }`}
+              style={{
+                transform: `translateX(calc(${screenSwipeOffset}px + ${
+                  screenSwipeTargetDirection === -1 ? "100%" : "-100%"
+                }))`,
+              }}
+            >
+              <div className="rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
+                <div className="flex h-12 items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 text-sm font-semibold text-white">
+                  {screenSwipeTargetView === "list" && <ListIcon />}
+                  {screenSwipeTargetView === "todo" && <TodoIcon />}
+                  {screenSwipeTargetView === "routine" && <RoutineIcon />}
+                  {screenSwipeTargetView === "archive" && <ArchiveIcon />}
+                  {screenSwipeTargetView === "bin" && <BinIcon />}
+                  {screenSwipeTargetView === "user" && <UserIcon />}
+                  <span>{getTrackerViewLabel(screenSwipeTargetView, language)}</span>
+                </div>
+              </div>
+
+              <section className="mt-6 min-w-0">
+                <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                  <div className="flex items-center gap-2 text-base font-semibold">
+                    {screenSwipeTargetView === "list" && <ListIcon />}
+                    {screenSwipeTargetView === "todo" && <TodoIcon />}
+                    {screenSwipeTargetView === "routine" && <RoutineIcon />}
+                    {screenSwipeTargetView === "archive" && <ArchiveIcon />}
+                    {screenSwipeTargetView === "bin" && <BinIcon />}
+                    {screenSwipeTargetView === "user" && <UserIcon />}
+                    {getTrackerViewLabel(screenSwipeTargetView, language)}
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    <div className="h-14 rounded-md bg-stone-100" />
+                    <div className="h-14 rounded-md bg-stone-100" />
+                    <div className="h-14 rounded-md bg-stone-100" />
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+        </div>
       </div>
       {typeof document !== "undefined" && isGoalModalOpen && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
@@ -3842,62 +3850,6 @@ export default function GoalTracker() {
           </button>
         ))}
       </nav>
-      {screenSwipeTargetView && screenSwipeTargetDirection && (
-        <div
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-x-0 top-0 mx-auto flex w-full max-w-7xl transform-gpu flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5 ${
-            isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
-          }`}
-          style={{
-            transform: `translateX(calc(${screenSwipeOffset}px + ${
-              screenSwipeTargetDirection === -1 ? "100%" : "-100%"
-            }))`,
-          }}
-        >
-          <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
-            <div className="flex min-w-0 items-end gap-2 sm:gap-3">
-              <div className="min-w-0">
-              <p className="text-sm font-medium text-emerald-700">Design your life</p>
-              <h1 className="mt-2 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-[clamp(1.65rem,8vw,2.25rem)] font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
-                {text.appName}
-              </h1>
-              </div>
-              <AppleTreeIcon />
-            </div>
-          </header>
-
-          <div className="rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
-            <div className="flex h-12 items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 text-sm font-semibold text-white">
-              {screenSwipeTargetView === "list" && <ListIcon />}
-              {screenSwipeTargetView === "todo" && <TodoIcon />}
-              {screenSwipeTargetView === "routine" && <RoutineIcon />}
-              {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-              {screenSwipeTargetView === "bin" && <BinIcon />}
-              {screenSwipeTargetView === "user" && <UserIcon />}
-              <span>{getTrackerViewLabel(screenSwipeTargetView, language)}</span>
-            </div>
-          </div>
-
-          <section className="min-w-0">
-            <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-base font-semibold">
-                {screenSwipeTargetView === "list" && <ListIcon />}
-                {screenSwipeTargetView === "todo" && <TodoIcon />}
-                {screenSwipeTargetView === "routine" && <RoutineIcon />}
-                {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-                {screenSwipeTargetView === "bin" && <BinIcon />}
-                {screenSwipeTargetView === "user" && <UserIcon />}
-                {getTrackerViewLabel(screenSwipeTargetView, language)}
-              </div>
-              <div className="mt-4 space-y-2">
-                <div className="h-14 rounded-md bg-stone-100" />
-                <div className="h-14 rounded-md bg-stone-100" />
-                <div className="h-14 rounded-md bg-stone-100" />
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
     </main>
   );
 }
@@ -4065,18 +4017,6 @@ function BackToListIcon() {
   );
 }
 
-function AppleTreeIcon() {
-  return (
-    <Image
-      src={appIcon}
-      alt=""
-      aria-hidden="true"
-      className="h-10 w-10 shrink-0 object-contain drop-shadow-sm sm:h-16 sm:w-16"
-      priority
-    />
-  );
-}
-
 function UserIcon() {
   return (
     <svg
@@ -4091,48 +4031,6 @@ function UserIcon() {
     >
       <path d="M20 21a8 8 0 0 0-16 0" />
       <circle cx="12" cy="8" r="4" />
-    </svg>
-  );
-}
-
-function SunIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2" />
-      <path d="M12 20v2" />
-      <path d="m4.93 4.93 1.41 1.41" />
-      <path d="m17.66 17.66 1.41 1.41" />
-      <path d="M2 12h2" />
-      <path d="M20 12h2" />
-      <path d="m6.34 17.66-1.41 1.41" />
-      <path d="m19.07 4.93-1.41 1.41" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a7 7 0 1 0 11 11Z" />
     </svg>
   );
 }
