@@ -50,7 +50,7 @@ export default function Head({
           onClick={onLanguageToggle}
           aria-label={text.languageTitle}
           title={text.languageTitle}
-          className="flex h-9 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11"
+          className="flex h-7 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11"
         >
           {text.languageToggle}
         </button>
@@ -59,7 +59,7 @@ export default function Head({
           onClick={onThemeToggle}
           aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
           title={isDarkMode ? "Light mode" : "Dark mode"}
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
+          className="flex h-7 w-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
         >
           {isDarkMode ? <SunIcon /> : <MoonIcon />}
         </button>
@@ -67,7 +67,7 @@ export default function Head({
           type="button"
           onClick={onUserOpen}
           aria-label="Open user page"
-          className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition sm:h-11 sm:w-11 ${
+          className={`flex h-7 w-7 items-center justify-center rounded-full border shadow-sm transition sm:h-11 sm:w-11 ${
             isUserView
               ? "border-emerald-700 bg-emerald-700 text-white"
               : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
