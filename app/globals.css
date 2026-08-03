@@ -26,6 +26,11 @@ body {
   color: var(--foreground);
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html.dark-mode,
 body.dark-mode,
 .app-dark {
