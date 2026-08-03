@@ -691,7 +691,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-0">
       {confettiParticles.length > 0 && (
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
           <div className="routine-clap-burst">
@@ -742,7 +742,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       )}
 
       {activeRoutine ? (
-        <section className="rounded-lg border border-stone-300 bg-white p-4 shadow-sm">
+        <section className="border border-transparent bg-transparent p-0">
           <RoutineCard
             routine={activeRoutine}
             isSaving={isSaving}
@@ -762,13 +762,13 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
           />
         </section>
       ) : isLoading ? (
-        <section className="rounded-lg border border-stone-300 bg-white p-8 text-center text-sm text-stone-600">
+        <section className="border border-transparent bg-transparent p-0 text-center text-sm text-stone-600">
           {text.loading}
         </section>
       ) : (
-        <section className="grid gap-4">
+        <section className="grid gap-0">
           {routines.length === 0 ? (
-            <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <section className="border border-transparent bg-transparent p-0">
               <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">{text.routineList}</h2>
                 <button
@@ -800,7 +800,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
               </div>
             </section>
           ) : (
-            <section className="rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <section className="border border-transparent bg-transparent p-0">
               <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">{text.routineList}</h2>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -1157,7 +1157,7 @@ function RoutineCard({
   }, [editValue]);
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-0">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           {editValue ? (
@@ -1213,7 +1213,11 @@ function RoutineCard({
               />
             </>
           ) : (
-            routine.memo && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-stone-700">{routine.memo}</p>
+            routine.memo && (
+              <p className="mt-2 whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700">
+                {routine.memo}
+              </p>
+            )
           )}
         </div>
         <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">
@@ -1287,7 +1291,7 @@ function RoutineCard({
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
+      <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
         <ChainCalendar dates={dates} markByDate={markByDate} isSaving={isSaving} onMark={(date) => onMark(routine, date, markByDate.get(date))} text={text} />
         <RoutineSuccessGraph routine={routine} text={text} />
       </div>
@@ -1313,13 +1317,13 @@ function ChainCalendar({
   return (
     <div className="min-w-0">
       {monthGroups.length === 0 ? (
-        <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+        <div className="rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
           {text.calendarPending}
         </div>
       ) : (
         <div className="space-y-4">
           {monthGroups.map((group) => (
-          <section key={group.key} className="rounded-md border border-stone-200 bg-stone-50 p-2">
+          <section key={group.key} className="rounded-md border border-stone-200 bg-white p-2">
             <h4 className="mb-2 border-b border-stone-200 pb-2 text-sm font-semibold text-stone-900">
               {group.label}
             </h4>
@@ -1386,7 +1390,7 @@ function RoutineSuccessGraph({ routine, text }: { routine: Routine; text: Routin
   });
 
   return (
-    <div className="min-w-0 rounded-md bg-stone-100 p-3">
+    <div className="min-w-0 rounded-md border border-stone-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-medium text-stone-500">{text.successRate}</div>

@@ -2437,8 +2437,8 @@ export default function GoalTracker() {
               transform: `translateX(${screenSwipeOffset}px)`,
             }}
           >
-        <section className={`min-w-0 ${currentView === "user" ? "grid gap-4" : "hidden"}`}>
-          <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+        <section className={`min-w-0 ${currentView === "user" ? "grid gap-0" : "hidden"}`}>
+          <div className="p-0">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="flex items-center gap-2 text-base font-semibold">
@@ -2487,7 +2487,7 @@ export default function GoalTracker() {
         </section>
 
         {currentView === "user" && isAccountDeleteOpen && (
-          <section className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+          <section className="border border-transparent bg-transparent p-0">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,160px)_auto] md:items-end">
               <div>
                 <h2 className="text-base font-semibold text-red-800">Delete account</h2>
@@ -2541,12 +2541,8 @@ export default function GoalTracker() {
         )}
 
         <section className="min-w-0">
-          <aside className={`min-w-0 flex-col gap-4 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
-            <div
-              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
-                currentView === "list" ? "" : "hidden"
-              }`}
-            >
+          <aside className={`min-w-0 flex-col gap-0 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
+            <div className={currentView === "list" ? "" : "hidden"}>
               <div className="flex items-center gap-2 px-1 pb-2">
                 <h2 className="text-base font-semibold">{text.goalList}</h2>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -2641,7 +2637,7 @@ export default function GoalTracker() {
             </div>
 
             <div
-              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+              className={`border border-transparent bg-transparent p-0 ${
                 currentView === "todo" ? "" : "hidden"
               }`}
             >
@@ -2867,7 +2863,7 @@ export default function GoalTracker() {
             </div>
 
             <div
-              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+              className={`border border-transparent bg-transparent p-0 ${
                 currentView === "archive" ? "" : "hidden"
               }`}
             >
@@ -2950,7 +2946,7 @@ export default function GoalTracker() {
             </div>
 
             <div
-              className={`rounded-lg border border-stone-300 bg-white p-3 shadow-sm ${
+              className={`border border-transparent bg-transparent p-0 ${
                 currentView === "bin" ? "" : "hidden"
               }`}
             >
@@ -3047,8 +3043,8 @@ export default function GoalTracker() {
 
           <section className={`min-w-0 max-w-full ${currentView === "detail" ? "" : "hidden"}`}>
             {activeGoal ? (
-              <div className="grid min-w-0 gap-4">
-                <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+              <div className="grid min-w-0 gap-0">
+                <div className="min-w-0 border border-transparent bg-transparent p-0">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0">
                       {isEditingGoal ? (
@@ -3130,7 +3126,7 @@ export default function GoalTracker() {
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md bg-stone-100 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                         <span>
                           <span className="font-medium text-stone-500">{text.current}</span>{" "}
                           <span className="font-semibold text-stone-900">{latestValue}</span>
@@ -3175,11 +3171,11 @@ export default function GoalTracker() {
                     </div>
                   ) : (
                     <div className="mt-5 grid gap-4">
-                      <div className="rounded-md bg-stone-100 p-3">
+                      <div className="rounded-md border border-stone-200 bg-white p-3">
                         <div className="text-xs font-medium text-stone-500">{text.memo}</div>
                         <p className="mt-1 whitespace-pre-wrap text-sm text-stone-800">{activeGoal.memo || text.noMemo}</p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md bg-stone-100 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                         <span>
                           <span className="font-medium text-stone-500">{text.current}</span>{" "}
                           <span className="font-semibold text-stone-900">{latestValue}</span>
@@ -3285,8 +3281,8 @@ export default function GoalTracker() {
                   </div>
                 </div>
 
-                <div className="grid min-w-0 gap-4">
-                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                <div className="grid min-w-0 gap-0">
+                    <div className="min-w-0 border border-transparent bg-transparent p-0">
                       <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
                           <h2 className="text-base font-semibold">{text.progressChart}</h2>
@@ -3313,11 +3309,11 @@ export default function GoalTracker() {
                       />
                     </div>
 
-                    <div className="min-w-0 rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+                    <div className="min-w-0 border border-transparent bg-transparent p-0">
                       <h2 className="text-base font-semibold">{text.recordHistory}</h2>
                       <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                         {activeGoal.entries.length === 0 ? (
-                          <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+                          <p className="rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
                             {text.noRecords}
                           </p>
                         ) : (
@@ -3326,7 +3322,7 @@ export default function GoalTracker() {
                             .sort((a, b) => b.createdAt - a.createdAt)
                             .map((entry) =>
                               editingEntryId === entry.id ? (
-                                <div key={entry.id} className="grid gap-3 rounded-md border border-emerald-300 p-3">
+                                <div key={entry.id} className="grid gap-3 rounded-md border border-emerald-300 bg-white p-3">
                                   <div className="grid gap-3 md:grid-cols-[minmax(0,140px)_minmax(0,1fr)]">
                                     <label className="grid min-w-0 gap-1 text-sm font-medium">
                                       Value
@@ -3392,7 +3388,7 @@ export default function GoalTracker() {
                               ) : (
                                 <div
                                   key={entry.id}
-                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-stone-200 p-3 text-left"
+                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-stone-200 bg-white p-3 text-left"
                                 >
                                   <div className="min-w-0">
                                     <div className="font-semibold">
@@ -3422,7 +3418,7 @@ export default function GoalTracker() {
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-[520px] items-center justify-center rounded-lg border border-dashed border-stone-300 bg-white p-8 text-center">
+              <div className="flex min-h-[520px] items-center justify-center border border-transparent bg-transparent p-0 text-center">
                 <div>
                   <h2 className="text-xl font-semibold">Add a goal to begin</h2>
                   <p className="mt-2 text-sm text-stone-600">
@@ -3542,8 +3538,8 @@ export default function GoalTracker() {
                 </div>
               </div>
 
-              <section className="mt-6 min-w-0">
-                <div className="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+              <section className="mt-0 min-w-0">
+                <div className="border border-transparent bg-transparent p-0">
                   <div className="flex items-center gap-2 text-base font-semibold">
                     {screenSwipeTargetView === "list" && <ListIcon />}
                     {screenSwipeTargetView === "todo" && <TodoIcon />}
@@ -3856,13 +3852,13 @@ export default function GoalTracker() {
 
 function ArchiveGroup({ title, count, children }: { title: string; count: number; children: ReactNode }) {
   return (
-    <section data-screen-swipe-surface className="rounded-md border border-stone-200 p-3">
+    <section data-screen-swipe-surface>
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-stone-900">{title}</h3>
         <span className="text-xs font-medium text-stone-500">{count}</span>
       </div>
       {count === 0 ? (
-        <p className="rounded-md bg-stone-100 px-3 py-3 text-sm text-stone-600">No items.</p>
+        <p className="rounded-md border border-stone-200 bg-white px-3 py-3 text-sm text-stone-600">No items.</p>
       ) : (
         <div className="space-y-2">{children}</div>
       )}
@@ -3890,7 +3886,7 @@ function StoredItemCard({
   deleteLabel?: string;
 }) {
   return (
-    <div data-screen-swipe-surface className="rounded-md border border-stone-200 p-3">
+    <div data-screen-swipe-surface className="rounded-md border border-stone-200 bg-white p-3">
       <div className="font-medium">{title}</div>
       <div className="mt-1 text-xs text-stone-600">{meta}</div>
       <div className="mt-1 text-xs text-stone-600">{detail}</div>
