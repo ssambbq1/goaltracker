@@ -1,4 +1,4 @@
-const CACHE_NAME = "plantree-v2";
+const CACHE_NAME = "plantree-v3";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icon.png", "/apple-icon.png"];
 
 self.addEventListener("install", (event) => {

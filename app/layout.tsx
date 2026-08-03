@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import AppDisplayMode from "./components/AppDisplayMode";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,6 +16,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PlanTree",
   description: "PlanTree helps you track goals, todos, and routines.",
+  appleWebApp: {
+    capable: true,
+    title: "PlanTree",
+    statusBarStyle: "default",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   icons: {
     icon: "/icon2.png",
     shortcut: "/icon2.png",
@@ -40,7 +49,10 @@ export default function RootLayout({
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <AppDisplayMode />
+        {children}
+      </body>
     </html>
   );
 }

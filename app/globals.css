@@ -31,6 +31,12 @@ html {
   text-size-adjust: 100%;
 }
 
+@media (max-width: 640px) {
+  html.pwa-standalone {
+    font-size: 18px;
+  }
+}
+
 html.dark-mode,
 body.dark-mode,
 .app-dark {
