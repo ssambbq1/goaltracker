@@ -8,7 +8,7 @@ function schemaMissingResponse() {
   return Response.json({
     routines: [],
     schemaMissing: true,
-    error: "Routine tables are not installed. Run the Supabase schema update.",
+    error: "Habit data tables are not installed. Run the Supabase schema update.",
   });
 }
 
@@ -19,7 +19,7 @@ export async function GET() {
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
     if (isRoutineSchemaMissingError(error)) return schemaMissingResponse();
-    const message = getErrorMessage(error, "Failed to load routines");
+    const message = getErrorMessage(error, "Failed to load habits");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const title = typeof body?.title === "string" ? body.title.trim() : "";
 
     if (!title) {
-      return Response.json({ error: "Routine title is required" }, { status: 400 });
+      return Response.json({ error: "Habit title is required" }, { status: 400 });
     }
 
     const result = await addRoutine({
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     return Response.json(result, { status: 201 });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to add routine");
+    const message = getErrorMessage(error, "Failed to add habit");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -58,7 +58,7 @@ export async function PUT(request: Request) {
     return Response.json({ routines });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to reorder routines");
+    const message = getErrorMessage(error, "Failed to reorder habits");
     return Response.json({ error: message }, { status: 500 });
   }
 }

@@ -10,6 +10,6 @@ export async function PATCH(_request: Request, context: { params: Promise<{ todo
     return Response.json(await restoreTodo(todoId));
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    return Response.json({ error: getErrorMessage(error, "Failed to restore todo") }, { status: 500 });
+    return Response.json({ error: getErrorMessage(error, "Failed to restore task") }, { status: 500 });
   }
 }

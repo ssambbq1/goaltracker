@@ -23,7 +23,7 @@ export async function POST(request: Request, context: RouteContext<"/api/routine
     return Response.json({ routines });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to update routine mark");
+    const message = getErrorMessage(error, "Failed to update habit mark");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -36,7 +36,7 @@ export async function DELETE(request: Request, context: RouteContext<"/api/routi
     return Response.json({ routines });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to clear routine mark");
+    const message = getErrorMessage(error, "Failed to clear habit mark");
     return Response.json({ error: message }, { status: 500 });
   }
 }

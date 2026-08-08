@@ -10,7 +10,7 @@ export async function GET() {
     return Response.json({ todos });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to load todos");
+    const message = getErrorMessage(error, "Failed to load tasks");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     return Response.json(result, { status: 201 });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to add todo");
+    const message = getErrorMessage(error, "Failed to add task");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -49,7 +49,7 @@ export async function PUT(request: Request) {
     return Response.json({ todos });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to reorder todos");
+    const message = getErrorMessage(error, "Failed to reorder tasks");
     return Response.json({ error: message }, { status: 500 });
   }
 }

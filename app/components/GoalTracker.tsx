@@ -132,14 +132,12 @@ const UI_TEXT = {
   en: {
     appName: "PlanTree",
     tagline: "Design your life",
-    languageToggle: "Kor",
-    languageTitle: "Switch to Korean",
-    goalList: "Goal list",
+    goalList: "Goals",
     goalShort: "Goals",
-    todoList: "To do list",
-    todoShort: "To do",
-    routineList: "Routine",
-    routineShort: "Routine",
+    todoList: "Tasks",
+    todoShort: "Tasks",
+    routineList: "Habits",
+    routineShort: "Habits",
     archive: "Archive",
     bin: "Bin",
     goalDetail: "Goal detail",
@@ -174,14 +172,14 @@ const UI_TEXT = {
     progressChartHint: "Records are plotted by saved date.",
     recordHistory: "Record history",
     addGoal: "Add goal",
-    addTodo: "Add todo",
+    addTodo: "Add task",
     addProgressRecord: "Add progress record",
     goalName: "Goal name",
     goalMemo: "Goal memo",
-    todo: "Todo",
+    todo: "Task",
     noGoals: "No goals yet. Add the first goal to start tracking.",
-    noTodos: "No todos yet. Add a simple task to keep it on the list.",
-    noTodosForCategory: "No todos match the selected categories.",
+    noTodos: "No tasks yet. Add a simple task to keep it on the list.",
+    noTodosForCategory: "No tasks match the selected categories.",
     noProgress: "No progress records yet. Add a record to draw the chart.",
     noRecords: "No records yet. Saved records will be written with their date.",
     noMemo: "No memo",
@@ -199,8 +197,6 @@ const UI_TEXT = {
   ko: {
     appName: "플랜트리",
     tagline: "삶을 설계하세요",
-    languageToggle: "Eng",
-    languageTitle: "영어로 전환",
     goalList: "장기목표",
     goalShort: "목표",
     todoList: "단순 할일",
@@ -515,26 +511,6 @@ function getSwipeTargetView(currentView: TrackerView, deltaX: number) {
   return SWIPE_NAVIGATION_ORDER[nextIndex] ?? null;
 }
 
-function getTrackerViewLabel(view: TrackerView, language: AppLanguage = "en") {
-  const text = UI_TEXT[language];
-  switch (view) {
-    case "list":
-      return text.goalList;
-    case "todo":
-      return text.todoList;
-    case "routine":
-      return text.routineList;
-    case "archive":
-      return text.archive;
-    case "bin":
-      return text.bin;
-    case "detail":
-      return text.goalDetail;
-    case "user":
-      return text.user;
-  }
-}
-
 async function fetchGoals() {
   const response = await fetch("/api/goals", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; goals?: Goal[] };
@@ -559,28 +535,28 @@ async function fetchArchivedGoals() {
 async function fetchArchivedTodos() {
   const response = await fetch("/api/todos/archive", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load archived todos");
+  if (!response.ok) throw new Error(data.error || "Failed to load archived tasks");
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
 async function fetchDeletedTodos() {
   const response = await fetch("/api/todos/bin", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load deleted todos");
+  if (!response.ok) throw new Error(data.error || "Failed to load deleted tasks");
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
 async function fetchArchivedRoutines() {
   const response = await fetch("/api/routines/archive", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: RoutineSummary[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load archived routines");
+  if (!response.ok) throw new Error(data.error || "Failed to load archived habits");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
 async function fetchDeletedRoutines() {
   const response = await fetch("/api/routines/bin", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: RoutineSummary[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load deleted routines");
+  if (!response.ok) throw new Error(data.error || "Failed to load deleted habits");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
@@ -609,7 +585,7 @@ async function reorderGoalList(goalIds: string[]) {
 async function fetchTodos() {
   const response = await fetch("/api/todos", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to load todos");
+  if (!response.ok) throw new Error(data.error || "Failed to load tasks");
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
@@ -620,7 +596,7 @@ async function createTodo(title: string, targetDate: string, category: string) {
     body: JSON.stringify({ title, targetDate, category }),
   });
   const data = (await response.json()) as { error?: string; todo?: Todo; todos?: Todo[] };
-  if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add todo");
+  if (!response.ok || !data.todo) throw new Error(data.error || "Failed to add task");
   return { todo: data.todo, todos: Array.isArray(data.todos) ? data.todos : [] };
 }
 
@@ -631,7 +607,7 @@ async function reorderTodoList(todoIds: string[]) {
     body: JSON.stringify({ todoIds }),
   });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to reorder todos");
+  if (!response.ok) throw new Error(data.error || "Failed to reorder tasks");
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
@@ -642,14 +618,14 @@ async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "co
     body: JSON.stringify(patch),
   });
   const data = (await response.json()) as { error?: string; todos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to update todo");
+  if (!response.ok) throw new Error(data.error || "Failed to update task");
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
 async function removeTodo(todoId: string) {
   const response = await fetch(`/api/todos/${todoId}`, { method: "DELETE" });
   const data = (await response.json()) as { error?: string; todos?: Todo[]; deletedTodos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to delete todo");
+  if (!response.ok) throw new Error(data.error || "Failed to delete task");
   return {
     todos: Array.isArray(data.todos) ? data.todos : [],
     deletedTodos: Array.isArray(data.deletedTodos) ? data.deletedTodos : [],
@@ -659,14 +635,14 @@ async function removeTodo(todoId: string) {
 async function restoreStoredTodo(todoId: string) {
   const response = await fetch(`/api/todos/${todoId}/restore`, { method: "PATCH" });
   const data = (await response.json()) as { error?: string; todos?: Todo[]; archivedTodos?: Todo[]; deletedTodos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to restore todo");
+  if (!response.ok) throw new Error(data.error || "Failed to restore task");
   return data;
 }
 
 async function permanentlyRemoveTodo(todoId: string) {
   const response = await fetch(`/api/todos/${todoId}/permanent`, { method: "DELETE" });
   const data = (await response.json()) as { error?: string; deletedTodos?: Todo[] };
-  if (!response.ok) throw new Error(data.error || "Failed to permanently delete todo");
+  if (!response.ok) throw new Error(data.error || "Failed to permanently delete task");
   return data;
 }
 
@@ -731,14 +707,14 @@ async function restoreStoredRoutine(routineId: string) {
     archivedRoutines?: RoutineSummary[];
     deletedRoutines?: RoutineSummary[];
   };
-  if (!response.ok) throw new Error(data.error || "Failed to restore routine");
+  if (!response.ok) throw new Error(data.error || "Failed to restore habit");
   return data;
 }
 
 async function permanentlyRemoveRoutine(routineId: string) {
   const response = await fetch(`/api/routines/${routineId}/permanent`, { method: "DELETE" });
   const data = (await response.json()) as { error?: string; deletedRoutines?: RoutineSummary[] };
-  if (!response.ok) throw new Error(data.error || "Failed to permanently delete routine");
+  if (!response.ok) throw new Error(data.error || "Failed to permanently delete habit");
   return data;
 }
 
@@ -832,8 +808,6 @@ export default function GoalTracker() {
     typeof window === "undefined" ? "en" : readStoredLanguage(),
   );
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
-  const [screenSwipeTargetView, setScreenSwipeTargetView] = useState<TrackerView | null>(null);
-  const [screenSwipeTargetDirection, setScreenSwipeTargetDirection] = useState<-1 | 1 | null>(null);
   const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
   const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([]);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -961,7 +935,7 @@ export default function GoalTracker() {
         } catch (todoError) {
           if (!isActive) return;
           setTodos([]);
-          setError(todoError instanceof Error ? todoError.message : "Failed to load todos");
+          setError(todoError instanceof Error ? todoError.message : "Failed to load tasks");
         }
       } catch (loadError) {
         if (!isActive) return;
@@ -1223,7 +1197,7 @@ export default function GoalTracker() {
       setTodos(await fetchTodos());
     } catch (todoError) {
       setTodos([]);
-      setError(todoError instanceof Error ? todoError.message : "Failed to load todos");
+      setError(todoError instanceof Error ? todoError.message : "Failed to load tasks");
     }
   }
 
@@ -1487,8 +1461,6 @@ export default function GoalTracker() {
     if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     setIsScreenSwipeAnimating(false);
     setScreenSwipeOffset(0);
-    setScreenSwipeTargetView(null);
-    setScreenSwipeTargetDirection(null);
     screenSwipeState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1507,12 +1479,8 @@ export default function GoalTracker() {
     if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
       swipeState.didSwipe = true;
       event.preventDefault();
-      const nextView = getSwipeTargetView(currentView, deltaX);
       const viewportWidth = window.innerWidth || 1;
-      const previewOffset = Math.max(-viewportWidth, Math.min(viewportWidth, deltaX));
-      setScreenSwipeTargetView(nextView);
-      setScreenSwipeTargetDirection(nextView ? (deltaX < 0 ? -1 : 1) : null);
-      setScreenSwipeOffset(previewOffset);
+      setScreenSwipeOffset(Math.max(-viewportWidth, Math.min(viewportWidth, deltaX)));
     }
   }
 
@@ -1544,21 +1512,17 @@ export default function GoalTracker() {
 
     suppressNextScreenClick.current = true;
     setIsScreenSwipeAnimating(true);
-    setScreenSwipeTargetView(nextView);
-    setScreenSwipeTargetDirection(deltaX < 0 ? -1 : 1);
     setScreenSwipeOffset(deltaX > 0 ? window.innerWidth : -window.innerWidth);
     screenSwipeAnimationTimer.current = window.setTimeout(() => {
       navigateToView(nextView);
       window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
       setIsScreenSwipeAnimating(false);
       setScreenSwipeOffset(0);
-      setScreenSwipeTargetView(null);
-      setScreenSwipeTargetDirection(null);
       screenSwipeAnimationTimer.current = null;
-    }, 260);
+    }, 220);
     window.setTimeout(() => {
       suppressNextScreenClick.current = false;
-    }, 350);
+    }, 300);
   }
 
   function settleScreenSwipe(offset: number) {
@@ -1567,10 +1531,9 @@ export default function GoalTracker() {
     if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     screenSwipeAnimationTimer.current = window.setTimeout(() => {
       setIsScreenSwipeAnimating(false);
-      setScreenSwipeTargetView(null);
-      setScreenSwipeTargetDirection(null);
+      setScreenSwipeOffset(0);
       screenSwipeAnimationTimer.current = null;
-    }, 220);
+    }, 180);
   }
 
   function cancelScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
@@ -1667,7 +1630,7 @@ export default function GoalTracker() {
       setIsTodoModalOpen(false);
       setCurrentView("todo");
     } catch (addError) {
-      setError(addError instanceof Error ? addError.message : "Failed to add todo");
+      setError(addError instanceof Error ? addError.message : "Failed to add task");
     } finally {
       setIsSaving(false);
     }
@@ -1725,7 +1688,7 @@ export default function GoalTracker() {
       cancelEditingTodo();
     } catch (updateError) {
       setTodos(previousTodos);
-      setError(updateError instanceof Error ? updateError.message : "Failed to update todo");
+      setError(updateError instanceof Error ? updateError.message : "Failed to update task");
     } finally {
       setIsSaving(false);
     }
@@ -1743,7 +1706,7 @@ export default function GoalTracker() {
     } catch (reorderError) {
       setTodos(previousTodos);
       setHighlightedTodoId(null);
-      setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder todos");
+      setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder tasks");
     } finally {
       setIsSaving(false);
     }
@@ -1843,7 +1806,7 @@ export default function GoalTracker() {
       if (nextCompleted) triggerSuccessConfetti();
     } catch (updateError) {
       setTodos(todos);
-      setError(updateError instanceof Error ? updateError.message : "Failed to update todo");
+      setError(updateError instanceof Error ? updateError.message : "Failed to update task");
     } finally {
       setIsSaving(false);
     }
@@ -1865,7 +1828,7 @@ export default function GoalTracker() {
       setTodoToDelete(null);
     } catch (deleteError) {
       setTodos(previousTodos);
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete todo");
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete task");
     } finally {
       setIsSaving(false);
     }
@@ -2124,7 +2087,7 @@ export default function GoalTracker() {
       setArchivedTodos(Array.isArray(result.archivedTodos) ? result.archivedTodos : []);
       setDeletedTodos(Array.isArray(result.deletedTodos) ? result.deletedTodos : []);
     } catch (restoreError) {
-      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore todo");
+      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore task");
     } finally {
       setIsSaving(false);
     }
@@ -2138,7 +2101,7 @@ export default function GoalTracker() {
       const result = await permanentlyRemoveTodo(todoId);
       setDeletedTodos(Array.isArray(result.deletedTodos) ? result.deletedTodos : []);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete todo");
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete task");
     } finally {
       setIsSaving(false);
     }
@@ -2154,7 +2117,7 @@ export default function GoalTracker() {
       setDeletedRoutines(Array.isArray(result.deletedRoutines) ? result.deletedRoutines : []);
       setRoutineReloadKey((key) => key + 1);
     } catch (restoreError) {
-      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore routine");
+      setError(restoreError instanceof Error ? restoreError.message : "Failed to restore habit");
     } finally {
       setIsSaving(false);
     }
@@ -2168,7 +2131,7 @@ export default function GoalTracker() {
       const result = await permanentlyRemoveRoutine(routineId);
       setDeletedRoutines(Array.isArray(result.deletedRoutines) ? result.deletedRoutines : []);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete routine");
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to permanently delete habit");
     } finally {
       setIsSaving(false);
     }
@@ -2353,7 +2316,7 @@ export default function GoalTracker() {
           text={text}
           isDarkMode={isDarkMode}
           isUserView={currentView === "user"}
-          onLanguageToggle={() => setLanguage((current) => (current === "en" ? "ko" : "en"))}
+          onLanguageChange={setLanguage}
           onThemeToggle={() => setIsDarkMode((current) => !current)}
           onUserOpen={() => {
             setCurrentView("user");
@@ -2431,7 +2394,7 @@ export default function GoalTracker() {
         <div className="relative min-w-0 overflow-hidden">
           <div
             className={`min-w-0 transform-gpu ${
-              isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
+              isScreenSwipeAnimating ? "transition-transform duration-[220ms] ease-out" : ""
             }`}
             style={{
               transform: `translateX(${screenSwipeOffset}px)`,
@@ -2544,9 +2507,11 @@ export default function GoalTracker() {
           <aside className={`min-w-0 flex-col gap-0 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div className={currentView === "list" ? "" : "hidden"}>
               <div className="flex items-center gap-2 px-1 pb-2">
-                <h2 className="text-base font-semibold">{text.goalList}</h2>
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <ListIcon />
+                  {text.goalList}
+                </h2>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{goals.length}</span>
                   <button
                     type="button"
                     aria-expanded={isGoalModalOpen}
@@ -2647,13 +2612,10 @@ export default function GoalTracker() {
                   {text.todoList}
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">
-                    {activeSelectedTodoCategories.length ? `${visibleTodos.length}/${todos.length}` : todos.length}
-                  </span>
                   <button
                     type="button"
                     aria-expanded={isTodoModalOpen}
-                    aria-label="Add todo"
+                    aria-label="Add task"
                     onClick={() => {
                       setCurrentView("todo");
                       setIsTodoModalOpen(true);
@@ -2873,7 +2835,6 @@ export default function GoalTracker() {
                   {text.archive}
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{archivedItemCount}</span>
                   <button
                     type="button"
                     aria-expanded={currentView === "archive"}
@@ -2956,7 +2917,6 @@ export default function GoalTracker() {
                   {text.bin}
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{deletedItemCount}</span>
                   <button
                     type="button"
                     onClick={() => setIsEmptyBinModalOpen(true)}
@@ -3514,50 +3474,6 @@ export default function GoalTracker() {
         )}
 
           </div>
-          {screenSwipeTargetView && screenSwipeTargetDirection && (
-            <div
-              aria-hidden="true"
-              className={`pointer-events-none absolute inset-x-0 top-0 min-w-0 transform-gpu ${
-                isScreenSwipeAnimating ? "transition-transform duration-[260ms] ease-out" : ""
-              }`}
-              style={{
-                transform: `translateX(calc(${screenSwipeOffset}px + ${
-                  screenSwipeTargetDirection === -1 ? "100%" : "-100%"
-                }))`,
-              }}
-            >
-              <div className="rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur">
-                <div className="flex h-12 items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 text-sm font-semibold text-white">
-                  {screenSwipeTargetView === "list" && <ListIcon />}
-                  {screenSwipeTargetView === "todo" && <TodoIcon />}
-                  {screenSwipeTargetView === "routine" && <RoutineIcon />}
-                  {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-                  {screenSwipeTargetView === "bin" && <BinIcon />}
-                  {screenSwipeTargetView === "user" && <UserIcon />}
-                  <span>{getTrackerViewLabel(screenSwipeTargetView, language)}</span>
-                </div>
-              </div>
-
-              <section className="mt-0 min-w-0">
-                <div className="border border-transparent bg-transparent p-0">
-                  <div className="flex items-center gap-2 text-base font-semibold">
-                    {screenSwipeTargetView === "list" && <ListIcon />}
-                    {screenSwipeTargetView === "todo" && <TodoIcon />}
-                    {screenSwipeTargetView === "routine" && <RoutineIcon />}
-                    {screenSwipeTargetView === "archive" && <ArchiveIcon />}
-                    {screenSwipeTargetView === "bin" && <BinIcon />}
-                    {screenSwipeTargetView === "user" && <UserIcon />}
-                    {getTrackerViewLabel(screenSwipeTargetView, language)}
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    <div className="h-14 rounded-md bg-stone-100" />
-                    <div className="h-14 rounded-md bg-stone-100" />
-                    <div className="h-14 rounded-md bg-stone-100" />
-                  </div>
-                </div>
-              </section>
-            </div>
-          )}
         </div>
       </div>
       {typeof document !== "undefined" && isGoalModalOpen && createPortal(
@@ -3665,7 +3581,7 @@ export default function GoalTracker() {
               <h2 className="text-base font-semibold">{text.addTodo}</h2>
               <button
                 type="button"
-                aria-label="Close add todo"
+                aria-label="Close add task"
                 onClick={() => setIsTodoModalOpen(false)}
                 className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
               >
@@ -3734,7 +3650,7 @@ export default function GoalTracker() {
               <h2 className="text-base font-semibold">{text.delete}?</h2>
               <button
                 type="button"
-                aria-label="Close delete todo"
+                aria-label="Close delete task"
                 onClick={() => setTodoToDelete(null)}
                 className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
               >

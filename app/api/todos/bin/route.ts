@@ -10,6 +10,6 @@ export async function GET() {
     return Response.json({ todos });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    return Response.json({ error: getErrorMessage(error, "Failed to load deleted todos") }, { status: 500 });
+    return Response.json({ error: getErrorMessage(error, "Failed to load deleted tasks") }, { status: 500 });
   }
 }

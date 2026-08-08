@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
 import appIcon from "../icon3.png";
 import AppInstallButton from "./AppInstallButton";
 
@@ -9,8 +10,6 @@ type AppLanguage = "en" | "ko";
 type HeadText = {
   appName: string;
   tagline: string;
-  languageToggle: string;
-  languageTitle: string;
 };
 
 type HeadProps = {
@@ -18,7 +17,7 @@ type HeadProps = {
   text: HeadText;
   isDarkMode: boolean;
   isUserView: boolean;
-  onLanguageToggle: () => void;
+  onLanguageChange: (language: AppLanguage) => void;
   onThemeToggle: () => void;
   onUserOpen: () => void;
 };
@@ -28,10 +27,17 @@ export default function Head({
   text,
   isDarkMode,
   isUserView,
-  onLanguageToggle,
+  onLanguageChange,
   onThemeToggle,
   onUserOpen,
 }: HeadProps) {
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
+
+  function chooseLanguage(nextLanguage: AppLanguage) {
+    onLanguageChange(nextLanguage);
+    setIsLanguageMenuOpen(false);
+  }
+
   return (
     <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
       <div className="flex min-w-0 items-end gap-2 sm:gap-3">
@@ -45,15 +51,54 @@ export default function Head({
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <AppInstallButton language={language} />
-        <button
-          type="button"
-          onClick={onLanguageToggle}
-          aria-label={text.languageTitle}
-          title={text.languageTitle}
-          className="flex h-7 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11"
+        <div
+          className="relative"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setIsLanguageMenuOpen(false);
+          }}
         >
-          {text.languageToggle}
-        </button>
+          <button
+            type="button"
+            onClick={() => setIsLanguageMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={isLanguageMenuOpen}
+            aria-label="Select language"
+            className="flex h-7 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:px-3"
+          >
+            Lang
+          </button>
+          {isLanguageMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 z-50 mt-2 min-w-28 overflow-hidden rounded-md border border-stone-300 bg-white py-1 text-xs font-semibold text-stone-700 shadow-lg"
+            >
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={language === "ko"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseLanguage("ko")}
+                className={`block w-full px-3 py-2 text-left hover:bg-stone-100 ${
+                  language === "ko" ? "bg-emerald-50 text-emerald-800" : ""
+                }`}
+              >
+                Korean
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={language === "en"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseLanguage("en")}
+                className={`block w-full px-3 py-2 text-left hover:bg-stone-100 ${
+                  language === "en" ? "bg-emerald-50 text-emerald-800" : ""
+                }`}
+              >
+                English
+              </button>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={onThemeToggle}

@@ -1,6 +1,6 @@
 # BOOST MASTERY
 
-A personal tracker for goals, todos, routines, and progress records.
+A personal tracker for goals, tasks, habits, and progress records.
 
 ## Supabase setup
 

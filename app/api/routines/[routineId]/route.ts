@@ -18,7 +18,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/routin
     return Response.json({ routines });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to update routine");
+    const message = getErrorMessage(error, "Failed to update habit");
     return Response.json({ error: message }, { status: 500 });
   }
 }
@@ -30,7 +30,7 @@ export async function DELETE(_request: Request, context: RouteContext<"/api/rout
     return Response.json({ routines });
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    const message = getErrorMessage(error, "Failed to delete routine");
+    const message = getErrorMessage(error, "Failed to delete habit");
     return Response.json({ error: message }, { status: 500 });
   }
 }

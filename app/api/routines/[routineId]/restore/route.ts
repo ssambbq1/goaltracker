@@ -10,6 +10,6 @@ export async function PATCH(_request: Request, context: { params: Promise<{ rout
     return Response.json(await restoreRoutine(routineId));
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    return Response.json({ error: getErrorMessage(error, "Failed to restore routine") }, { status: 500 });
+    return Response.json({ error: getErrorMessage(error, "Failed to restore habit") }, { status: 500 });
   }
 }

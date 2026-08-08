@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "PlanTree",
-  description: "PlanTree helps you track goals, todos, and routines.",
+  description: "PlanTree helps you track goals, tasks, and habits.",
   appleWebApp: {
     capable: true,
     title: "PlanTree",

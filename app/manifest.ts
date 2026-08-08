@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "PlanTree",
     short_name: "PlanTree",
-    description: "PlanTree helps you track goals, todos, and routines.",
+    description: "PlanTree helps you track goals, tasks, and habits.",
     start_url: "/",
     scope: "/",
     display: "standalone",

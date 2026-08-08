@@ -10,6 +10,6 @@ export async function DELETE(_request: Request, context: { params: Promise<{ rou
     return Response.json(await permanentlyDeleteRoutine(routineId));
   } catch (error) {
     if (isUnauthorizedError(error)) return Response.json({ error: "Login is required" }, { status: 401 });
-    return Response.json({ error: getErrorMessage(error, "Failed to permanently delete routine") }, { status: 500 });
+    return Response.json({ error: getErrorMessage(error, "Failed to permanently delete habit") }, { status: 500 });
   }
 }

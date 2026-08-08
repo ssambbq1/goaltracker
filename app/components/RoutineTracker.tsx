@@ -49,9 +49,9 @@ const todayIso = new Date().toISOString().slice(0, 10);
 const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
 const ROUTINE_TEXT = {
   en: {
-    routineList: "Routine",
-    routine: "Routine",
-    summary: "SUMMARY",
+    routineList: "Habits",
+    routine: "Habit",
+    summary: "DAYLY CHECK",
     add: "ADD+",
     save: "SAVE",
     cancel: "Cancel",
@@ -65,16 +65,16 @@ const ROUTINE_TEXT = {
     successLower: "success",
     failureLower: "failure",
     unmarked: "Unmarked",
-    todayChecklist: "TODAY'S CHECK LIST",
-    noRoutines: "No routines yet. Add a routine with a start and end date to build a chain calendar.",
-    noRoutinesShort: "No routines yet.",
+    todayChecklist: "TODAY'S HABITS",
+    noRoutines: "No habits yet. Add a habit with a start and end date to build a chain calendar.",
+    noRoutinesShort: "No habits yet.",
     notScheduled: "Not scheduled this day",
-    loading: "Loading routines...",
-    addRoutine: "Add routine",
+    loading: "Loading habits...",
+    addRoutine: "Add habit",
     successRate: "Success rate",
     noScoredDays: "No scored days",
-    noRoutineMarks: "No routine marks yet. Mark a day to draw the graph.",
-    calendarPending: "Calendar will appear when this routine reaches the current week.",
+    noRoutineMarks: "No habit marks yet. Mark a day to draw the graph.",
+    calendarPending: "Calendar will appear when this habit reaches the current week.",
     weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
   },
   ko: {
@@ -205,7 +205,7 @@ function getRoutineStats(routine: Routine) {
 async function fetchRoutines() {
   const response = await fetch("/api/routines", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: Routine[]; schemaMissing?: boolean };
-  if (!response.ok) throw new Error(data.error || "Failed to load routines");
+  if (!response.ok) throw new Error(data.error || "Failed to load habits");
   return {
     routines: Array.isArray(data.routines) ? data.routines : [],
     schemaMissing: data.schemaMissing === true,
@@ -220,7 +220,7 @@ async function createRoutine(input: typeof emptyRoutineForm) {
     body: JSON.stringify(input),
   });
   const data = (await response.json()) as { error?: string; routine?: Routine; routines?: Routine[] };
-  if (!response.ok || !data.routine) throw new Error(data.error || "Failed to add routine");
+  if (!response.ok || !data.routine) throw new Error(data.error || "Failed to add habit");
   return { routine: data.routine, routines: Array.isArray(data.routines) ? data.routines : [] };
 }
 
@@ -231,7 +231,7 @@ async function reorderRoutineList(routineIds: string[]) {
     body: JSON.stringify({ routineIds }),
   });
   const data = (await response.json()) as { error?: string; routines?: Routine[] };
-  if (!response.ok) throw new Error(data.error || "Failed to reorder routines");
+  if (!response.ok) throw new Error(data.error || "Failed to reorder habits");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
@@ -242,21 +242,21 @@ async function patchRoutine(routineId: string, patch: Partial<Pick<Routine, "tit
     body: JSON.stringify(patch),
   });
   const data = (await response.json()) as { error?: string; routines?: Routine[] };
-  if (!response.ok) throw new Error(data.error || "Failed to update routine");
+  if (!response.ok) throw new Error(data.error || "Failed to update habit");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
 async function removeRoutine(routineId: string) {
   const response = await fetch(`/api/routines/${routineId}`, { method: "DELETE" });
   const data = (await response.json()) as { error?: string; routines?: Routine[] };
-  if (!response.ok) throw new Error(data.error || "Failed to delete routine");
+  if (!response.ok) throw new Error(data.error || "Failed to delete habit");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
 async function archiveExistingRoutine(routineId: string) {
   const response = await fetch(`/api/routines/${routineId}/archive`, { method: "PATCH" });
   const data = (await response.json()) as { error?: string; routines?: Routine[] };
-  if (!response.ok) throw new Error(data.error || "Failed to archive routine");
+  if (!response.ok) throw new Error(data.error || "Failed to archive habit");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
@@ -270,7 +270,7 @@ async function saveRoutineMark(routineId: string, date: string, status: RoutineM
     : await fetch(`/api/routines/${routineId}/marks?date=${encodeURIComponent(date)}`, { method: "DELETE" });
 
   const data = (await response.json()) as { error?: string; routines?: Routine[] };
-  if (!response.ok) throw new Error(data.error || "Failed to update routine mark");
+  if (!response.ok) throw new Error(data.error || "Failed to update habit mark");
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
@@ -332,7 +332,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
         if (result.error) onError(result.error);
       } catch (error) {
         if (!isActive) return;
-        onError(error instanceof Error ? error.message : "Failed to load routines");
+        onError(error instanceof Error ? error.message : "Failed to load habits");
       } finally {
         if (isActive) setIsLoading(false);
       }
@@ -373,7 +373,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setIsRoutineModalOpen(false);
       setForm({ ...emptyRoutineForm, startDate: todayIso, endDate: todayIso });
     } catch (error) {
-      onError(error instanceof Error ? error.message : "Failed to add routine");
+      onError(error instanceof Error ? error.message : "Failed to add habit");
     } finally {
       onSavingChange(false);
     }
@@ -399,7 +399,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setRoutines(await patchRoutine(routineId, { ...editForm, title }));
       setEditingRoutineId(null);
     } catch (error) {
-      onError(error instanceof Error ? error.message : "Failed to update routine");
+      onError(error instanceof Error ? error.message : "Failed to update habit");
     } finally {
       onSavingChange(false);
     }
@@ -418,7 +418,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setRoutines(await removeRoutine(routineId));
     } catch (error) {
       setRoutines(previous);
-      onError(error instanceof Error ? error.message : "Failed to delete routine");
+      onError(error instanceof Error ? error.message : "Failed to delete habit");
     } finally {
       onSavingChange(false);
     }
@@ -437,7 +437,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setRoutines(await archiveExistingRoutine(routineId));
     } catch (error) {
       setRoutines(previous);
-      onError(error instanceof Error ? error.message : "Failed to archive routine");
+      onError(error instanceof Error ? error.message : "Failed to archive habit");
     } finally {
       onSavingChange(false);
     }
@@ -466,7 +466,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     } catch (error) {
       setRoutines(previousRoutines);
       setHighlightedRoutineId(null);
-      onError(error instanceof Error ? error.message : "Failed to reorder routines");
+      onError(error instanceof Error ? error.message : "Failed to reorder habits");
     } finally {
       onSavingChange(false);
     }
@@ -656,7 +656,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setRoutines(applyPendingMarkSaves(await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status)));
     } catch (error) {
       setRoutines(applyPendingMarkSaves(pendingSave.previous));
-      onError(error instanceof Error ? error.message : "Failed to update routine mark");
+      onError(error instanceof Error ? error.message : "Failed to update habit mark");
     }
   }
 
@@ -737,7 +737,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
 
       {schemaMissing && (
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Routine tables are not installed yet. Apply the `supabase/schema.sql` update, then reload this page.
+          Habit data tables are not installed yet. Apply the `supabase/schema.sql` update, then reload this page.
         </section>
       )}
 
@@ -770,11 +770,14 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
           {routines.length === 0 ? (
             <section className="border border-transparent bg-transparent p-0">
               <div className="flex items-center gap-2 px-1 pb-2">
-                <h2 className="text-base font-semibold">{text.routineList}</h2>
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <HabitIcon />
+                  {text.routineList}
+                </h2>
                 <button
                   type="button"
                   aria-expanded={isSummaryModalOpen}
-                  aria-label="Open today's routine checklist"
+                  aria-label="Open today's habit checklist"
                   onClick={() => {
                     setSelectedSummaryDate(todayIso);
                     setIsSummaryModalOpen(true);
@@ -787,7 +790,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                 <button
                   type="button"
                   aria-expanded={isRoutineModalOpen}
-                  aria-label="Add routine"
+                  aria-label="Add habit"
                   onClick={() => setIsRoutineModalOpen(true)}
                   disabled={schemaMissing}
                   className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -802,13 +805,15 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
           ) : (
             <section className="border border-transparent bg-transparent p-0">
               <div className="flex items-center gap-2 px-1 pb-2">
-                <h2 className="text-base font-semibold">{text.routineList}</h2>
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <HabitIcon />
+                  {text.routineList}
+                </h2>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
-                  <span className="text-xs font-medium text-stone-500">{routines.length}</span>
                   <button
                     type="button"
                     aria-expanded={isSummaryModalOpen}
-                    aria-label="Open today's routine checklist"
+                    aria-label="Open today's habit checklist"
                     onClick={() => {
                       setSelectedSummaryDate(todayIso);
                       setIsSummaryModalOpen(true);
@@ -821,7 +826,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                   <button
                     type="button"
                     aria-expanded={isRoutineModalOpen}
-                    aria-label="Add routine"
+                    aria-label="Add habit"
                     onClick={() => setIsRoutineModalOpen(true)}
                     disabled={schemaMissing}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -884,7 +889,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
               </div>
               <button
                 type="button"
-                aria-label="Close today's routine checklist"
+                aria-label="Close today's habit checklist"
                 onClick={() => setIsSummaryModalOpen(false)}
                 className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
               >
@@ -962,7 +967,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
               <h2 className="text-base font-semibold">{text.addRoutine}</h2>
               <button
                 type="button"
-                aria-label="Close add routine"
+                aria-label="Close add habit"
                 onClick={() => setIsRoutineModalOpen(false)}
                 className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
               >
@@ -1520,6 +1525,24 @@ function CheckListIcon() {
       <path d="m3 6 1.5 1.5L7 4.5" />
       <path d="m3 12 1.5 1.5L7 10.5" />
       <path d="m3 18 1.5 1.5L7 16.5" />
+    </svg>
+  );
+}
+
+function HabitIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07" />
     </svg>
   );
 }
