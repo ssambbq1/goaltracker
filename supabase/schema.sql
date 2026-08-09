@@ -80,6 +80,13 @@ create table if not exists public.routine_marks (
   unique (routine_id, date)
 );
 
+create table if not exists public.agent_settings (
+  user_id text primary key references public.app_users(login_id) on delete cascade,
+  llm_model text not null default '',
+  api_key_ciphertext text not null default '',
+  updated_at_ms bigint not null
+);
+
 create index if not exists goals_user_active_order_idx
   on public.goals (user_id, position asc, created_at_ms desc)
   where deleted_at_ms is null and archived_at_ms is null;
@@ -113,3 +120,4 @@ alter table public.progress_entries enable row level security;
 alter table public.todos enable row level security;
 alter table public.routines enable row level security;
 alter table public.routine_marks enable row level security;
+alter table public.agent_settings enable row level security;

@@ -171,6 +171,30 @@ export type Database = {
           },
         ];
       };
+      agent_settings: {
+        Row: {
+          user_id: string;
+          llm_model: string;
+          api_key_ciphertext: string;
+          updated_at_ms: number;
+        };
+        Insert: {
+          user_id: string;
+          llm_model?: string;
+          api_key_ciphertext?: string;
+          updated_at_ms: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["agent_settings"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "agent_settings_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "app_users";
+            referencedColumns: ["login_id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

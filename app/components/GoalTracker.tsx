@@ -73,6 +73,40 @@ type RoutineSummary = {
   archivedAt?: number;
 };
 
+type AgentSettings = {
+  llmModel: string;
+  hasApiKey: boolean;
+  apiKeyPreview?: string;
+  updatedAt?: number;
+  schemaMissing?: boolean;
+};
+
+type AgentAction = {
+  type: string;
+  id?: string;
+  title?: string;
+  targetDate?: string;
+  category?: string;
+  completed?: boolean;
+  memo?: string;
+  target?: number;
+  unit?: string;
+  deadline?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+type AgentResponse = {
+  message: string;
+  actions: AgentAction[];
+  applied: boolean;
+  data: {
+    goals: Goal[];
+    todos: Todo[];
+    routines: RoutineSummary[];
+  };
+};
+
 type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
 type AppLanguage = "en" | "ko";
 
@@ -265,6 +299,37 @@ async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
   if (!response.ok) throw new Error("Failed to load session");
   return (await response.json()) as Session;
+}
+
+async function fetchAgentSettings() {
+  const response = await fetch("/api/agent/settings", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; settings?: AgentSettings };
+  if (!response.ok || !data.settings) throw new Error(data.error || "Failed to load agent settings");
+  return data.settings;
+}
+
+async function saveAgentSettings(input: { llmModel: string; apiKey: string; clearApiKey: boolean }) {
+  const response = await fetch("/api/agent/settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = (await response.json()) as { error?: string; settings?: AgentSettings };
+  if (!response.ok || !data.settings) throw new Error(data.error || "Failed to save agent settings");
+  return data.settings;
+}
+
+async function runAgentRequest(prompt: string, apply: boolean) {
+  const response = await fetch("/api/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, apply }),
+  });
+  const data = (await response.json()) as { error?: string } & Partial<AgentResponse>;
+  if (!response.ok || !data.message || !data.data || !Array.isArray(data.actions)) {
+    throw new Error(data.error || "Failed to run agent");
+  }
+  return data as AgentResponse;
 }
 
 async function login(loginId: string, password: string) {
@@ -482,6 +547,14 @@ function writeStoredLanguage(language: AppLanguage) {
   } catch {
     // Ignore unavailable storage.
   }
+}
+
+function formatSavedAt(timestamp: number | undefined, language: AppLanguage) {
+  if (!timestamp) return language === "ko" ? "저장 이력 없음" : "No saved history";
+  return new Intl.DateTimeFormat(language === "ko" ? "ko-KR" : "en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -765,6 +838,12 @@ export default function GoalTracker() {
   const [archivedTodos, setArchivedTodos] = useState<Todo[]>([]);
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>({ llmModel: "gpt-4o-mini", hasApiKey: false });
+  const [agentSettingsModel, setAgentSettingsModel] = useState("gpt-4o-mini");
+  const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
+  const [agentPrompt, setAgentPrompt] = useState("");
+  const [agentApplyChanges, setAgentApplyChanges] = useState(false);
+  const [agentResult, setAgentResult] = useState<AgentResponse | null>(null);
   const [routineListResetKey, setRoutineListResetKey] = useState(0);
   const [routineReloadKey, setRoutineReloadKey] = useState(0);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
@@ -884,6 +963,16 @@ export default function GoalTracker() {
 
         setLoginId(session.loginId);
         setLoginForm(session.loginId);
+        fetchAgentSettings()
+          .then((settings) => {
+            if (!isActive) return;
+            setAgentSettings(settings);
+            setAgentSettingsModel(settings.llmModel);
+          })
+          .catch((settingsError) => {
+            if (!isActive) return;
+            setError(settingsError instanceof Error ? settingsError.message : "Failed to load agent settings");
+          });
         const [
           loadedGoals,
           loadedDeletedGoals,
@@ -1133,6 +1222,11 @@ export default function GoalTracker() {
     setArchivedTodos([]);
     setDeletedRoutines([]);
     setArchivedRoutines([]);
+    setAgentSettings({ llmModel: "gpt-4o-mini", hasApiKey: false });
+    setAgentSettingsModel("gpt-4o-mini");
+    setAgentSettingsApiKey("");
+    setAgentPrompt("");
+    setAgentResult(null);
     setActiveGoalId(null);
     setCurrentView("list");
     setIsEditingGoal(false);
@@ -1285,6 +1379,77 @@ export default function GoalTracker() {
       resetGoalState();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Failed to delete account");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitAgentSettings() {
+    const model = agentSettingsModel.trim();
+    if (!model) {
+      setError("LLM model name is required.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const settings = await saveAgentSettings({
+        llmModel: model,
+        apiKey: agentSettingsApiKey,
+        clearApiKey: false,
+      });
+      setAgentSettings(settings);
+      setAgentSettingsModel(settings.llmModel);
+      setAgentSettingsApiKey("");
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : "Failed to save agent settings");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function clearSavedAgentApiKey() {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const settings = await saveAgentSettings({
+        llmModel: agentSettingsModel.trim() || agentSettings.llmModel,
+        apiKey: "",
+        clearApiKey: true,
+      });
+      setAgentSettings(settings);
+      setAgentSettingsApiKey("");
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : "Failed to clear API key");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitAgentRequest() {
+    const prompt = agentPrompt.trim();
+    if (!prompt) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await runAgentRequest(prompt, agentApplyChanges);
+      setAgentResult(result);
+      setGoals(result.data.goals);
+      setTodos(result.data.todos);
+      setRoutineReloadKey((key) => key + 1);
+      if (result.data.goals.length && !result.data.goals.some((goal) => goal.id === activeGoalId)) {
+        setActiveGoalId(result.data.goals[0].id);
+      }
+      if (result.applied) {
+        await refreshArchiveBinData();
+      }
+    } catch (agentError) {
+      setError(agentError instanceof Error ? agentError.message : "Failed to run agent");
     } finally {
       setIsSaving(false);
     }
@@ -2391,6 +2556,105 @@ export default function GoalTracker() {
           ))}
         </nav>
 
+        {currentView !== "user" && currentView !== "detail" && (
+          <section className="grid gap-3 rounded-md border border-stone-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold">
+                  {language === "ko" ? "AI 에이전트" : "AI Agent"}
+                </h2>
+                <p className="mt-1 text-sm text-stone-600">
+                  {language === "ko"
+                    ? "목표, 할일, 습관을 분석하고 변경 작업을 제안합니다."
+                    : "Analyze goals, tasks, and habits, then propose list changes."}
+                </p>
+              </div>
+              <span
+                className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  agentSettings.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                }`}
+              >
+                {agentSettings.hasApiKey
+                  ? `${agentSettings.llmModel} ready`
+                  : agentSettings.schemaMissing
+                    ? language === "ko"
+                      ? "Supabase migration 필요"
+                      : "Supabase migration needed"
+                  : language === "ko"
+                    ? "Settings에서 API key 필요"
+                    : "API key needed in Settings"}
+              </span>
+            </div>
+            <textarea
+              value={agentPrompt}
+              onChange={(event) => setAgentPrompt(event.target.value)}
+              rows={3}
+              placeholder={
+                language === "ko"
+                  ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
+                  : "Example: Review this week's tasks and reschedule overdue items."
+              }
+              className="min-h-24 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
+            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex items-center gap-2 text-sm font-medium text-stone-700">
+                <input
+                  type="checkbox"
+                  checked={agentApplyChanges}
+                  onChange={(event) => setAgentApplyChanges(event.target.checked)}
+                  className="h-4 w-4 accent-emerald-700"
+                />
+                {language === "ko" ? "Agent가 제안한 변경을 바로 적용" : "Apply returned changes immediately"}
+              </label>
+              <button
+                type="button"
+                onClick={submitAgentRequest}
+                disabled={isSaving || !agentPrompt.trim() || !agentSettings.hasApiKey}
+                className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                {isSaving
+                  ? language === "ko"
+                    ? "실행 중..."
+                    : "Running..."
+                  : agentApplyChanges
+                    ? language === "ko"
+                      ? "Agent 실행"
+                      : "Run Agent"
+                    : language === "ko"
+                      ? "분석 받기"
+                      : "Analyze"}
+              </button>
+            </div>
+            {agentResult && (
+              <div className="grid gap-3 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm">
+                <p className="whitespace-pre-wrap text-stone-800">{agentResult.message}</p>
+                {agentResult.actions.length > 0 && (
+                  <div className="grid gap-2">
+                    <div className="text-xs font-semibold uppercase text-stone-500">
+                      {agentResult.applied
+                        ? language === "ko"
+                          ? "적용된 작업"
+                          : "Applied actions"
+                        : language === "ko"
+                          ? "제안된 작업"
+                          : "Proposed actions"}
+                    </div>
+                    <ul className="grid gap-1">
+                      {agentResult.actions.map((action, index) => (
+                        <li key={`${action.type}-${index}`} className="rounded border border-stone-200 bg-white px-2 py-1">
+                          <span className="font-semibold">{action.type}</span>
+                          {action.title ? ` · ${action.title}` : ""}
+                          {action.id ? ` · ${action.id}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="relative min-w-0 overflow-hidden">
           <div
             className={`min-w-0 transform-gpu ${
@@ -2401,7 +2665,7 @@ export default function GoalTracker() {
             }}
           >
         <section className={`min-w-0 ${currentView === "user" ? "grid gap-0" : "hidden"}`}>
-          <div className="p-0">
+          <div className="grid gap-4 p-0">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="flex items-center gap-2 text-base font-semibold">
@@ -2444,6 +2708,99 @@ export default function GoalTracker() {
                 >
                   Logout
                 </button>
+              </div>
+            </div>
+            <div className="grid gap-3 rounded-md border border-stone-200 bg-white p-3">
+              <div>
+                <h2 className="text-base font-semibold">
+                  {language === "ko" ? "AI Agent Settings" : "AI Agent Settings"}
+                </h2>
+                <p className="mt-1 text-sm text-stone-600">
+                  {language === "ko"
+                    ? "OpenAI 호환 Chat Completions API key와 사용할 모델명을 저장합니다."
+                    : "Save an OpenAI-compatible Chat Completions API key and model name."}
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                <label className="grid gap-1 text-sm font-medium">
+                  LLM model
+                  <input
+                    value={agentSettingsModel}
+                    onChange={(event) => setAgentSettingsModel(event.target.value)}
+                    placeholder="gpt-4o-mini"
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm font-medium">
+                  API key
+                  <input
+                    type="password"
+                    value={agentSettingsApiKey}
+                    onChange={(event) => setAgentSettingsApiKey(event.target.value)}
+                    placeholder={agentSettings.hasApiKey ? "Paste a full sk-... key to replace the saved one." : "sk-..."}
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
+              <div className="grid gap-2 rounded-md bg-stone-100 p-3 text-sm sm:grid-cols-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-stone-500">
+                    {language === "ko" ? "저장된 모델" : "Saved model"}
+                  </div>
+                  <div className="mt-1 truncate font-semibold text-stone-900">{agentSettings.llmModel}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-stone-500">
+                    {language === "ko" ? "저장된 API key" : "Saved API key"}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-sm font-semibold text-stone-900">
+                    {agentSettings.apiKeyPreview ?? (language === "ko" ? "없음" : "none")}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-stone-500">
+                    {language === "ko" ? "마지막 저장" : "Last saved"}
+                  </div>
+                  <div className="mt-1 truncate font-semibold text-stone-900">
+                    {formatSavedAt(agentSettings.updatedAt, language)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm text-stone-600">
+                  {agentSettings.hasApiKey
+                    ? language === "ko"
+                      ? "API key가 저장되어 있습니다."
+                      : "An API key is saved."
+                    : agentSettings.schemaMissing
+                      ? language === "ko"
+                        ? "Supabase에 agent_settings 테이블을 먼저 추가해야 합니다."
+                        : "Add the agent_settings table to Supabase before saving."
+                    : language === "ko"
+                      ? "저장된 API key가 없습니다."
+                      : "No API key is saved."}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {agentSettings.hasApiKey && (
+                    <button
+                      type="button"
+                      onClick={clearSavedAgentApiKey}
+                      disabled={isSaving}
+                      className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {language === "ko" ? "Key 삭제" : "Clear key"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={submitAgentSettings}
+                    disabled={isSaving || !agentSettingsModel.trim()}
+                    className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {text.save}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
