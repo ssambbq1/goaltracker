@@ -842,7 +842,7 @@ export default function GoalTracker() {
   const [agentSettingsModel, setAgentSettingsModel] = useState("gpt-4o-mini");
   const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
   const [agentPrompt, setAgentPrompt] = useState("");
-  const [agentApplyChanges, setAgentApplyChanges] = useState(false);
+  const [agentApplyChanges, setAgentApplyChanges] = useState(true);
   const [agentResult, setAgentResult] = useState<AgentResponse | null>(null);
   const [routineListResetKey, setRoutineListResetKey] = useState(0);
   const [routineReloadKey, setRoutineReloadKey] = useState(0);
@@ -1226,6 +1226,7 @@ export default function GoalTracker() {
     setAgentSettingsModel("gpt-4o-mini");
     setAgentSettingsApiKey("");
     setAgentPrompt("");
+    setAgentApplyChanges(true);
     setAgentResult(null);
     setActiveGoalId(null);
     setCurrentView("list");

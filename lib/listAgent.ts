@@ -45,13 +45,40 @@ function normalizeDate(value: unknown) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
+function firstStringField(record: Record<string, unknown>, fields: string[]) {
+  for (const field of fields) {
+    const value = asString(record[field]);
+    if (value) return value;
+  }
+  return "";
+}
+
+function normalizeActionType(type: string) {
+  const normalized = type.trim().toLowerCase().replaceAll("-", "_");
+  if (["add_task", "create_task", "new_task"].includes(normalized)) return "add_todo";
+  if (["update_task", "edit_task", "complete_task"].includes(normalized)) return "update_todo";
+  if (["delete_task", "remove_task"].includes(normalized)) return "delete_todo";
+  if (["create_todo", "new_todo"].includes(normalized)) return "add_todo";
+  if (["edit_todo", "complete_todo"].includes(normalized)) return "update_todo";
+  if (["remove_todo"].includes(normalized)) return "delete_todo";
+  if (["create_goal", "new_goal"].includes(normalized)) return "add_goal";
+  if (["edit_goal"].includes(normalized)) return "update_goal";
+  if (["add_habit", "create_habit", "new_habit"].includes(normalized)) return "add_routine";
+  if (["update_habit", "edit_habit"].includes(normalized)) return "update_routine";
+  return normalized;
+}
+
+function normalizeActionDate(record: Record<string, unknown>, fields: string[]) {
+  return normalizeDate(firstStringField(record, fields));
+}
+
 function coerceAction(value: unknown): AgentAction | null {
   if (!isRecord(value)) return null;
-  const type = asString(value.type);
+  const type = normalizeActionType(asString(value.type));
 
   if (type === "add_todo") {
-    const title = asString(value.title);
-    const targetDate = normalizeDate(value.targetDate);
+    const title = firstStringField(value, ["title", "task", "name"]);
+    const targetDate = normalizeActionDate(value, ["targetDate", "dueDate", "deadline", "date"]);
     if (!title || !targetDate) return null;
     return { type, title, targetDate, category: asOptionalString(value.category) };
   }
@@ -62,8 +89,11 @@ function coerceAction(value: unknown): AgentAction | null {
     return {
       type,
       id,
-      title: asOptionalString(value.title),
-      targetDate: value.targetDate === undefined ? undefined : normalizeDate(value.targetDate),
+      title: asOptionalString(value.title) ?? asOptionalString(value.task) ?? asOptionalString(value.name),
+      targetDate:
+        value.targetDate === undefined && value.dueDate === undefined && value.deadline === undefined && value.date === undefined
+          ? undefined
+          : normalizeActionDate(value, ["targetDate", "dueDate", "deadline", "date"]),
       category: asOptionalString(value.category),
       completed: asOptionalBoolean(value.completed),
     };
@@ -125,6 +155,10 @@ function coerceAction(value: unknown): AgentAction | null {
   return null;
 }
 
+function looksLikeMutationRequest(request: string) {
+  return /add|create|update|edit|delete|remove|complete|추가|만들|수정|바꿔|삭제|지워|완료/i.test(request);
+}
+
 function parseAgentResponse(content: string) {
   const trimmed = content.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
@@ -175,7 +209,9 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
             "You manage a personal planning app. Return only JSON with keys message and actions. " +
             "Actions must be an array of allowed action objects. Use existing ids for updates/deletes. " +
             "Allowed types: add_todo, update_todo, delete_todo, add_goal, update_goal, add_routine, update_routine. " +
-            "Use YYYY-MM-DD dates. If the user asks only for analysis, return an empty actions array.",
+            "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. " +
+            "If the user says due date or deadline, put that date in targetDate. Use today's date when the user says today. " +
+            "Use YYYY-MM-DD dates. If the user asks only for analysis, return an empty actions array and do not claim changes were applied.",
         },
         {
           role: "user",
@@ -280,6 +316,10 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     prompt: request,
     context,
   });
+
+  if (apply && agentResponse.actions.length === 0 && looksLikeMutationRequest(request)) {
+    throw new Error("The agent did not return any list changes to apply. Try the request again with a specific task, date, and list.");
+  }
 
   if (apply) {
     for (const action of agentResponse.actions) {
