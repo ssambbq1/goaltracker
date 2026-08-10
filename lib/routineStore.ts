@@ -231,6 +231,136 @@ async function addRoutineToGoalRows(loginId: string, routine: Routine) {
   if (error) throw error;
 }
 
+async function writeRoutineMarksToGoalRows(routineId: string, marks: RoutineMark[]) {
+  const supabase = getSupabaseServerClient();
+  const { error: deleteError } = await supabase.from("progress_entries").delete().eq("goal_id", routineId);
+  if (deleteError) throw deleteError;
+
+  if (!marks.length) return;
+
+  const { error } = await supabase.from("progress_entries").insert(
+    marks.map((mark) => ({
+      id: mark.id,
+      goal_id: routineId,
+      created_at_ms: toTimestampFromDate(mark.date),
+      value: mark.status === "success" ? 1 : 0,
+      memo: encodeRoutineMarkMemo(mark.date, mark.status),
+    })),
+  );
+  if (error) throw error;
+}
+
+async function assertRoutineGoalRowStored(
+  loginId: string,
+  routineId: string,
+  destination: "archive" | "bin",
+) {
+  const query = getSupabaseServerClient()
+    .from("goals")
+    .select("id")
+    .eq("id", routineId)
+    .eq("user_id", loginId)
+    .eq("unit", ROUTINE_GOAL_UNIT);
+
+  const { data, error } =
+    destination === "archive"
+      ? await query.is("deleted_at_ms", null).not("archived_at_ms", "is", null).maybeSingle()
+      : await query.not("deleted_at_ms", "is", null).maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error(`Failed to move habit to ${destination === "archive" ? "archive" : "bin"} before removing the active copy.`);
+}
+
+async function moveRoutineFromRoutineRowsToGoalRows(
+  loginId: string,
+  routineId: string,
+  destination: "archive" | "bin",
+) {
+  const supabase = getSupabaseServerClient();
+  const { data: routine, error: readError } = await supabase
+    .from("routines")
+    .select("id,title,memo,start_date,end_date,created_at_ms")
+    .eq("id", routineId)
+    .eq("user_id", loginId)
+    .maybeSingle();
+
+  if (readError) {
+    if (isMissingRoutinesTableError(readError)) {
+      const movedAt = Date.now();
+      const { error } = await supabase
+        .from("goals")
+        .update(
+          destination === "archive"
+            ? { archived_at_ms: movedAt, deleted_at_ms: null }
+            : { deleted_at_ms: movedAt, archived_at_ms: null },
+        )
+        .eq("id", routineId)
+        .eq("user_id", loginId)
+        .eq("unit", ROUTINE_GOAL_UNIT);
+      if (error) throw error;
+      await assertRoutineGoalRowStored(loginId, routineId, destination);
+      return;
+    }
+    throw readError;
+  }
+
+  if (!routine) {
+    const movedAt = Date.now();
+    const { error } = await supabase
+      .from("goals")
+      .update(
+        destination === "archive"
+          ? { archived_at_ms: movedAt, deleted_at_ms: null }
+          : { deleted_at_ms: movedAt, archived_at_ms: null },
+      )
+      .eq("id", routineId)
+      .eq("user_id", loginId)
+      .eq("unit", ROUTINE_GOAL_UNIT);
+    if (error) throw error;
+    await assertRoutineGoalRowStored(loginId, routineId, destination);
+    return;
+  }
+
+  const { data: markRows, error: marksError } = await supabase
+    .from("routine_marks")
+    .select("id,routine_id,date,status,created_at_ms")
+    .eq("routine_id", routineId)
+    .order("date", { ascending: true });
+  if (marksError && !isMissingRoutinesTableError(marksError)) throw marksError;
+
+  const movedAt = Date.now();
+  const { error: upsertError } = await supabase.from("goals").upsert({
+    id: routine.id,
+    user_id: loginId,
+    title: routine.title,
+    memo: encodeRoutineMemo(routine.memo, routine.start_date),
+    target: 1,
+    unit: ROUTINE_GOAL_UNIT,
+    deadline: routine.end_date,
+    created_at_ms: routine.created_at_ms,
+    archived_at_ms: destination === "archive" ? movedAt : null,
+    deleted_at_ms: destination === "bin" ? movedAt : null,
+    position: -1,
+  });
+  if (upsertError) throw upsertError;
+
+  await writeRoutineMarksToGoalRows(
+    routineId,
+    (markRows ?? []).map((mark) => ({
+      id: mark.id,
+      routineId: mark.routine_id,
+      date: mark.date,
+      status: mark.status === "failure" ? "failure" : "success",
+      createdAt: mark.created_at_ms,
+    })),
+  );
+
+  await assertRoutineGoalRowStored(loginId, routineId, destination);
+
+  const { error: deleteError } = await supabase.from("routines").delete().eq("id", routineId).eq("user_id", loginId);
+  if (deleteError) throw deleteError;
+}
+
 async function updateRoutineInGoalRows(loginId: string, routineId: string, patch: RoutinePatchInput, current: Routine) {
   const ordered = orderDates(patch.startDate ?? current.startDate, patch.endDate ?? current.endDate);
   const title = patch.title !== undefined && patch.title.trim() ? patch.title.trim() : current.title;
@@ -258,6 +388,72 @@ async function deleteRoutineFromGoalRows(loginId: string, routineId: string) {
     .eq("unit", ROUTINE_GOAL_UNIT);
 
   if (error) throw error;
+}
+
+async function restoreRoutineFromGoalRows(loginId: string, routineId: string) {
+  const supabase = getSupabaseServerClient();
+  const { data: routine, error: readError } = await supabase
+    .from("goals")
+    .select("id,title,memo,deadline,created_at_ms")
+    .eq("id", routineId)
+    .eq("user_id", loginId)
+    .eq("unit", ROUTINE_GOAL_UNIT)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!routine) return;
+
+  const decoded = decodeRoutineMemo(routine.memo);
+  const startDate = normalizeDate(decoded.startDate) || normalizeDate(routine.deadline);
+  const endDate = normalizeDate(routine.deadline) || startDate;
+
+  const { error: upsertError } = await supabase.from("routines").upsert({
+    id: routine.id,
+    user_id: loginId,
+    title: routine.title,
+    memo: decoded.memo,
+    start_date: startDate,
+    end_date: endDate,
+    created_at_ms: routine.created_at_ms,
+    position: -1,
+  });
+
+  if (upsertError) {
+    if (isMissingRoutinesTableError(upsertError)) {
+      const { error } = await supabase
+        .from("goals")
+        .update({ deleted_at_ms: null, archived_at_ms: null, position: -1 })
+        .eq("id", routineId)
+        .eq("user_id", loginId)
+        .eq("unit", ROUTINE_GOAL_UNIT);
+      if (error) throw error;
+      return;
+    }
+    throw upsertError;
+  }
+
+  const { data: entries, error: entriesError } = await supabase
+    .from("progress_entries")
+    .select("id,created_at_ms,value,memo")
+    .eq("goal_id", routineId);
+  if (entriesError) throw entriesError;
+
+  const marks = (entries ?? []).map((entry) => {
+    const decodedMark = decodeRoutineMarkMemo(entry.memo, entry.created_at_ms, entry.value);
+    return {
+      id: entry.id,
+      routine_id: routineId,
+      date: decodedMark.date,
+      status: decodedMark.status,
+      created_at_ms: entry.created_at_ms,
+    };
+  });
+
+  if (marks.length) {
+    const { error: marksError } = await supabase.from("routine_marks").upsert(marks, { onConflict: "routine_id,date" });
+    if (marksError && !isMissingRoutinesTableError(marksError)) throw marksError;
+  }
+
+  await deleteRoutineFromGoalRows(loginId, routineId);
 }
 
 async function deleteFallbackMarksForDate(routineId: string, date: string) {
@@ -429,7 +625,10 @@ export async function addRoutine(input: NewRoutineInput) {
 
 export async function updateRoutine(routineId: string, patch: RoutinePatchInput) {
   const loginId = await requireLoginId();
-  const current = (await readRoutines()).find((routine) => routine.id === routineId);
+  const current =
+    (await readRoutines()).find((routine) => routine.id === routineId) ??
+    (await readArchivedRoutines()).find((routine) => routine.id === routineId) ??
+    (await readDeletedRoutines()).find((routine) => routine.id === routineId);
   if (!current) return readRoutines();
 
   const ordered = orderDates(patch.startDate ?? current.startDate, patch.endDate ?? current.endDate);
@@ -440,11 +639,13 @@ export async function updateRoutine(routineId: string, patch: RoutinePatchInput)
     end_date: ordered.endDate,
   };
 
-  const { error } = await getSupabaseServerClient()
+  const supabase = getSupabaseServerClient();
+  const { data: updatedRows, error } = await supabase
     .from("routines")
     .update(update)
     .eq("id", routineId)
-    .eq("user_id", loginId);
+    .eq("user_id", loginId)
+    .select("id");
 
   if (error) {
     if (isMissingRoutinesTableError(error)) {
@@ -453,54 +654,27 @@ export async function updateRoutine(routineId: string, patch: RoutinePatchInput)
     }
     throw error;
   }
+  if (!updatedRows?.length) {
+    await updateRoutineInGoalRows(loginId, routineId, patch, current);
+  }
   return readRoutines();
 }
 
 export async function deleteRoutine(routineId: string) {
   const loginId = await requireLoginId();
-  const { error } = await getSupabaseServerClient()
-    .from("routines")
-    .delete()
-    .eq("id", routineId)
-    .eq("user_id", loginId);
-
-  if (error) {
-    if (isMissingRoutinesTableError(error)) {
-      const { error: moveError } = await getSupabaseServerClient()
-        .from("goals")
-        .update({ deleted_at_ms: Date.now(), archived_at_ms: null })
-        .eq("id", routineId)
-        .eq("user_id", loginId)
-        .eq("unit", ROUTINE_GOAL_UNIT);
-      if (moveError) throw moveError;
-      return readRoutinesFromGoalRows(loginId);
-    }
-    throw error;
-  }
+  await moveRoutineFromRoutineRowsToGoalRows(loginId, routineId, "bin");
   return readRoutines();
 }
 
 export async function archiveRoutine(routineId: string) {
   const loginId = await requireLoginId();
-  const { error } = await getSupabaseServerClient()
-    .from("goals")
-    .update({ archived_at_ms: Date.now(), deleted_at_ms: null })
-    .eq("id", routineId)
-    .eq("user_id", loginId)
-    .eq("unit", ROUTINE_GOAL_UNIT);
-  if (error) throw error;
-  return readRoutinesFromGoalRows(loginId);
+  await moveRoutineFromRoutineRowsToGoalRows(loginId, routineId, "archive");
+  return readRoutines();
 }
 
 export async function restoreRoutine(routineId: string) {
   const loginId = await requireLoginId();
-  const { error } = await getSupabaseServerClient()
-    .from("goals")
-    .update({ archived_at_ms: null, deleted_at_ms: null, position: -1 })
-    .eq("id", routineId)
-    .eq("user_id", loginId)
-    .eq("unit", ROUTINE_GOAL_UNIT);
-  if (error) throw error;
+  await restoreRoutineFromGoalRows(loginId, routineId);
   return {
     routines: await readRoutines(),
     archivedRoutines: await readArchivedRoutines(),

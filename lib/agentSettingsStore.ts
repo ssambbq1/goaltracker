@@ -8,16 +8,39 @@ export type AgentSettings = {
   apiKeyPreview?: string;
   updatedAt?: number;
   schemaMissing?: boolean;
+  activeKeyId?: string;
+  keys: AgentKeySetting[];
+};
+
+export type AgentKeySetting = {
+  id: string;
+  llmModel: string;
+  apiKeyPreview: string;
+  updatedAt: number;
+  isActive: boolean;
 };
 
 const DEFAULT_MODEL = "gpt-4o-mini";
 const AGENT_SETTINGS_SCHEMA_MESSAGE =
-  "Agent settings table is missing. Run supabase/migrations/20260809090000_add_agent_settings.sql in Supabase.";
+  "Agent settings table is missing or outdated. Run the latest supabase migrations for agent_settings in Supabase.";
 
 function isMissingAgentSettingsTableError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as Record<string, unknown>;
   return record.code === "PGRST205" && String(record.message ?? "").includes("public.agent_settings");
+}
+
+function isMissingAgentSettingsColumnsError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const message = String(record.message ?? "");
+  return (
+    record.code === "PGRST204" ||
+    message.includes("agent_settings.api_keys") ||
+    message.includes("agent_settings.active_key_id") ||
+    message.includes("api_keys") ||
+    message.includes("active_key_id")
+  );
 }
 
 function getEncryptionKey() {
@@ -77,81 +100,184 @@ function makeApiKeyPreview(ciphertext: string) {
   }
 }
 
+type StoredAgentKey = {
+  id: string;
+  llm_model: string;
+  api_key_ciphertext: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+function isStoredAgentKey(value: unknown): value is StoredAgentKey {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    typeof record.llm_model === "string" &&
+    typeof record.api_key_ciphertext === "string" &&
+    typeof record.created_at_ms === "number" &&
+    typeof record.updated_at_ms === "number"
+  );
+}
+
+function normalizeStoredKeys(value: unknown) {
+  return Array.isArray(value) ? value.filter(isStoredAgentKey) : [];
+}
+
+function legacyKeyFromRow(row: { llm_model: string | null; api_key_ciphertext: string | null; updated_at_ms: number | null }) {
+  if (!row.api_key_ciphertext) return null;
+  return {
+    id: "default",
+    llm_model: normalizeModel(row.llm_model || DEFAULT_MODEL) || DEFAULT_MODEL,
+    api_key_ciphertext: row.api_key_ciphertext,
+    created_at_ms: row.updated_at_ms ?? Date.now(),
+    updated_at_ms: row.updated_at_ms ?? Date.now(),
+  };
+}
+
+function toPublicSettings(input: {
+  keys: StoredAgentKey[];
+  activeKeyId: string;
+  updatedAt?: number;
+  schemaMissing?: boolean;
+}): AgentSettings {
+  const activeKey = input.keys.find((key) => key.id === input.activeKeyId) ?? input.keys[0] ?? null;
+  return {
+    llmModel: activeKey?.llm_model || DEFAULT_MODEL,
+    hasApiKey: Boolean(activeKey?.api_key_ciphertext),
+    apiKeyPreview: activeKey?.api_key_ciphertext ? makeApiKeyPreview(activeKey.api_key_ciphertext) : undefined,
+    updatedAt: input.updatedAt,
+    schemaMissing: input.schemaMissing,
+    activeKeyId: activeKey?.id,
+    keys: input.keys.map((key) => ({
+      id: key.id,
+      llmModel: key.llm_model || DEFAULT_MODEL,
+      apiKeyPreview: makeApiKeyPreview(key.api_key_ciphertext),
+      updatedAt: key.updated_at_ms,
+      isActive: key.id === activeKey?.id,
+    })),
+  };
+}
+
 export async function readAgentSettings(): Promise<AgentSettings> {
   const loginId = await requireLoginId();
   const { data, error } = await getSupabaseServerClient()
     .from("agent_settings")
-    .select("llm_model,api_key_ciphertext,updated_at_ms")
+    .select("llm_model,api_key_ciphertext,updated_at_ms,api_keys,active_key_id")
     .eq("user_id", loginId)
     .maybeSingle();
 
   if (error) {
     if (isMissingAgentSettingsTableError(error)) {
-      return {
-        llmModel: DEFAULT_MODEL,
-        hasApiKey: false,
-        schemaMissing: true,
-      };
+      return toPublicSettings({ keys: [], activeKeyId: "", schemaMissing: true });
     }
+    if (isMissingAgentSettingsColumnsError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
     throw error;
   }
 
-  return {
-    llmModel: data?.llm_model || DEFAULT_MODEL,
-    hasApiKey: Boolean(data?.api_key_ciphertext),
-    apiKeyPreview: data?.api_key_ciphertext ? makeApiKeyPreview(data.api_key_ciphertext) : undefined,
+  const keys = normalizeStoredKeys(data?.api_keys);
+  const legacyKey = data ? legacyKeyFromRow(data) : null;
+  const storedKeys = keys.length ? keys : legacyKey ? [legacyKey] : [];
+  return toPublicSettings({
+    keys: storedKeys,
+    activeKeyId: data?.active_key_id || legacyKey?.id || "",
     updatedAt: data?.updated_at_ms ?? undefined,
-  };
+  });
 }
 
 export async function readAgentCredentials() {
   const loginId = await requireLoginId();
   const { data, error } = await getSupabaseServerClient()
     .from("agent_settings")
-    .select("llm_model,api_key_ciphertext")
+    .select("llm_model,api_key_ciphertext,api_keys,active_key_id")
     .eq("user_id", loginId)
     .maybeSingle();
 
   if (error) {
     if (isMissingAgentSettingsTableError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
+    if (isMissingAgentSettingsColumnsError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
     throw error;
   }
-  if (!data?.api_key_ciphertext) throw new Error("Add your LLM API key in Settings first.");
+  const keys = normalizeStoredKeys(data?.api_keys);
+  const legacyKey = data ? legacyKeyFromRow({ ...data, updated_at_ms: null }) : null;
+  const storedKeys = keys.length ? keys : legacyKey ? [legacyKey] : [];
+  const activeKey = storedKeys.find((key) => key.id === data?.active_key_id) ?? storedKeys[0] ?? null;
+  if (!activeKey?.api_key_ciphertext) throw new Error("Add your LLM API key in Settings first.");
 
   return {
-    model: data.llm_model || DEFAULT_MODEL,
-    apiKey: decryptApiKey(data.api_key_ciphertext),
+    model: activeKey.llm_model || data?.llm_model || DEFAULT_MODEL,
+    apiKey: decryptApiKey(activeKey.api_key_ciphertext),
   };
 }
 
-export async function saveAgentSettings(input: { llmModel: string; apiKey?: string; clearApiKey?: boolean }) {
+export async function saveAgentSettings(input: {
+  llmModel: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  activeKeyId?: string;
+  deleteKeyId?: string;
+}) {
   const loginId = await requireLoginId();
   await ensureAppUser(loginId);
 
   const current = await getSupabaseServerClient()
     .from("agent_settings")
-    .select("api_key_ciphertext")
+    .select("llm_model,api_key_ciphertext,updated_at_ms,api_keys,active_key_id")
     .eq("user_id", loginId)
     .maybeSingle();
   if (current.error) {
     if (isMissingAgentSettingsTableError(current.error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
+    if (isMissingAgentSettingsColumnsError(current.error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
     throw current.error;
   }
 
   const nextApiKey = input.apiKey ? normalizeApiKey(input.apiKey) : "";
   validateOpenAiApiKey(nextApiKey);
 
-  const apiKeyCiphertext = input.clearApiKey
-    ? ""
-    : nextApiKey
-      ? encryptApiKey(nextApiKey)
-      : current.data?.api_key_ciphertext ?? "";
+  const now = Date.now();
+  const currentKeys = normalizeStoredKeys(current.data?.api_keys);
+  const legacyKey = current.data ? legacyKeyFromRow(current.data) : null;
+  let keys = currentKeys.length ? currentKeys : legacyKey ? [legacyKey] : [];
+  let activeKeyId = input.activeKeyId || current.data?.active_key_id || keys[0]?.id || "";
+
+  if (input.deleteKeyId) {
+    keys = keys.filter((key) => key.id !== input.deleteKeyId);
+    if (activeKeyId === input.deleteKeyId) activeKeyId = keys[0]?.id || "";
+  } else if (input.clearApiKey) {
+    const targetId = input.activeKeyId || activeKeyId;
+    keys = keys.filter((key) => key.id !== targetId);
+    activeKeyId = keys[0]?.id || "";
+  } else if (nextApiKey) {
+    const newKey: StoredAgentKey = {
+      id: randomBytes(9).toString("base64url"),
+      llm_model: normalizeModel(input.llmModel) || DEFAULT_MODEL,
+      api_key_ciphertext: encryptApiKey(nextApiKey),
+      created_at_ms: now,
+      updated_at_ms: now,
+    };
+    keys = [...keys, newKey];
+    activeKeyId = newKey.id;
+  } else if (input.llmModel && activeKeyId) {
+    keys = keys.map((key) =>
+      key.id === activeKeyId
+        ? {
+            ...key,
+            llm_model: normalizeModel(input.llmModel) || DEFAULT_MODEL,
+            updated_at_ms: now,
+          }
+        : key,
+    );
+  }
+
+  const activeKey = keys.find((key) => key.id === activeKeyId) ?? keys[0] ?? null;
 
   const { error } = await getSupabaseServerClient().from("agent_settings").upsert({
     user_id: loginId,
-    llm_model: normalizeModel(input.llmModel) || DEFAULT_MODEL,
-    api_key_ciphertext: apiKeyCiphertext,
-    updated_at_ms: Date.now(),
+    llm_model: activeKey?.llm_model || normalizeModel(input.llmModel) || DEFAULT_MODEL,
+    api_key_ciphertext: activeKey?.api_key_ciphertext || "",
+    api_keys: keys,
+    active_key_id: activeKey?.id || "",
+    updated_at_ms: now,
   });
 
   if (error) throw error;

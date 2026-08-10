@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
 export type Database = {
   public: {
     Tables: {
@@ -176,12 +178,16 @@ export type Database = {
           user_id: string;
           llm_model: string;
           api_key_ciphertext: string;
+          api_keys: Json;
+          active_key_id: string;
           updated_at_ms: number;
         };
         Insert: {
           user_id: string;
           llm_model?: string;
           api_key_ciphertext?: string;
+          api_keys?: Json;
+          active_key_id?: string;
           updated_at_ms: number;
         };
         Update: Partial<Database["public"]["Tables"]["agent_settings"]["Insert"]>;

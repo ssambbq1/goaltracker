@@ -428,11 +428,13 @@ export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "titl
   }
 
   if (Object.keys(update).length) {
-    const { error } = await getSupabaseServerClient()
+    const supabase = getSupabaseServerClient();
+    const { data: updatedRows, error } = await supabase
       .from("todos")
       .update(update)
       .eq("id", todoId)
-      .eq("user_id", loginId);
+      .eq("user_id", loginId)
+      .select("id");
 
     if (error) {
       if (isMissingTodosTableError(error)) {
@@ -440,6 +442,10 @@ export async function updateTodo(todoId: string, patch: Partial<Pick<Todo, "titl
         return readTodosFromGoalRows(loginId);
       }
       throw error;
+    }
+
+    if (!updatedRows?.length) {
+      await updateTodoInGoalRows(loginId, todoId, patch);
     }
   }
 
@@ -452,6 +458,15 @@ export async function deleteTodo(todoId: string) {
   return {
     todos: await readTodos(),
     deletedTodos: await readDeletedTodos(),
+  };
+}
+
+export async function archiveTodo(todoId: string) {
+  const loginId = await requireLoginId();
+  await moveTodoFromTodosToGoalRows(loginId, todoId, "archive");
+  return {
+    todos: await readTodos(),
+    archivedTodos: await readArchivedTodos(),
   };
 }
 

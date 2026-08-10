@@ -39,6 +39,7 @@ export type NewEntryInput = {
 export type EntryPatchInput = Partial<NewEntryInput>;
 
 const TODO_GOAL_MEMO = "__boostmaster_todo__";
+const TODO_GOAL_MEMO_PREFIX = `${TODO_GOAL_MEMO}:`;
 const TODO_GOAL_UNIT = "__todo__";
 const ROUTINE_GOAL_UNIT = "__routine__";
 
@@ -73,6 +74,10 @@ function archivedGoals(goals: Goal[]) {
     .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
 }
 
+function isTodoGoalRow(goal: { memo: string; unit: string }) {
+  return goal.unit === TODO_GOAL_UNIT && (goal.memo === TODO_GOAL_MEMO || goal.memo.startsWith(TODO_GOAL_MEMO_PREFIX));
+}
+
 async function readStoredGoals() {
   const loginId = await requireLoginId();
   const supabase = getSupabaseServerClient();
@@ -85,9 +90,7 @@ async function readStoredGoals() {
 
   if (goalsError) throw goalsError;
 
-  const visibleGoalRows = goalRows.filter(
-    (goal) => (goal.memo !== TODO_GOAL_MEMO || goal.unit !== TODO_GOAL_UNIT) && goal.unit !== ROUTINE_GOAL_UNIT,
-  );
+  const visibleGoalRows = goalRows.filter((goal) => !isTodoGoalRow(goal) && goal.unit !== ROUTINE_GOAL_UNIT);
   if (!visibleGoalRows.length) return [];
 
   const goalIds = visibleGoalRows.map((goal) => goal.id);
@@ -253,7 +256,7 @@ export async function updateGoal(
   patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>,
 ) {
   const loginId = await requireLoginId();
-  const goal = (await readGoals()).find((item) => item.id === goalId);
+  const goal = (await readStoredGoals()).find((item) => item.id === goalId);
   if (!goal) return readGoals();
 
   const nextGoal = applyGoalPatch(goal, patch);
@@ -269,9 +272,7 @@ export async function updateGoal(
       created_at_ms: nextGoal.createdAt,
     })
     .eq("id", goalId)
-    .eq("user_id", loginId)
-    .is("deleted_at_ms", null)
-    .is("archived_at_ms", null);
+    .eq("user_id", loginId);
 
   if (error) throw error;
   return readGoals();

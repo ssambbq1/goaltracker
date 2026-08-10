@@ -21,6 +21,8 @@ export async function PATCH(request: Request) {
       llmModel: typeof body?.llmModel === "string" ? body.llmModel : "",
       apiKey: typeof body?.apiKey === "string" ? body.apiKey : undefined,
       clearApiKey: body?.clearApiKey === true,
+      activeKeyId: typeof body?.activeKeyId === "string" ? body.activeKeyId : undefined,
+      deleteKeyId: typeof body?.deleteKeyId === "string" ? body.deleteKeyId : undefined,
     });
     return Response.json({ settings });
   } catch (error) {
