@@ -611,6 +611,7 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
           content:
             "You manage a personal planning app. Return only JSON with keys message and actions. " +
             "Actions must be an array of allowed action objects. Use existing ids for updates/deletes. " +
+            "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
             "Allowed types: add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, " +
             "add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, " +
             "add_goal_entry, update_goal_entry, delete_goal_entry, " +
@@ -840,6 +841,27 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     ...agentResponse,
     actions,
     applied: apply,
+    data: await readAgentListContext(),
+  };
+}
+
+export async function applyAgentActions(input: unknown): Promise<AgentResult> {
+  const actions = Array.isArray(input)
+    ? input.map(coerceAction).filter((action): action is AgentAction => Boolean(action)).slice(0, 50)
+    : [];
+
+  if (actions.length === 0) {
+    throw new Error("No valid agent actions to apply.");
+  }
+
+  for (const action of actions) {
+    await applyAction(action);
+  }
+
+  return {
+    message: "Applied the proposed actions.",
+    actions,
+    applied: true,
     data: await readAgentListContext(),
   };
 }

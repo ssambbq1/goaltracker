@@ -100,7 +100,10 @@ type AgentAction = {
   completed?: boolean;
   memo?: string;
   target?: number;
+  value?: number;
   unit?: string;
+  goalId?: string;
+  entryId?: string;
   deadline?: string;
   startDate?: string;
   endDate?: string;
@@ -117,8 +120,62 @@ type AgentResponse = {
   };
 };
 
+type AgentChatMessage =
+  | {
+      id: string;
+      role: "user";
+      content: string;
+    }
+  | {
+      id: string;
+      role: "agent";
+      response: AgentResponse;
+      status?: "cancelled";
+    };
+
 type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
 type AppLanguage = "en" | "ko";
+
+type BrowserSpeechRecognitionAlternative = {
+  transcript: string;
+};
+
+type BrowserSpeechRecognitionResult = {
+  isFinal: boolean;
+  [index: number]: BrowserSpeechRecognitionAlternative;
+};
+
+type BrowserSpeechRecognitionEvent = {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: BrowserSpeechRecognitionResult;
+  };
+};
+
+type BrowserSpeechRecognitionErrorEvent = {
+  error: string;
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onend: (() => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  abort: () => void;
+  start: () => void;
+  stop: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+type SpeechRecognitionWindow = Window &
+  typeof globalThis & {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  };
 
 type Session = {
   loginId: string | null;
@@ -348,6 +405,19 @@ async function runAgentRequest(prompt: string, apply: boolean) {
   return data as AgentResponse;
 }
 
+async function applyAgentActionRequest(actions: AgentAction[]) {
+  const response = await fetch("/api/agent/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actions }),
+  });
+  const data = (await response.json()) as { error?: string } & Partial<AgentResponse>;
+  if (!response.ok || !data.message || !data.data || !Array.isArray(data.actions)) {
+    throw new Error(data.error || "Failed to apply agent actions");
+  }
+  return data as AgentResponse;
+}
+
 function isLocalTaskQuery(prompt: string) {
   const text = prompt.toLowerCase();
   const mentionsTasks =
@@ -362,6 +432,49 @@ function isLocalTaskQuery(prompt: string) {
     );
 
   return mentionsTasks && asksToRead && !mutates;
+}
+
+function scoreAgentSpeechVoice(voice: SpeechSynthesisVoice, targetLanguage: AppLanguage) {
+  const name = voice.name.toLowerCase();
+  const language = voice.lang.toLowerCase();
+  const targetPrefix = targetLanguage === "ko" ? "ko" : "en";
+  let score = 0;
+
+  if (language.startsWith(targetPrefix)) score += 80;
+  if (language === (targetLanguage === "ko" ? "ko-kr" : "en-us")) score += 16;
+  if (/natural|neural|premium|online|enhanced/.test(name)) score += 40;
+  if (/microsoft|google|apple/.test(name)) score += 12;
+  if (/aria|jenny|guy|ava|andrew|emma|brian|samantha|yuna|sora|sunhi|heami/.test(name)) score += 10;
+  if (voice.localService) score += 2;
+  if (!language.startsWith(targetPrefix)) score -= 100;
+
+  return score;
+}
+
+function selectAgentSpeechVoice(voices: SpeechSynthesisVoice[], targetLanguage: AppLanguage) {
+  return voices
+    .filter((voice) => voice.lang.toLowerCase().startsWith(targetLanguage === "ko" ? "ko" : "en"))
+    .sort((left, right) => scoreAgentSpeechVoice(right, targetLanguage) - scoreAgentSpeechVoice(left, targetLanguage))[0];
+}
+
+function waitForSpeechVoices() {
+  if (!("speechSynthesis" in window)) return Promise.resolve<SpeechSynthesisVoice[]>([]);
+
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length > 0) return Promise.resolve(voices);
+
+  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    const timeout = window.setTimeout(() => {
+      window.speechSynthesis.onvoiceschanged = null;
+      resolve(window.speechSynthesis.getVoices());
+    }, 600);
+
+    window.speechSynthesis.onvoiceschanged = () => {
+      window.clearTimeout(timeout);
+      window.speechSynthesis.onvoiceschanged = null;
+      resolve(window.speechSynthesis.getVoices());
+    };
+  });
 }
 
 async function login(loginId: string, password: string) {
@@ -886,8 +999,14 @@ export default function GoalTracker() {
   const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentApplyChanges, setAgentApplyChanges] = useState(true);
-  const [agentResult, setAgentResult] = useState<AgentResponse | null>(null);
+  const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(true);
+  const [isAgentListening, setIsAgentListening] = useState(false);
+  const [isSpeechRecognitionAvailable, setIsSpeechRecognitionAvailable] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const speechWindow = window as SpeechRecognitionWindow;
+    return Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition);
+  });
   const [routineListResetKey, setRoutineListResetKey] = useState(0);
   const [routineReloadKey, setRoutineReloadKey] = useState(0);
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
@@ -945,6 +1064,7 @@ export default function GoalTracker() {
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
   const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
   const todosBeforeDrag = useRef<Todo[] | null>(null);
@@ -959,8 +1079,29 @@ export default function GoalTracker() {
   const suppressNextScreenClick = useRef(false);
   const confettiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const confettiBurstId = useRef(0);
+  const agentSpeechRecognition = useRef<BrowserSpeechRecognition | null>(null);
+  const agentVoiceSilenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentVoiceDraft = useRef("");
+  const agentVoiceFinalTranscript = useRef("");
+  const isAcceptingAgentVoiceResults = useRef(false);
   const text = UI_TEXT[language];
   const canRunAgentRequest = agentSettings.hasApiKey || isLocalTaskQuery(agentPrompt);
+  const agentVoiceButtonTitle = isSpeechRecognitionAvailable
+    ? isAgentListening
+      ? language === "ko"
+        ? "음성 입력 중지"
+        : "Stop voice input"
+      : language === "ko"
+        ? "음성으로 Agent 명령 입력"
+        : "Dictate agent command"
+    : language === "ko"
+      ? "이 브라우저는 음성 입력을 지원하지 않습니다"
+      : "Voice input is not supported in this browser";
+  const agentVoiceButtonClassName = `grid h-8 w-8 shrink-0 place-items-center rounded-md border text-stone-700 transition disabled:cursor-not-allowed disabled:opacity-40 ${
+    isAgentListening
+      ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+      : "border-stone-300 hover:bg-stone-100"
+  }`;
   const navItems = useMemo(
     () => [
       { id: "list", label: text.goalList, shortLabel: text.goalShort, count: null },
@@ -1097,6 +1238,10 @@ export default function GoalTracker() {
       });
       if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
       if (confettiTimer.current) clearTimeout(confettiTimer.current);
+      if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      isAcceptingAgentVoiceResults.current = false;
+      agentSpeechRecognition.current?.abort();
+      window.speechSynthesis?.cancel();
     };
   }, []);
 
@@ -1112,6 +1257,13 @@ export default function GoalTracker() {
   useEffect(() => {
     writeStoredLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    const chat = agentChatScrollRef.current;
+    if (!chat) return;
+
+    chat.scrollTop = chat.scrollHeight;
+  }, [agentChatMessages]);
 
   useEffect(() => {
     function applyBrowserNavigation(event: PopStateEvent) {
@@ -1272,7 +1424,7 @@ export default function GoalTracker() {
     setAgentSettingsApiKey("");
     setAgentPrompt("");
     setAgentApplyChanges(true);
-    setAgentResult(null);
+    setAgentChatMessages([]);
     setActiveGoalId(null);
     setCurrentView("list");
     setIsEditingGoal(false);
@@ -1516,16 +1668,47 @@ export default function GoalTracker() {
     }
   }
 
-  async function submitAgentRequest() {
-    const prompt = agentPrompt.trim();
-    if (!prompt) return;
+  async function speakAgentResponse(message: string) {
+    if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.lang = language === "ko" ? "ko-KR" : "en-US";
+    utterance.voice = selectAgentSpeechVoice(await waitForSpeechVoices(), language) ?? null;
+    utterance.rate = language === "ko" ? 0.92 : 0.94;
+    utterance.pitch = language === "ko" ? 1.02 : 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function createAgentChatMessageId() {
+    if ("crypto" in window && "randomUUID" in window.crypto) return window.crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  async function executeAgentPrompt(prompt: string, options?: { speakResponse?: boolean }) {
+    const request = prompt.trim();
+    if (!request) return;
+    if (!agentSettings.hasApiKey && !isLocalTaskQuery(request)) {
+      setError(
+        language === "ko"
+          ? "Agent를 실행하려면 Settings에서 API key를 저장해야 합니다."
+          : "Save an API key in Settings before running the agent.",
+      );
+      return;
+    }
 
     setIsSaving(true);
     setError("");
 
     try {
-      const result = await runAgentRequest(prompt, agentApplyChanges);
-      setAgentResult(result);
+      const result = await runAgentRequest(request, agentApplyChanges);
+      setAgentPrompt("");
+      setAgentChatMessages((messages) => [
+        ...messages,
+        { id: createAgentChatMessageId(), role: "user", content: request },
+        { id: createAgentChatMessageId(), role: "agent", response: result },
+      ]);
       setGoals(result.data.goals);
       setTodos(result.data.todos);
       setRoutineReloadKey((key) => key + 1);
@@ -1535,11 +1718,201 @@ export default function GoalTracker() {
       if (result.applied) {
         await refreshArchiveBinData();
       }
+      if (options?.speakResponse) void speakAgentResponse(result.message);
     } catch (agentError) {
       setError(agentError instanceof Error ? agentError.message : "Failed to run agent");
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function scheduleAgentVoiceAutoRun() {
+    if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+
+    agentVoiceSilenceTimer.current = setTimeout(() => {
+      const prompt = agentVoiceDraft.current.trim();
+      agentVoiceSilenceTimer.current = null;
+      agentVoiceDraft.current = "";
+      agentVoiceFinalTranscript.current = "";
+      isAcceptingAgentVoiceResults.current = false;
+      agentSpeechRecognition.current?.stop();
+      setIsAgentListening(false);
+      void executeAgentPrompt(prompt, { speakResponse: true });
+    }, 1300);
+  }
+
+  function toggleAgentVoiceInput() {
+    if (isAgentListening) {
+      if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      agentVoiceSilenceTimer.current = null;
+      agentVoiceDraft.current = "";
+      agentVoiceFinalTranscript.current = "";
+      isAcceptingAgentVoiceResults.current = false;
+      agentSpeechRecognition.current?.stop();
+      setIsAgentListening(false);
+      return;
+    }
+
+    const speechWindow = window as SpeechRecognitionWindow;
+    const SpeechRecognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setIsSpeechRecognitionAvailable(false);
+      setError(
+        language === "ko"
+          ? "이 브라우저는 음성 입력을 지원하지 않습니다. Chrome 또는 Edge에서 시도해 주세요."
+          : "This browser does not support voice input. Try Chrome or Edge.",
+      );
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = language === "ko" ? "ko-KR" : "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      if (!isAcceptingAgentVoiceResults.current) return;
+
+      const finalTranscripts: string[] = [];
+      const interimTranscripts: string[] = [];
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result[0]?.transcript.trim();
+        if (!transcript) continue;
+        if (result.isFinal) {
+          finalTranscripts.push(transcript);
+        } else {
+          interimTranscripts.push(transcript);
+        }
+      }
+
+      if (finalTranscripts.length) {
+        agentVoiceFinalTranscript.current = `${agentVoiceFinalTranscript.current} ${finalTranscripts.join(" ")}`.trim();
+      }
+
+      const visiblePrompt = `${agentVoiceFinalTranscript.current} ${interimTranscripts.join(" ")}`.trim();
+      if (!visiblePrompt) return;
+
+      agentVoiceDraft.current = visiblePrompt;
+      setAgentPrompt(visiblePrompt);
+      scheduleAgentVoiceAutoRun();
+    };
+    recognition.onerror = (event) => {
+      if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      agentVoiceSilenceTimer.current = null;
+      agentVoiceDraft.current = "";
+      agentVoiceFinalTranscript.current = "";
+      isAcceptingAgentVoiceResults.current = false;
+      setError(
+        language === "ko"
+          ? `음성 입력을 사용할 수 없습니다: ${event.error}`
+          : `Voice input failed: ${event.error}`,
+      );
+      setIsAgentListening(false);
+    };
+    recognition.onend = () => {
+      isAcceptingAgentVoiceResults.current = false;
+      setIsAgentListening(false);
+      agentSpeechRecognition.current = null;
+    };
+
+    agentSpeechRecognition.current = recognition;
+    agentVoiceDraft.current = "";
+    agentVoiceFinalTranscript.current = "";
+    isAcceptingAgentVoiceResults.current = true;
+    setError("");
+    setIsAgentListening(true);
+    try {
+      recognition.start();
+    } catch (voiceError) {
+      agentSpeechRecognition.current = null;
+      isAcceptingAgentVoiceResults.current = false;
+      setIsAgentListening(false);
+      setError(voiceError instanceof Error ? voiceError.message : "Failed to start voice input");
+    }
+  }
+
+  async function submitAgentRequest() {
+    await executeAgentPrompt(agentPrompt);
+  }
+
+  async function applyProposedAgentActions(messageId: string, response: AgentResponse) {
+    if (response.applied || response.actions.length === 0) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await applyAgentActionRequest(response.actions);
+      setAgentChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === messageId && message.role === "agent"
+            ? { ...message, response: result, status: undefined }
+            : message,
+        ),
+      );
+      setGoals(result.data.goals);
+      setTodos(result.data.todos);
+      setRoutineReloadKey((key) => key + 1);
+      if (result.data.goals.length && !result.data.goals.some((goal) => goal.id === activeGoalId)) {
+        setActiveGoalId(result.data.goals[0].id);
+      }
+      await refreshArchiveBinData();
+    } catch (agentError) {
+      setError(agentError instanceof Error ? agentError.message : "Failed to apply agent actions");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function cancelProposedAgentActions(messageId: string) {
+    setAgentChatMessages((messages) =>
+      messages.map((message) =>
+        message.id === messageId && message.role === "agent" ? { ...message, status: "cancelled" } : message,
+      ),
+    );
+    setError("");
+  }
+
+  function getAgentActionItemTitle(action: AgentAction, response?: AgentResponse) {
+    if (action.title?.trim()) return action.title.trim();
+
+    const itemId = action.id;
+    if (itemId) {
+      if (action.type.endsWith("_todo")) {
+        const todo = [...todos, ...archivedTodos, ...deletedTodos, ...(response?.data.todos ?? [])].find(
+          (item) => item.id === itemId,
+        );
+        return todo?.title ?? "";
+      }
+
+      if (action.type.endsWith("_routine")) {
+        const routine = [
+          ...archivedRoutines,
+          ...deletedRoutines,
+          ...(response?.data.routines ?? []),
+        ].find((item) => item.id === itemId);
+        return routine?.title ?? "";
+      }
+
+      const goal = [...goals, ...archivedGoals, ...deletedGoals, ...(response?.data.goals ?? [])].find(
+        (item) => item.id === itemId,
+      );
+      return goal?.title ?? "";
+    }
+
+    if (action.goalId) {
+      const goal = [...goals, ...archivedGoals, ...deletedGoals, ...(response?.data.goals ?? [])].find(
+        (item) => item.id === action.goalId,
+      );
+      return goal ? `${goal.title} ${language === "ko" ? "기록" : "record"}` : "";
+    }
+
+    return "";
+  }
+
+  function formatAgentAction(action: AgentAction, response?: AgentResponse) {
+    const itemTitle = getAgentActionItemTitle(action, response);
+    return itemTitle ? `${action.type} · ${itemTitle}` : action.type;
   }
 
   async function addGoal() {
@@ -2681,36 +3054,39 @@ export default function GoalTracker() {
               isAgentPanelExpanded ? "gap-3 p-3" : "gap-0 p-2"
             }`}
           >
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="flex min-w-0 items-center gap-1.5 text-base font-semibold">
+            <div className="grid gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="flex shrink-0 items-center gap-1.5 text-base font-semibold">
                   <RobotIcon />
                   {language === "ko" ? "AI 에이전트" : "AI Agent"}
                 </h2>
-                {isAgentPanelExpanded && (
-                  <p className="mt-1 text-sm text-stone-600">
-                    {language === "ko"
-                      ? "목표, 할일, 습관을 분석하고 변경 작업을 제안합니다."
-                      : "Analyze goals, tasks, and habits, then propose list changes."}
-                  </p>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    agentSettings.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                  }`}
-                >
-                  {agentSettings.hasApiKey
-                    ? `${agentSettings.llmModel} ready`
-                    : agentSettings.schemaMissing
-                      ? language === "ko"
-                        ? "Supabase migration 필요"
-                        : "Supabase migration needed"
-                    : language === "ko"
-                      ? "Settings에서 API key 필요"
-                      : "API key needed in Settings"}
-                </span>
+                <div className="ml-auto flex min-w-0 items-center gap-2">
+                  <span
+                    className={`w-fit max-w-[42vw] truncate whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold sm:max-w-none ${
+                      agentSettings.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                    }`}
+                  >
+                    {agentSettings.hasApiKey
+                      ? `${agentSettings.llmModel} ready`
+                      : agentSettings.schemaMissing
+                        ? language === "ko"
+                          ? "Supabase migration 필요"
+                          : "Supabase migration needed"
+                      : language === "ko"
+                        ? "Settings에서 API key 필요"
+                        : "API key needed in Settings"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleAgentVoiceInput}
+                    disabled={!isSpeechRecognitionAvailable}
+                    aria-pressed={isAgentListening}
+                    aria-label={language === "ko" ? "음성으로 Agent 명령 입력" : "Dictate agent command"}
+                    title={agentVoiceButtonTitle}
+                    className={agentVoiceButtonClassName}
+                  >
+                    <MicIcon />
+                  </button>
                 <button
                   type="button"
                   onClick={() => setIsAgentPanelExpanded((expanded) => !expanded)}
@@ -2728,21 +3104,106 @@ export default function GoalTracker() {
                 >
                   {isAgentPanelExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
                 </button>
+                </div>
               </div>
+              {isAgentPanelExpanded && (
+                <p className="text-sm text-stone-600">
+                  {language === "ko"
+                    ? "목표, 할일, 습관을 분석하고 변경 작업을 제안합니다."
+                    : "Analyze goals, tasks, and habits, then propose list changes."}
+                </p>
+              )}
             </div>
             {isAgentPanelExpanded && (
               <>
-                <textarea
-                  value={agentPrompt}
-                  onChange={(event) => setAgentPrompt(event.target.value)}
-                  rows={3}
-                  placeholder={
-                    language === "ko"
-                      ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
-                      : "Example: Review this week's tasks and reschedule overdue items."
-                  }
-                  className="min-h-24 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
-                />
+                {agentChatMessages.length > 0 && (
+                  <div
+                    ref={agentChatScrollRef}
+                    className="grid max-h-[min(42vh,24rem)] min-h-40 gap-3 overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm"
+                  >
+                    {agentChatMessages.map((message) =>
+                      message.role === "user" ? (
+                        <div key={message.id} className="flex justify-end">
+                          <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-md bg-emerald-700 px-3 py-2 text-white">
+                            {message.content}
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={message.id} className="flex justify-start">
+                          <div className="grid max-w-[92%] gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-stone-800">
+                            <p className="whitespace-pre-wrap break-words">{message.response.message}</p>
+                            {message.response.actions.length > 0 && (
+                              <div className="grid gap-2">
+                                <div className="text-xs font-semibold uppercase text-stone-500">
+                                  {message.response.applied
+                                    ? language === "ko"
+                                      ? "적용된 작업"
+                                      : "Applied actions"
+                                    : language === "ko"
+                                      ? "제안된 작업"
+                                      : "Proposed actions"}
+                                </div>
+                                <ul className="grid gap-1">
+                                  {message.response.actions.map((action, index) => (
+                                    <li
+                                      key={`${message.id}-${action.type}-${index}`}
+                                      className="rounded border border-stone-200 bg-stone-50 px-2 py-1"
+                                    >
+                                      {formatAgentAction(action, message.response)}
+                                    </li>
+                                  ))}
+                                </ul>
+                                {!message.response.applied && message.status !== "cancelled" && (
+                                  <div className="flex flex-col gap-2 rounded-md border border-emerald-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="text-sm font-medium text-stone-700">
+                                      {language === "ko" ? "이 작업들을 실행할까요?" : "Apply these proposed actions?"}
+                                    </span>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => cancelProposedAgentActions(message.id)}
+                                        disabled={isSaving}
+                                        className="rounded-md border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                      >
+                                        {language === "ko" ? "취소" : "Cancel"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => applyProposedAgentActions(message.id, message.response)}
+                                        disabled={isSaving}
+                                        className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                      >
+                                        {language === "ko" ? "제안 실행" : "Apply actions"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {message.status === "cancelled" && (
+                                  <div className="rounded-md border border-stone-200 bg-stone-50 px-2 py-1 text-sm font-medium text-stone-500">
+                                    {language === "ko" ? "취소됨" : "Cancelled"}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+                <div className="grid min-w-0 gap-2">
+                  <textarea
+                    value={agentPrompt}
+                    onChange={(event) => setAgentPrompt(event.target.value)}
+                    rows={3}
+                    placeholder={
+                      language === "ko"
+                        ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
+                        : "Example: Review this week's tasks and reschedule overdue items."
+                    }
+                    className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
+                  />
+                </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <label className="flex items-center gap-2 text-sm font-medium text-stone-700">
                     <input
@@ -2772,33 +3233,6 @@ export default function GoalTracker() {
                           : "Analyze"}
                   </button>
                 </div>
-                {agentResult && (
-                  <div className="grid gap-3 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm">
-                    <p className="whitespace-pre-wrap text-stone-800">{agentResult.message}</p>
-                    {agentResult.actions.length > 0 && (
-                      <div className="grid gap-2">
-                        <div className="text-xs font-semibold uppercase text-stone-500">
-                          {agentResult.applied
-                            ? language === "ko"
-                              ? "적용된 작업"
-                              : "Applied actions"
-                            : language === "ko"
-                              ? "제안된 작업"
-                              : "Proposed actions"}
-                        </div>
-                        <ul className="grid gap-1">
-                          {agentResult.actions.map((action, index) => (
-                            <li key={`${action.type}-${index}`} className="rounded border border-stone-200 bg-white px-2 py-1">
-                              <span className="font-semibold">{action.type}</span>
-                              {action.title ? ` · ${action.title}` : ""}
-                              {action.id ? ` · ${action.id}` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
               </>
             )}
           </section>
@@ -3609,7 +4043,7 @@ export default function GoalTracker() {
 
                   {isEditingGoal ? (
                     <div className="mt-5 grid gap-4">
-                      <label className="grid gap-1 text-sm font-medium">
+                      <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
                         <textarea
                           ref={goalMemoTextareaRef}
@@ -3621,7 +4055,7 @@ export default function GoalTracker() {
                                 : { ...toGoalDraft(activeGoal), memo: event.target.value },
                             )
                           }
-                          className="min-h-24 resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -3670,9 +4104,11 @@ export default function GoalTracker() {
                     </div>
                   ) : (
                     <div className="mt-5 grid gap-4">
-                      <div className="rounded-md border border-stone-200 bg-white p-3">
+                      <div className="min-w-0 max-w-full rounded-md border border-stone-200 bg-white p-3">
                         <div className="text-xs font-medium text-stone-500">{text.memo}</div>
-                        <p className="mt-1 whitespace-pre-wrap text-sm text-stone-800">{activeGoal.memo || text.noMemo}</p>
+                        <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words text-sm text-stone-800">
+                          {activeGoal.memo || text.noMemo}
+                        </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                         <span>
@@ -4739,6 +5175,26 @@ function RobotIcon() {
       <path d="M7 21h10" />
       <path d="m18 4 1-1" />
       <path d="m20 6 1-1" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <path d="M12 19v3" />
+      <path d="M8 22h8" />
     </svg>
   );
 }
