@@ -60,11 +60,13 @@ type AgentAction =
   | { type: "permanently_delete_routine"; id: string };
 
 type ListKind = "goal" | "todo" | "routine";
+type AgentTargetList = ListKind | "archive" | "bin" | "unknown";
 
 export type AgentResult = {
   message: string;
   actions: AgentAction[];
   applied: boolean;
+  targetList: AgentTargetList;
   data: Awaited<ReturnType<typeof readAgentListContext>>;
 };
 
@@ -92,16 +94,6 @@ function asOptionalBoolean(value: unknown) {
 function normalizeDate(value: unknown) {
   const text = asString(value);
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
-}
-
-function dateFromTimestamp(timestamp: number | undefined) {
-  if (timestamp === undefined) return "";
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return "";
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function toLocalDateInputValue(date = new Date()) {
@@ -228,7 +220,7 @@ function normalizeActionType(type: string) {
   if (["create_todo", "new_todo"].includes(normalized)) return "add_todo";
   if (["edit_todo", "complete_todo"].includes(normalized)) return "update_todo";
   if (["remove_todo"].includes(normalized)) return "delete_todo";
-  if (["archive_task", "archive_todo"].includes(normalized)) return "archive_todo";
+  if (["archive_task", "archive_todo", "move_task_to_archive", "move_todo_to_archive", "move_task_to_storage", "move_todo_to_storage", "send_task_to_archive", "send_todo_to_archive", "send_task_to_storage", "send_todo_to_storage"].includes(normalized)) return "archive_todo";
   if (["restore_task", "restore_todo", "restore_archived_task", "restore_archived_todo"].includes(normalized)) return "restore_todo";
   if (["delete_archived_task", "delete_archived_todo", "move_archived_task_to_bin", "move_archived_todo_to_bin"].includes(normalized)) return "delete_todo";
   if (["permanently_delete_task", "permanent_delete_task", "delete_task_forever"].includes(normalized)) return "permanently_delete_todo";
@@ -236,7 +228,7 @@ function normalizeActionType(type: string) {
   if (["create_goal", "new_goal"].includes(normalized)) return "add_goal";
   if (["edit_goal"].includes(normalized)) return "update_goal";
   if (["delete_goal", "remove_goal"].includes(normalized)) return "delete_goal";
-  if (["archive_goal"].includes(normalized)) return "archive_goal";
+  if (["archive_goal", "move_goal_to_archive", "move_goal_to_storage", "send_goal_to_archive", "send_goal_to_storage"].includes(normalized)) return "archive_goal";
   if (["restore_goal", "restore_archived_goal"].includes(normalized)) return "restore_goal";
   if (["delete_archived_goal", "move_archived_goal_to_bin"].includes(normalized)) return "delete_goal";
   if (["permanently_delete_goal", "permanent_delete_goal", "delete_goal_forever"].includes(normalized)) return "permanently_delete_goal";
@@ -246,7 +238,7 @@ function normalizeActionType(type: string) {
   if (["add_habit", "create_habit", "new_habit"].includes(normalized)) return "add_routine";
   if (["update_habit", "edit_habit"].includes(normalized)) return "update_routine";
   if (["delete_habit", "remove_habit", "delete_routine", "remove_routine"].includes(normalized)) return "delete_routine";
-  if (["archive_habit", "archive_routine"].includes(normalized)) return "archive_routine";
+  if (["archive_habit", "archive_routine", "move_habit_to_archive", "move_routine_to_archive", "move_habit_to_storage", "move_routine_to_storage", "send_habit_to_archive", "send_routine_to_archive", "send_habit_to_storage", "send_routine_to_storage"].includes(normalized)) return "archive_routine";
   if (["restore_habit", "restore_routine", "restore_archived_habit", "restore_archived_routine"].includes(normalized)) return "restore_routine";
   if (["delete_archived_habit", "delete_archived_routine", "move_archived_habit_to_bin", "move_archived_routine_to_bin"].includes(normalized)) return "delete_routine";
   if (["permanently_delete_habit", "permanent_delete_habit", "delete_habit_forever"].includes(normalized)) return "permanently_delete_routine";
@@ -258,16 +250,18 @@ function normalizeActionDate(record: Record<string, unknown>, fields: string[]) 
   return normalizeDate(firstStringField(record, fields));
 }
 
-function getRequestedListKind(request: string): ListKind | null {
+function getRequestedListKinds(request: string) {
   const text = request.toLowerCase();
-  const hasTodo = /\b(tasks?|todos?|to-?dos?)\b|할\s*일|단순\s*할\s*일|태스크|작업/.test(text);
-  const hasRoutine = /\b(habits?|routines?)\b|습관|루틴/.test(text);
-  const hasGoal = /\bgoals?\b|장기\s*목표|목표(?!일)/.test(text);
-  const matches = [hasTodo, hasRoutine, hasGoal].filter(Boolean).length;
-  if (matches !== 1) return null;
-  if (hasTodo) return "todo";
-  if (hasRoutine) return "routine";
-  return "goal";
+  const kinds: ListKind[] = [];
+  if (/\b(tasks?|todos?|to-?dos?)\b|할\s*일|단순\s*할\s*일|태스크|작업/.test(text)) kinds.push("todo");
+  if (/\b(habits?|routines?)\b|습관|루틴|반복/.test(text)) kinds.push("routine");
+  if (/\bgoals?\b|장기\s*목표|목표(?!일)|달성/.test(text)) kinds.push("goal");
+  return kinds;
+}
+
+function getRequestedListKind(request: string): ListKind | null {
+  const kinds = getRequestedListKinds(request);
+  return kinds.length === 1 ? kinds[0] : null;
 }
 
 function actionListKind(action: AgentAction): ListKind {
@@ -276,91 +270,141 @@ function actionListKind(action: AgentAction): ListKind {
   return "goal";
 }
 
-function actionVerb(action: AgentAction) {
-  if (action.type.startsWith("add_")) return "add";
-  if (action.type.startsWith("update_")) return "update";
-  if (action.type.startsWith("delete_")) return "delete";
-  if (action.type.startsWith("archive_")) return "archive";
-  if (action.type.startsWith("restore_")) return "restore";
-  if (action.type.startsWith("permanently_delete_")) return "permanently_delete";
-  return "update";
+function listKindLabel(kind: Exclude<AgentTargetList, "unknown">) {
+  if (kind === "todo") return "tasks";
+  if (kind === "routine") return "habits";
+  if (kind === "archive") return "archive";
+  if (kind === "bin") return "bin";
+  return "goals";
 }
 
-function coerceAddActionToRequestedList(action: AgentAction, requestedKind: ListKind, today: string): AgentAction | null {
-  if (actionVerb(action) !== "add") return null;
-
-  if (requestedKind === "todo") {
-    if (action.type !== "add_goal" && action.type !== "add_routine" && action.type !== "add_todo") return null;
-    const title = action.title.trim();
-    if (!title) return null;
-    return {
-      type: "add_todo",
-      title,
-      targetDate:
-        action.type === "add_todo"
-          ? action.targetDate || today
-          : action.type === "add_goal"
-            ? action.deadline || dateFromTimestamp(action.createdAt) || today
-            : action.endDate || action.startDate || today,
-      category: action.type === "add_todo" ? action.category : undefined,
-    };
-  }
-
-  if (requestedKind === "goal") {
-    if (action.type !== "add_goal" && action.type !== "add_routine" && action.type !== "add_todo") return null;
-    const title = action.title.trim();
-    if (!title) return null;
-    return {
-      type: "add_goal",
-      title,
-      memo: action.type === "add_goal" ? action.memo ?? "" : "",
-      target: action.type === "add_goal" ? action.target : 1,
-      unit: action.type === "add_goal" ? action.unit : "units",
-      deadline:
-        action.type === "add_goal"
-          ? action.deadline ?? ""
-          : action.type === "add_todo"
-            ? action.targetDate ?? ""
-            : action.endDate ?? "",
-    };
-  }
-
-  if (action.type !== "add_goal" && action.type !== "add_routine" && action.type !== "add_todo") return null;
-  const title = action.title.trim();
-  if (!title) return null;
-  return {
-    type: "add_routine",
-    title,
-    memo: action.type === "add_routine" || action.type === "add_goal" ? action.memo ?? "" : "",
-    startDate:
-      action.type === "add_routine"
-        ? action.startDate || today
-        : action.type === "add_goal"
-          ? dateFromTimestamp(action.createdAt) || today
-          : today,
-    endDate:
-      action.type === "add_routine"
-        ? action.endDate || action.startDate || today
-        : action.type === "add_goal"
-          ? action.deadline || dateFromTimestamp(action.createdAt) || today
-          : action.targetDate || today,
-  };
+function listKindMessageLabel(kind: ListKind, isKorean: boolean) {
+  if (kind === "todo") return isKorean ? "할일" : "tasks";
+  if (kind === "routine") return isKorean ? "습관" : "habits";
+  return isKorean ? "목표" : "goals";
 }
 
-function enforceRequestedListKind(actions: AgentAction[], request: string, today: string) {
-  const requestedKind = getRequestedListKind(request);
-  if (!requestedKind) return actions;
+function listKindItemScope(kinds: ListKind[], isKorean: boolean) {
+  if (kinds.length === 0) return isKorean ? "항목" : "items";
+  const labels = kinds.map((kind) => listKindMessageLabel(kind, isKorean)).join(isKorean ? ", " : ", ");
+  return isKorean ? `${labels} 항목` : `${labels} items`;
+}
 
-  return actions.map((action) => {
-    if (actionListKind(action) === requestedKind) return action;
+function normalizeTargetList(value: unknown): AgentTargetList {
+  const text = asString(value).toLowerCase().replaceAll("-", "_");
+  if (["todo", "todos", "task", "tasks", "to_do", "to_dos"].includes(text)) return "todo";
+  if (["goal", "goals"].includes(text)) return "goal";
+  if (["routine", "routines", "habit", "habits"].includes(text)) return "routine";
+  if (["archive", "archives", "storage", "saved", "saved_items", "저장소", "보관함", "아카이브"].includes(text)) return "archive";
+  if (["bin", "trash", "deleted", "deleted_items"].includes(text)) return "bin";
+  return "unknown";
+}
 
-    const coerced = coerceAddActionToRequestedList(action, requestedKind, today);
-    if (coerced) return coerced;
+function isPermanentDeleteAction(action: AgentAction) {
+  return (
+    action.type === "permanently_delete_todo" ||
+    action.type === "permanently_delete_goal" ||
+    action.type === "permanently_delete_routine"
+  );
+}
 
+function isArchiveTargetAction(action: AgentAction) {
+  return (
+    action.type === "archive_todo" ||
+    action.type === "archive_goal" ||
+    action.type === "archive_routine" ||
+    action.type === "restore_todo" ||
+    action.type === "restore_goal" ||
+    action.type === "restore_routine" ||
+    action.type === "delete_todo" ||
+    action.type === "delete_goal" ||
+    action.type === "delete_routine"
+  );
+}
+
+function inferTargetListFromActions(actions: AgentAction[]): AgentTargetList {
+  if (actions.length > 0 && actions.every(isPermanentDeleteAction)) return "bin";
+  if (actions.length > 0 && actions.every(isArchiveTargetAction)) return "archive";
+  const kinds = new Set(actions.map(actionListKind));
+  if (kinds.size !== 1) return "unknown";
+  return [...kinds][0];
+}
+
+function validateActionsForTarget(actions: AgentAction[], targetList: AgentTargetList, source: string) {
+  if (actions.length === 0) return;
+  if (targetList === "unknown") {
     throw new Error(
-      `The request explicitly targets ${requestedKind === "todo" ? "tasks" : requestedKind === "routine" ? "habits" : "goals"}, but the agent returned ${action.type}. Try again with the item name or id from that list.`,
+      `${source} did not identify whether this is a task, goal, or habit request. Please specify the list before applying changes.`,
     );
-  });
+  }
+
+  if (targetList === "bin") {
+    const invalidAction = actions.find((action) => !isPermanentDeleteAction(action));
+    if (invalidAction) {
+      throw new Error(`${source} targeted the bin, but returned ${invalidAction.type}. Only permanent delete actions are allowed for bin cleanup.`);
+    }
+    return;
+  }
+
+  if (targetList === "archive") {
+    const invalidAction = actions.find((action) => !isArchiveTargetAction(action));
+    if (invalidAction) {
+      throw new Error(`${source} targeted the archive, but returned ${invalidAction.type}. Only archive, restore, or move-to-bin actions are allowed for archive work.`);
+    }
+    return;
+  }
+
+  const mismatchedAction = actions.find((action) => actionListKind(action) !== targetList);
+  if (mismatchedAction) {
+    throw new Error(
+      `${source} targeted ${listKindLabel(targetList)}, but returned ${mismatchedAction.type}. Please specify the correct list and try again.`,
+    );
+  }
+}
+
+function validateActionsForRequestedKinds(actions: AgentAction[], requestedKinds: ListKind[], source: string) {
+  if (requestedKinds.length === 0 || actions.length === 0) return;
+  const allowedKinds = new Set(requestedKinds);
+  const invalidAction = actions.find((action) => !allowedKinds.has(actionListKind(action)));
+  if (!invalidAction) return;
+
+  throw new Error(
+    `${source} returned ${invalidAction.type}, but the request only targeted ${requestedKinds
+      .map((kind) => listKindLabel(kind))
+      .join(", ")}. Apply only the requested list category.`,
+  );
+}
+
+function isGoalEntryAction(action: AgentAction) {
+  return action.type === "add_goal_entry" || action.type === "update_goal_entry" || action.type === "delete_goal_entry";
+}
+
+function requestAllowsGoalEntryActions(request: string) {
+  return /\b(progress|record|records|entry|entries|log|logs|metric|metrics|value|amount)\b|기록|진행|진척|달성량|실적|수치|값/.test(
+    request.toLowerCase(),
+  );
+}
+
+function validateGoalActionIntent(actions: AgentAction[], request: string, source: string) {
+  if (!actions.some(isGoalEntryAction) || requestAllowsGoalEntryActions(request)) return;
+  throw new Error(
+    `${source} returned a goal progress record action, but this request looks like a Goals list item change. Use add_goal for adding to the Goals list; use goal record actions only when the user explicitly asks for progress records.`,
+  );
+}
+
+function enforceRequestedListKind(actions: AgentAction[], request: string, targetList: AgentTargetList) {
+  const requestedKind = getRequestedListKind(request);
+  if (!requestedKind) return;
+  if (targetList === "archive" || targetList === "bin") return;
+
+  if (targetList !== "unknown" && targetList !== requestedKind) {
+    throw new Error(
+      `The request explicitly targets ${listKindLabel(requestedKind)}, but the agent targeted ${listKindLabel(targetList)}. Try again with the item name or id from that list.`,
+    );
+  }
+
+  validateActionsForTarget(actions, requestedKind, "The agent");
+  if (requestedKind === "goal") validateGoalActionIntent(actions, request, "The agent");
 }
 
 function coerceAction(value: unknown): AgentAction | null {
@@ -513,7 +557,61 @@ function coerceAction(value: unknown): AgentAction | null {
 }
 
 function looksLikeMutationRequest(request: string) {
-  return /add|create|update|edit|delete|remove|complete|추가|만들|수정|바꿔|삭제|지워|완료/i.test(request);
+  return /add|create|update|edit|delete|remove|complete|archive|restore|추가|만들|수정|변경|바꿔|삭제|지워|제거|완료|보관|복원|기록/i.test(request);
+}
+
+function isEmptyBinRequest(request: string) {
+  const text = request.toLowerCase();
+  const mentionsBin = /\b(bin|trash|deleted items?)\b|휴지통/.test(text);
+  const asksToEmpty = /\b(empty|clear|purge)\b|비우|비워|전부\s*삭제|전체\s*삭제|모두\s*삭제|완전\s*삭제/.test(text);
+  const asksToDelete = /\b(delete|remove)\b|삭제|지워|제거/.test(text);
+  return mentionsBin && (asksToEmpty || asksToDelete);
+}
+
+function isArchiveRequest(request: string) {
+  return /\b(archive|archives|storage|saved items?)\b|저장소|보관함|아카이브/.test(request.toLowerCase());
+}
+
+function mentionsAllItems(request: string) {
+  return /\b(all|every|everything|entire)\b|모두|전체|전부|다\s*(복원|삭제|지워|제거|이동)/.test(request.toLowerCase());
+}
+
+function isEmptyArchiveRequest(request: string) {
+  const text = request.toLowerCase();
+  const asksToEmpty = /\b(empty|clear)\b|비우|비워/.test(text);
+  const asksToDelete = /\b(delete|remove|move to bin|move to trash)\b|삭제|지워|제거|휴지통/.test(text);
+  return isArchiveRequest(request) && (asksToEmpty || (asksToDelete && mentionsAllItems(request)));
+}
+
+function isRestoreArchiveRequest(request: string) {
+  return isArchiveRequest(request) && mentionsAllItems(request) && /\b(restore|recover|unarchive)\b|복원|되돌/.test(request.toLowerCase());
+}
+
+function buildEmptyBinMessage(request: string, count: number, applied: boolean, requestedKinds: ListKind[]) {
+  const isKorean = /[\u3131-\uD79D]/.test(request);
+  const scope = listKindItemScope(requestedKinds, isKorean);
+  if (count === 0) return isKorean ? `휴지통에 해당 ${scope}이 없습니다.` : `There are no matching ${scope} in the bin.`;
+  if (applied) return isKorean ? `휴지통의 ${scope} ${count}개를 영구 삭제했습니다.` : `Permanently deleted ${count} matching ${scope} from the bin.`;
+  return isKorean ? `휴지통의 ${scope} ${count}개를 영구 삭제할 수 있습니다.` : `I can permanently delete ${count} matching ${scope} from the bin.`;
+}
+
+function buildArchiveMessage(request: string, count: number, applied: boolean, mode: "moveToBin" | "restore", requestedKinds: ListKind[]) {
+  const isKorean = /[\u3131-\uD79D]/.test(request);
+  const scope = listKindItemScope(requestedKinds, isKorean);
+  if (count === 0) return isKorean ? `저장소에 해당 ${scope}이 없습니다.` : `There are no matching ${scope} in the archive.`;
+  if (mode === "restore") {
+    if (applied) return isKorean ? `저장소의 ${scope} ${count}개를 복원했습니다.` : `Restored ${count} matching archived ${scope}.`;
+    return isKorean ? `저장소의 ${scope} ${count}개를 복원할 수 있습니다.` : `I can restore ${count} matching archived ${scope}.`;
+  }
+  if (applied) return isKorean ? `저장소의 ${scope} ${count}개를 휴지통으로 이동했습니다.` : `Moved ${count} matching archived ${scope} to the bin.`;
+  return isKorean ? `저장소의 ${scope} ${count}개를 휴지통으로 이동할 수 있습니다.` : `I can move ${count} matching archived ${scope} to the bin.`;
+}
+
+function buildAmbiguousListMessage(request: string) {
+  const isKorean = /[\u3131-\uD79D]/.test(request);
+  return isKorean
+    ? "이 요청이 할일, 목표, 습관 중 어느 리스트에 대한 작업인지 명확하지 않습니다. 예: '할일에 추가', '목표에 추가', '습관에 추가'처럼 리스트를 지정해 주세요."
+    : "I cannot tell whether this should change tasks, goals, or habits. Please specify the list, such as tasks, goals, or habits.";
 }
 
 function parseAgentResponse(content: string) {
@@ -525,10 +623,12 @@ function parseAgentResponse(content: string) {
   const actions = Array.isArray(parsed.actions)
     ? parsed.actions.map(coerceAction).filter((action): action is AgentAction => Boolean(action)).slice(0, 50)
     : [];
+  const targetList = parsed.targetList === undefined ? inferTargetListFromActions(actions) : normalizeTargetList(parsed.targetList);
 
   return {
     message: asString(parsed.message) || "I reviewed your lists.",
     actions,
+    targetList,
   };
 }
 
@@ -594,6 +694,36 @@ export async function readAgentListContext() {
   };
 }
 
+function shouldIncludeListKind(kind: ListKind, requestedKinds: ListKind[]) {
+  return requestedKinds.length === 0 || requestedKinds.includes(kind);
+}
+
+function buildEmptyBinActions(context: Awaited<ReturnType<typeof readAgentListContext>>, requestedKinds: ListKind[]): AgentAction[] {
+  return [
+    ...(shouldIncludeListKind("todo", requestedKinds) ? context.bin.todos.map((todo) => ({ type: "permanently_delete_todo" as const, id: todo.id })) : []),
+    ...(shouldIncludeListKind("goal", requestedKinds) ? context.bin.goals.map((goal) => ({ type: "permanently_delete_goal" as const, id: goal.id })) : []),
+    ...(shouldIncludeListKind("routine", requestedKinds)
+      ? context.bin.routines.map((routine) => ({ type: "permanently_delete_routine" as const, id: routine.id }))
+      : []),
+  ];
+}
+
+function buildArchiveActions(context: Awaited<ReturnType<typeof readAgentListContext>>, mode: "moveToBin" | "restore", requestedKinds: ListKind[]): AgentAction[] {
+  if (mode === "restore") {
+    return [
+      ...(shouldIncludeListKind("todo", requestedKinds) ? context.archive.todos.map((todo) => ({ type: "restore_todo" as const, id: todo.id })) : []),
+      ...(shouldIncludeListKind("goal", requestedKinds) ? context.archive.goals.map((goal) => ({ type: "restore_goal" as const, id: goal.id })) : []),
+      ...(shouldIncludeListKind("routine", requestedKinds) ? context.archive.routines.map((routine) => ({ type: "restore_routine" as const, id: routine.id })) : []),
+    ];
+  }
+
+  return [
+    ...(shouldIncludeListKind("todo", requestedKinds) ? context.archive.todos.map((todo) => ({ type: "delete_todo" as const, id: todo.id })) : []),
+    ...(shouldIncludeListKind("goal", requestedKinds) ? context.archive.goals.map((goal) => ({ type: "delete_goal" as const, id: goal.id })) : []),
+    ...(shouldIncludeListKind("routine", requestedKinds) ? context.archive.routines.map((routine) => ({ type: "delete_routine" as const, id: routine.id })) : []),
+  ];
+}
+
 async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; prompt: string; context: unknown }) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -609,18 +739,27 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
         {
           role: "system",
           content:
-            "You manage a personal planning app. Return only JSON with keys message and actions. " +
-            "Actions must be an array of allowed action objects. Use existing ids for updates/deletes. " +
+            "You manage a personal planning app. Return only JSON with keys targetList, message, and actions. " +
+            "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
+            "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
             "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
             "Allowed types: add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, " +
             "add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, " +
             "add_goal_entry, update_goal_entry, delete_goal_entry, " +
             "add_routine, update_routine, delete_routine, archive_routine, restore_routine, permanently_delete_routine. " +
             "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. " +
-            "List selection is strict: if the user names Tasks/todos/할일, only use *_todo actions; if they name Goals/목표, only use *_goal actions; if they name Habits/routines/습관, only use *_routine actions. " +
+            "For adding a new item to the Goals list, always use add_goal with title/memo/target/unit/deadline; never use add_goal_entry for that. " +
+            "Use add_goal_entry, update_goal_entry, or delete_goal_entry only when the user explicitly asks to add/update/delete a progress record, record, entry, log, value, amount, 기록, 진행, 진척, 달성량, 실적, 수치, or 값 for an existing goal. " +
+            "If the user says 목표에 ... 추가, 목표 목록에 ... 추가, add ... to goals, or add a goal, this means add_goal unless progress record wording is explicit. " +
+            "List selection is strict: if the user names Tasks/todos/할일/태스크/작업, targetList must be todo and only use *_todo actions; if they name Goals/목표, targetList must be goal and only use *_goal or *_goal_entry actions; if they name Habits/routines/습관/루틴, targetList must be routine and only use *_routine actions. " +
+            "If the user request is ambiguous about whether an item belongs to tasks, goals, or habits, set targetList to unknown, return no actions, and ask which list to use. " +
+            "If the user names more than one list in one mutation request, set targetList to unknown, return no actions, and ask them to run one list at a time. " +
+            "If the user asks to send/move an active item to archive/storage/저장소/보관함/아카이브, targetList must be archive and use archive_todo, archive_goal, or archive_routine with the active item's id. " +
+            "If the user asks about archive/storage/saved items/저장소/보관함/아카이브, targetList must be archive. For a single named archived item, use only that item's id. For archived items, use restore_todo/restore_goal/restore_routine to restore them, or delete_todo/delete_goal/delete_routine to move them from archive to bin. Only affect every archived item when the user explicitly says all/every/entire/모두/전체/전부/다 or asks to empty/clear the archive. " +
+            "When the user asks to restore/delete/empty all archive or bin items and also names a category such as tasks/todos/할일, goals/목표, or habits/routines/습관/루틴, only return actions for that named category. Do not affect other categories. " +
+            "If the user asks to empty/clear/purge the bin/trash or 휴지통, targetList must be bin and actions must only be permanently_delete_todo, permanently_delete_goal, or permanently_delete_routine for matching items already in bin. " +
             "Do not create a goal when the request says task/tasks/todo/todos/할일. Do not create a task when the request says goal/goals/목표. " +
             "For ordinary delete/remove requests, use delete_todo, delete_goal, or delete_routine to move items to bin. " +
-            "For archived items, use restore_todo/restore_goal/restore_routine to restore them, or delete_todo/delete_goal/delete_routine to move them from archive to bin. " +
             "You may use id, todoId, goalId, routineId, taskId, or habitId fields, but ids must come from the provided lists. " +
             "For goal start date changes, use update_goal with createdAt as YYYY-MM-DD. For goal deadline changes, use deadline as YYYY-MM-DD. " +
             "For goal progress records, use goalId plus entryId for updates/deletes, and date or createdAt as YYYY-MM-DD when a record date is specified. " +
@@ -808,12 +947,58 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
   if (!request) throw new Error("Agent request is required");
 
   const context = await readAgentListContext();
-  const today = new Date().toISOString().slice(0, 10);
+  const requestedKinds = getRequestedListKinds(request);
   if (isReadOnlyTaskQuery(request)) {
     return {
       message: buildTaskQueryMessage(context.todos, request),
       actions: [],
       applied: false,
+      targetList: "todo",
+      data: context,
+    };
+  }
+
+  if (isEmptyBinRequest(request)) {
+    const actions = buildEmptyBinActions(context, requestedKinds);
+    if (apply) {
+      for (const action of actions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: buildEmptyBinMessage(request, actions.length, apply, requestedKinds),
+      actions,
+      applied: apply,
+      targetList: "bin",
+      data: apply ? await readAgentListContext() : context,
+    };
+  }
+
+  if (isEmptyArchiveRequest(request) || isRestoreArchiveRequest(request)) {
+    const mode = isRestoreArchiveRequest(request) ? "restore" : "moveToBin";
+    const actions = buildArchiveActions(context, mode, requestedKinds);
+    if (apply) {
+      for (const action of actions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: buildArchiveMessage(request, actions.length, apply, mode, requestedKinds),
+      actions,
+      applied: apply,
+      targetList: "archive",
+      data: apply ? await readAgentListContext() : context,
+    };
+  }
+
+  if (looksLikeMutationRequest(request) && requestedKinds.length !== 1 && !isArchiveRequest(request)) {
+    return {
+      message: buildAmbiguousListMessage(request),
+      actions: [],
+      applied: false,
+      targetList: "unknown",
       data: context,
     };
   }
@@ -825,7 +1010,10 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     prompt: request,
     context,
   });
-  const actions = enforceRequestedListKind(agentResponse.actions, request, today);
+  const actions = agentResponse.actions;
+  validateActionsForTarget(actions, agentResponse.targetList, "The agent");
+  validateActionsForRequestedKinds(actions, requestedKinds, "The agent");
+  enforceRequestedListKind(actions, request, agentResponse.targetList);
 
   if (apply && actions.length === 0 && looksLikeMutationRequest(request)) {
     throw new Error("The agent did not return any list changes to apply. Try the request again with a specific task, date, and list.");
@@ -849,6 +1037,8 @@ export async function applyAgentActions(input: unknown): Promise<AgentResult> {
   const actions = Array.isArray(input)
     ? input.map(coerceAction).filter((action): action is AgentAction => Boolean(action)).slice(0, 50)
     : [];
+  const targetList = inferTargetListFromActions(actions);
+  validateActionsForTarget(actions, targetList, "The proposed actions");
 
   if (actions.length === 0) {
     throw new Error("No valid agent actions to apply.");
@@ -862,6 +1052,7 @@ export async function applyAgentActions(input: unknown): Promise<AgentResult> {
     message: "Applied the proposed actions.",
     actions,
     applied: true,
+    targetList,
     data: await readAgentListContext(),
   };
 }

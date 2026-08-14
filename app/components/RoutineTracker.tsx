@@ -3,7 +3,14 @@
 import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
 import youIcon from "../YOU-transparent.png";
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 type RoutineMarkStatus = "success" | "failure";
@@ -377,6 +384,13 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     } finally {
       onSavingChange(false);
     }
+  }
+
+  function handleRoutineFormKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (isSaving || schemaMissing || !form.title.trim()) return;
+    void addRoutine();
   }
 
   function startEditing(routine: Routine) {
@@ -980,7 +994,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                 <input
                   value={form.title}
                   onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                  onKeyDown={(event) => event.key === "Enter" && addRoutine()}
+                  onKeyDown={handleRoutineFormKeyDown}
                   autoFocus
                   disabled={schemaMissing}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600 disabled:bg-stone-100"
@@ -992,6 +1006,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                 <textarea
                   value={form.memo}
                   onChange={(event) => setForm((current) => ({ ...current, memo: event.target.value }))}
+                  onKeyDown={handleRoutineFormKeyDown}
                   disabled={schemaMissing}
                   className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600 disabled:bg-stone-100"
                   placeholder="Optional note"
@@ -1004,6 +1019,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                     type="date"
                     value={form.startDate}
                     onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))}
+                    onKeyDown={handleRoutineFormKeyDown}
                     disabled={schemaMissing}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600 disabled:bg-stone-100"
                   />
@@ -1014,6 +1030,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                     type="date"
                     value={form.endDate}
                     onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))}
+                    onKeyDown={handleRoutineFormKeyDown}
                     disabled={schemaMissing}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600 disabled:bg-stone-100"
                   />
@@ -1152,6 +1169,12 @@ function RoutineCard({
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
   const memoRef = useRef<HTMLTextAreaElement | null>(null);
+  const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (isSaving || !editValue?.title.trim()) return;
+    onSaveEdit();
+  };
 
   useEffect(() => {
     const textarea = memoRef.current;
@@ -1169,6 +1192,7 @@ function RoutineCard({
             <input
               value={editValue.title}
               onChange={(event) => onEditChange({ ...editValue, title: event.target.value })}
+              onKeyDown={handleEditKeyDown}
               className="w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
               aria-label="Edit routine title"
             />
@@ -1184,6 +1208,7 @@ function RoutineCard({
                     type="date"
                     value={editValue.startDate}
                     onChange={(event) => onEditChange({ ...editValue, startDate: event.target.value })}
+                    onKeyDown={handleEditKeyDown}
                     className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                     aria-label="Edit routine start date"
                   />
@@ -1194,6 +1219,7 @@ function RoutineCard({
                     type="date"
                     value={editValue.endDate}
                     onChange={(event) => onEditChange({ ...editValue, endDate: event.target.value })}
+                    onKeyDown={handleEditKeyDown}
                     className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                     aria-label="Edit routine end date"
                   />
@@ -1212,6 +1238,7 @@ function RoutineCard({
                 ref={memoRef}
                 value={editValue.memo}
                 onChange={(event) => onEditChange({ ...editValue, memo: event.target.value })}
+                onKeyDown={handleEditKeyDown}
                 className="mt-2 min-h-24 w-full resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}

@@ -5,6 +5,7 @@ import bestIcon from "../BEST-transparent.png";
 import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -298,7 +299,7 @@ const UI_TEXT = {
   ko: {
     appName: "플랜트리",
     tagline: "삶을 설계하세요",
-    goalList: "장기목표",
+    goalList: "목표",
     goalShort: "목표",
     todoList: "단순 할일",
     todoShort: "할일",
@@ -1000,7 +1001,8 @@ export default function GoalTracker() {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentApplyChanges, setAgentApplyChanges] = useState(true);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
-  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(true);
+  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
+  const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListening, setIsAgentListening] = useState(false);
   const [isSpeechRecognitionAvailable, setIsSpeechRecognitionAvailable] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -1699,6 +1701,7 @@ export default function GoalTracker() {
     }
 
     setIsSaving(true);
+    setIsAgentRunning(true);
     setError("");
 
     try {
@@ -1722,6 +1725,7 @@ export default function GoalTracker() {
     } catch (agentError) {
       setError(agentError instanceof Error ? agentError.message : "Failed to run agent");
     } finally {
+      setIsAgentRunning(false);
       setIsSaving(false);
     }
   }
@@ -1835,10 +1839,29 @@ export default function GoalTracker() {
     await executeAgentPrompt(agentPrompt);
   }
 
+  function handleAgentPromptKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (isSaving || !agentPrompt.trim() || !canRunAgentRequest) return;
+    void submitAgentRequest();
+  }
+
+  function handleInputSaveKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+    action: () => void | Promise<void>,
+    disabled = false,
+  ) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (disabled) return;
+    void action();
+  }
+
   async function applyProposedAgentActions(messageId: string, response: AgentResponse) {
     if (response.applied || response.actions.length === 0) return;
 
     setIsSaving(true);
+    setIsAgentRunning(true);
     setError("");
 
     try {
@@ -1860,6 +1883,7 @@ export default function GoalTracker() {
     } catch (agentError) {
       setError(agentError instanceof Error ? agentError.message : "Failed to apply agent actions");
     } finally {
+      setIsAgentRunning(false);
       setIsSaving(false);
     }
   }
@@ -3056,13 +3080,47 @@ export default function GoalTracker() {
           >
             <div className="grid gap-2">
               <div className="flex min-w-0 items-center gap-2">
-                <h2 className="flex shrink-0 items-center gap-1.5 text-base font-semibold">
-                  <RobotIcon />
-                  {language === "ko" ? "AI 에이전트" : "AI Agent"}
+                <h2
+                  aria-live="polite"
+                  className={`flex shrink-0 items-center gap-1.5 text-base font-semibold ${
+                    isAgentRunning ? "text-emerald-700" : ""
+                  }`}
+                >
+                  <span className="relative grid h-4 w-4 place-items-center">
+                    <span className={isAgentRunning ? "animate-pulse" : ""}>
+                      <RobotIcon />
+                    </span>
+                    {isAgentRunning && (
+                      <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
+                    )}
+                  </span>
+                  <span className="whitespace-nowrap">
+                    {isAgentRunning
+                      ? language === "ko"
+                        ? "AI 에이전트 실행 중..."
+                        : "AI Agent running..."
+                      : language === "ko"
+                        ? "AI 에이전트"
+                        : "AI Agent"}
+                  </span>
                 </h2>
+                {!isAgentPanelExpanded && (
+                  <input
+                    type="text"
+                    value={agentPrompt}
+                    onChange={(event) => setAgentPrompt(event.target.value)}
+                    onKeyDown={handleAgentPromptKeyDown}
+                    disabled={isSaving}
+                    aria-label={language === "ko" ? "AI Agent 명령 입력" : "AI Agent command"}
+                    placeholder={language === "ko" ? "명령" : "Command"}
+                    className="h-8 w-24 min-w-0 flex-none truncate rounded-md border border-stone-300 px-2 text-sm outline-none focus:border-emerald-600 disabled:cursor-wait disabled:opacity-60 sm:w-40"
+                  />
+                )}
                 <div className="ml-auto flex min-w-0 items-center gap-2">
                   <span
-                    className={`w-fit max-w-[42vw] truncate whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold sm:max-w-none ${
+                    className={`w-fit truncate whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      isAgentPanelExpanded ? "max-w-[42vw] sm:max-w-none" : "max-w-20 sm:max-w-32 md:max-w-none"
+                    } ${
                       agentSettings.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
                     }`}
                   >
@@ -3195,6 +3253,7 @@ export default function GoalTracker() {
                   <textarea
                     value={agentPrompt}
                     onChange={(event) => setAgentPrompt(event.target.value)}
+                    onKeyDown={handleAgentPromptKeyDown}
                     rows={3}
                     placeholder={
                       language === "ko"
@@ -3310,6 +3369,7 @@ export default function GoalTracker() {
                   <input
                     value={agentSettingsModel}
                     onChange={(event) => setAgentSettingsModel(event.target.value)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, submitAgentSettings, isSaving || !agentSettingsModel.trim())}
                     placeholder="gpt-4o-mini"
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
@@ -3320,6 +3380,7 @@ export default function GoalTracker() {
                     type="password"
                     value={agentSettingsApiKey}
                     onChange={(event) => setAgentSettingsApiKey(event.target.value)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, submitAgentSettings, isSaving || !agentSettingsModel.trim())}
                     placeholder={language === "ko" ? "새 sk-... key를 추가" : "Add a new sk-... key"}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     autoComplete="off"
@@ -3433,6 +3494,7 @@ export default function GoalTracker() {
                   type="password"
                   value={accountDeletePassword}
                   onChange={(event) => setAccountDeletePassword(event.target.value)}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, submitAccountDeletion, isSaving || accountDeleteConfirm !== "DELETE")}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-red-500"
                   placeholder="Required for ID accounts"
                 />
@@ -3442,6 +3504,7 @@ export default function GoalTracker() {
                 <input
                   value={accountDeleteConfirm}
                   onChange={(event) => setAccountDeleteConfirm(event.target.value)}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, submitAccountDeletion, isSaving || accountDeleteConfirm !== "DELETE")}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-red-500"
                   placeholder="DELETE"
                 />
@@ -3680,6 +3743,13 @@ export default function GoalTracker() {
                               <textarea
                                 value={editingTodoTitle}
                                 onChange={(event) => setEditingTodoTitle(event.target.value)}
+                                onKeyDown={(event) =>
+                                  handleInputSaveKeyDown(
+                                    event,
+                                    () => saveTodoTitle(todo),
+                                    isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim(),
+                                  )
+                                }
                                 autoFocus
                                 rows={getTodoEditRows(editingTodoTitle)}
                                 className="w-full resize-none overflow-hidden rounded-md border border-stone-300 px-2 py-1 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
@@ -3691,6 +3761,13 @@ export default function GoalTracker() {
                                   type="date"
                                   value={editingTodoTargetDate}
                                   onChange={(event) => setEditingTodoTargetDate(event.target.value)}
+                                  onKeyDown={(event) =>
+                                    handleInputSaveKeyDown(
+                                      event,
+                                      () => saveTodoTitle(todo),
+                                      isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim(),
+                                    )
+                                  }
                                   className="h-6 rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                                   aria-label={`Edit target date for ${todo.title}`}
                                 />
@@ -3701,6 +3778,13 @@ export default function GoalTracker() {
                                 <input
                                   value={editingTodoCategory}
                                   onChange={(event) => setEditingTodoCategory(event.target.value)}
+                                  onKeyDown={(event) =>
+                                    handleInputSaveKeyDown(
+                                      event,
+                                      () => saveTodoTitle(todo),
+                                      isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim(),
+                                    )
+                                  }
                                   className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-normal text-stone-900 outline-none focus:border-emerald-600"
                                   aria-label={`Edit category for ${todo.title}`}
                                   placeholder={text.category}
@@ -3990,6 +4074,7 @@ export default function GoalTracker() {
                                 : { ...toGoalDraft(activeGoal), title: event.target.value },
                             )
                           }
+                          onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                           className="w-full rounded-md border border-stone-300 px-2 py-1 text-2xl font-semibold outline-none focus:border-emerald-600"
                         />
                       ) : (
@@ -4009,6 +4094,7 @@ export default function GoalTracker() {
                                     : { ...toGoalDraft(activeGoal), startDate: event.target.value },
                                 )
                               }
+                              onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                               className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                               aria-label="Edit goal start date"
                             />
@@ -4030,6 +4116,7 @@ export default function GoalTracker() {
                                     : { ...toGoalDraft(activeGoal), deadline: event.target.value },
                                 )
                               }
+                              onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                               className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                               aria-label="Edit goal deadline"
                             />
@@ -4045,16 +4132,17 @@ export default function GoalTracker() {
                     <div className="mt-5 grid gap-4">
                       <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
-                        <textarea
-                          ref={goalMemoTextareaRef}
-                          value={activeGoalDraft?.memo ?? ""}
-                          onChange={(event) =>
-                            setGoalDraft((draft) =>
+                          <textarea
+                            ref={goalMemoTextareaRef}
+                            value={activeGoalDraft?.memo ?? ""}
+                            onChange={(event) =>
+                              setGoalDraft((draft) =>
                               draft
                                 ? { ...draft, memo: event.target.value }
                                 : { ...toGoalDraft(activeGoal), memo: event.target.value },
                             )
                           }
+                          onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                           className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
@@ -4077,6 +4165,7 @@ export default function GoalTracker() {
                                   : { ...toGoalDraft(activeGoal), target: event.target.value },
                               )
                             }
+                            onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                             className="h-6 w-16 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
                             aria-label="Edit goal target"
                           />
@@ -4092,6 +4181,7 @@ export default function GoalTracker() {
                                   : { ...toGoalDraft(activeGoal), unit: event.target.value },
                               )
                             }
+                            onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                             className="h-6 w-20 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
                             aria-label="Edit goal unit"
                           />
@@ -4266,6 +4356,7 @@ export default function GoalTracker() {
                                         min={0}
                                         value={editEntryValue}
                                         onChange={(event) => setEditEntryValue(Number(event.target.value))}
+                                        onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
                                         className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                                       />
                                     </label>
@@ -4275,6 +4366,7 @@ export default function GoalTracker() {
                                         type="date"
                                         value={editEntryRecordedAt}
                                         onChange={(event) => setEditEntryRecordedAt(event.target.value)}
+                                        onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
                                         className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                                       />
                                     </label>
@@ -4284,6 +4376,7 @@ export default function GoalTracker() {
                                     <textarea
                                       value={editEntryMemo}
                                       onChange={(event) => setEditEntryMemo(event.target.value)}
+                                      onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
                                       className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                                     />
                                   </label>
@@ -4387,6 +4480,7 @@ export default function GoalTracker() {
                     min={0}
                     value={entryValue}
                     onChange={(event) => setEntryValue(Number(event.target.value))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
                     className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -4405,6 +4499,7 @@ export default function GoalTracker() {
                       type="date"
                       value={entryRecordedAt}
                       onChange={(event) => setEntryRecordedAt(event.target.value)}
+                      onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
                       className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     />
                     <button
@@ -4421,6 +4516,7 @@ export default function GoalTracker() {
                   <textarea
                     value={entryMemo}
                     onChange={(event) => setEntryMemo(event.target.value)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
                     className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     placeholder="What changed since the last record?"
                   />
@@ -4471,7 +4567,7 @@ export default function GoalTracker() {
                 <input
                   value={goalForm.title}
                   onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
-                  onKeyDown={(event) => event.key === "Enter" && addGoal()}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                   autoFocus
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Example: TOEIC 900"
@@ -4482,6 +4578,7 @@ export default function GoalTracker() {
                 <textarea
                   value={goalForm.memo}
                   onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                   className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Describe the final goal or why it matters."
                 />
@@ -4494,6 +4591,7 @@ export default function GoalTracker() {
                     min={1}
                     value={goalForm.target}
                     onChange={(event) => setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                     className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -4502,6 +4600,7 @@ export default function GoalTracker() {
                   <input
                     value={goalForm.unit}
                     onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                     className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -4513,6 +4612,7 @@ export default function GoalTracker() {
                     type="date"
                     value={goalForm.startDate}
                     onChange={(event) => setGoalForm((form) => ({ ...form, startDate: event.target.value }))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -4522,6 +4622,7 @@ export default function GoalTracker() {
                     type="date"
                     value={goalForm.deadline}
                     onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -4569,7 +4670,7 @@ export default function GoalTracker() {
                 <input
                   value={todoTitle}
                   onChange={(event) => setTodoTitle(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addTodoItem, isSaving || !todoTitle.trim() || !todoTargetDate.trim())}
                   autoFocus
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Write a task"
@@ -4581,7 +4682,7 @@ export default function GoalTracker() {
                   type="date"
                   value={todoTargetDate}
                   onChange={(event) => setTodoTargetDate(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addTodoItem, isSaving || !todoTitle.trim() || !todoTargetDate.trim())}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                 />
               </label>
@@ -4590,7 +4691,7 @@ export default function GoalTracker() {
                 <input
                   value={todoCategory}
                   onChange={(event) => setTodoCategory(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && addTodoItem()}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addTodoItem, isSaving || !todoTitle.trim() || !todoTargetDate.trim())}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder={text.category}
                 />
@@ -4948,6 +5049,12 @@ function LoginScreen({
   onSignup: () => void;
 }) {
   const primaryAction = mode === "login" ? onSubmit : onSignup;
+  const handleLoginKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (isSaving || !loginId.trim() || !password) return;
+    primaryAction();
+  };
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-2.5 text-stone-950">
@@ -4985,7 +5092,7 @@ function LoginScreen({
             <input
               value={loginId}
               onChange={(event) => onLoginIdChange(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && primaryAction()}
+              onKeyDown={handleLoginKeyDown}
               autoFocus
               autoCapitalize="none"
               autoComplete="username"
@@ -4999,7 +5106,7 @@ function LoginScreen({
               type="password"
               value={password}
               onChange={(event) => onPasswordChange(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && primaryAction()}
+              onKeyDown={handleLoginKeyDown}
               autoComplete={mode === "login" ? "current-password" : "new-password"}
               className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
               placeholder="At least 8 characters"
