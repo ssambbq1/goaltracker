@@ -1158,6 +1158,7 @@ export default function GoalTracker() {
   const agentVoiceFinalTranscript = useRef("");
   const agentVoiceFinalResults = useRef<Record<number, string>>({});
   const isAcceptingAgentVoiceResults = useRef(false);
+  const agentSpeechGeneration = useRef(0);
   const text = UI_TEXT[language];
   const canRunAgentRequest = agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt));
   const agentVoiceButtonTitle = isSpeechRecognitionAvailable
@@ -1746,10 +1747,12 @@ export default function GoalTracker() {
   async function speakAgentResponse(message: string) {
     if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
 
+    const speechGeneration = (agentSpeechGeneration.current += 1);
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(message);
     utterance.lang = language === "ko" ? "ko-KR" : "en-US";
     utterance.voice = selectAgentSpeechVoice(await waitForSpeechVoices(), language) ?? null;
+    if (speechGeneration !== agentSpeechGeneration.current) return;
     utterance.rate = language === "ko" ? 0.92 : 0.94;
     utterance.pitch = language === "ko" ? 1.02 : 1;
     utterance.volume = 1;
@@ -1762,6 +1765,7 @@ export default function GoalTracker() {
   }
 
   function stopAgentSpeech() {
+    agentSpeechGeneration.current += 1;
     window.speechSynthesis?.cancel();
   }
 
@@ -3219,7 +3223,7 @@ export default function GoalTracker() {
                   <input
                     type="text"
                     value={agentPrompt}
-                    onChange={(event) => setAgentPrompt(event.target.value)}
+                    onChange={(event) => updateAgentPromptInput(event.target.value)}
                     onKeyDown={handleAgentPromptKeyDown}
                     disabled={isSaving}
                     aria-label={language === "ko" ? "AI Agent 명령 입력" : "AI Agent command"}
@@ -3369,7 +3373,7 @@ export default function GoalTracker() {
                   )}
                   <textarea
                     value={agentPrompt}
-                    onChange={(event) => setAgentPrompt(event.target.value)}
+                    onChange={(event) => updateAgentPromptInput(event.target.value)}
                     onKeyDown={handleAgentPromptKeyDown}
                     rows={3}
                     placeholder={
