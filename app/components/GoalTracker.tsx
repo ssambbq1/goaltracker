@@ -435,6 +435,40 @@ function isLocalTaskQuery(prompt: string) {
   return mentionsTasks && asksToRead && !mutates;
 }
 
+function normalizeAgentSpeechTranscript(transcript: string) {
+  return transcript.replace(/\s+/g, " ").trim();
+}
+
+function appendAgentSpeechTranscript(baseTranscript: string, nextTranscript: string) {
+  const base = normalizeAgentSpeechTranscript(baseTranscript);
+  const next = normalizeAgentSpeechTranscript(nextTranscript);
+  if (!base) return next;
+  if (!next || base === next || base.endsWith(next)) return base;
+  if (next.startsWith(base)) return next;
+
+  const baseWords = base.split(" ");
+  const nextWords = next.split(" ");
+  const maxWordOverlap = Math.min(baseWords.length, nextWords.length);
+  for (let count = maxWordOverlap; count > 0; count -= 1) {
+    if (baseWords.slice(-count).join(" ") === nextWords.slice(0, count).join(" ")) {
+      return normalizeAgentSpeechTranscript(`${base} ${nextWords.slice(count).join(" ")}`);
+    }
+  }
+
+  const maxCharacterOverlap = Math.min(base.length, next.length);
+  for (let count = maxCharacterOverlap; count > 0; count -= 1) {
+    if (base.endsWith(next.slice(0, count))) {
+      return normalizeAgentSpeechTranscript(`${base}${next.slice(count)}`);
+    }
+  }
+
+  return normalizeAgentSpeechTranscript(`${base} ${next}`);
+}
+
+function mergeAgentSpeechTranscripts(transcripts: string[]) {
+  return transcripts.reduce((merged, transcript) => appendAgentSpeechTranscript(merged, transcript), "");
+}
+
 function scoreAgentSpeechVoice(voice: SpeechSynthesisVoice, targetLanguage: AppLanguage) {
   const name = voice.name.toLowerCase();
   const language = voice.lang.toLowerCase();
@@ -1795,10 +1829,9 @@ export default function GoalTracker() {
         .map(Number)
         .sort((left, right) => left - right)
         .map((index) => agentVoiceFinalResults.current[index])
-        .join(" ")
-        .trim();
+        .reduce((merged, transcript) => appendAgentSpeechTranscript(merged, transcript), "");
 
-      const visiblePrompt = `${agentVoiceFinalTranscript.current} ${interimTranscripts.join(" ")}`.trim();
+      const visiblePrompt = mergeAgentSpeechTranscripts([agentVoiceFinalTranscript.current, ...interimTranscripts]);
       if (!visiblePrompt) return;
 
       agentVoiceDraft.current = visiblePrompt;
