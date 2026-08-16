@@ -1085,6 +1085,7 @@ export default function GoalTracker() {
   const agentVoiceSilenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentVoiceDraft = useRef("");
   const agentVoiceFinalTranscript = useRef("");
+  const agentVoiceFinalResults = useRef<Record<number, string>>({});
   const isAcceptingAgentVoiceResults = useRef(false);
   const text = UI_TEXT[language];
   const canRunAgentRequest = agentSettings.hasApiKey || isLocalTaskQuery(agentPrompt);
@@ -1738,6 +1739,7 @@ export default function GoalTracker() {
       agentVoiceSilenceTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
+      agentVoiceFinalResults.current = {};
       isAcceptingAgentVoiceResults.current = false;
       agentSpeechRecognition.current?.stop();
       setIsAgentListening(false);
@@ -1751,6 +1753,7 @@ export default function GoalTracker() {
       agentVoiceSilenceTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
+      agentVoiceFinalResults.current = {};
       isAcceptingAgentVoiceResults.current = false;
       agentSpeechRecognition.current?.stop();
       setIsAgentListening(false);
@@ -1776,22 +1779,24 @@ export default function GoalTracker() {
     recognition.onresult = (event) => {
       if (!isAcceptingAgentVoiceResults.current) return;
 
-      const finalTranscripts: string[] = [];
       const interimTranscripts: string[] = [];
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
         const transcript = result[0]?.transcript.trim();
         if (!transcript) continue;
         if (result.isFinal) {
-          finalTranscripts.push(transcript);
+          agentVoiceFinalResults.current[index] = transcript;
         } else {
           interimTranscripts.push(transcript);
         }
       }
 
-      if (finalTranscripts.length) {
-        agentVoiceFinalTranscript.current = `${agentVoiceFinalTranscript.current} ${finalTranscripts.join(" ")}`.trim();
-      }
+      agentVoiceFinalTranscript.current = Object.keys(agentVoiceFinalResults.current)
+        .map(Number)
+        .sort((left, right) => left - right)
+        .map((index) => agentVoiceFinalResults.current[index])
+        .join(" ")
+        .trim();
 
       const visiblePrompt = `${agentVoiceFinalTranscript.current} ${interimTranscripts.join(" ")}`.trim();
       if (!visiblePrompt) return;
@@ -1805,6 +1810,7 @@ export default function GoalTracker() {
       agentVoiceSilenceTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
+      agentVoiceFinalResults.current = {};
       isAcceptingAgentVoiceResults.current = false;
       setError(
         language === "ko"
@@ -1822,6 +1828,7 @@ export default function GoalTracker() {
     agentSpeechRecognition.current = recognition;
     agentVoiceDraft.current = "";
     agentVoiceFinalTranscript.current = "";
+    agentVoiceFinalResults.current = {};
     isAcceptingAgentVoiceResults.current = true;
     setError("");
     setIsAgentListening(true);
