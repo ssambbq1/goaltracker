@@ -216,6 +216,59 @@ function firstIdField(record: Record<string, unknown>, fields: string[]) {
   return firstStringField(record, fields);
 }
 
+function normalizeFuzzyText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "");
+}
+
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitutionCost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        previous[rightIndex] + 1,
+        current[rightIndex - 1] + 1,
+        previous[rightIndex - 1] + substitutionCost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
+}
+
+function fuzzySimilarity(left: string, right: string) {
+  const normalizedLeft = normalizeFuzzyText(left);
+  const normalizedRight = normalizeFuzzyText(right);
+  if (!normalizedLeft || !normalizedRight) return 0;
+  if (normalizedLeft === normalizedRight) return 1;
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) return 0.9;
+
+  const distance = levenshteinDistance(normalizedLeft, normalizedRight);
+  return 1 - distance / Math.max(normalizedLeft.length, normalizedRight.length);
+}
+
+function findClosestItemId<T extends { id: string; title: string }>(items: T[], query: string, minimumScore = 0.45) {
+  const normalizedQuery = normalizeFuzzyText(query);
+  if (!normalizedQuery) return "";
+
+  const [best] = items
+    .map((item) => ({ item, score: fuzzySimilarity(query, item.title) }))
+    .sort((left, right) => right.score - left.score);
+
+  return best && best.score >= minimumScore ? best.item.id : "";
+}
+
 function normalizeActionType(type: string) {
   const normalized = type.trim().toLowerCase().replaceAll("-", "_");
   if (["add_task", "create_task", "new_task"].includes(normalized)) return "add_todo";
@@ -443,12 +496,12 @@ function coerceAction(value: unknown): AgentAction | null {
   }
 
   if (type === "delete_todo") {
-    const id = firstIdField(value, ["id", "todoId", "todo_id", "taskId", "task_id"]);
+    const id = firstIdField(value, ["id", "todoId", "todo_id", "taskId", "task_id", "title", "task", "name"]);
     return id ? { type, id } : null;
   }
 
   if (type === "archive_todo" || type === "restore_todo" || type === "permanently_delete_todo") {
-    const id = firstIdField(value, ["id", "todoId", "todo_id", "taskId", "task_id"]);
+    const id = firstIdField(value, ["id", "todoId", "todo_id", "taskId", "task_id", "title", "task", "name"]);
     return id ? { type, id } : null;
   }
 
@@ -485,12 +538,12 @@ function coerceAction(value: unknown): AgentAction | null {
   }
 
   if (type === "delete_goal") {
-    const id = firstIdField(value, ["id", "goalId", "goal_id"]);
+    const id = firstIdField(value, ["id", "goalId", "goal_id", "title", "goal", "name"]);
     return id ? { type, id } : null;
   }
 
   if (type === "archive_goal" || type === "restore_goal" || type === "permanently_delete_goal") {
-    const id = firstIdField(value, ["id", "goalId", "goal_id"]);
+    const id = firstIdField(value, ["id", "goalId", "goal_id", "title", "goal", "name"]);
     return id ? { type, id } : null;
   }
 
@@ -552,12 +605,12 @@ function coerceAction(value: unknown): AgentAction | null {
   }
 
   if (type === "delete_routine") {
-    const id = firstIdField(value, ["id", "routineId", "routine_id", "habitId", "habit_id"]);
+    const id = firstIdField(value, ["id", "routineId", "routine_id", "habitId", "habit_id", "title", "habit", "routine", "name"]);
     return id ? { type, id } : null;
   }
 
   if (type === "archive_routine" || type === "restore_routine" || type === "permanently_delete_routine") {
-    const id = firstIdField(value, ["id", "routineId", "routine_id", "habitId", "habit_id"]);
+    const id = firstIdField(value, ["id", "routineId", "routine_id", "habitId", "habit_id", "title", "habit", "routine", "name"]);
     return id ? { type, id } : null;
   }
 
@@ -642,6 +695,69 @@ function extractAddTitle(request: string) {
   return englishMatch?.[1]?.trim() ?? "";
 }
 
+function extractDeleteTitle(request: string) {
+  const text = request.trim();
+  const koreanListFirstMatch = text.match(
+    /(?:\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5)(?:\uC5D0\uC11C|\uC5D0)?\s*(.+?)(?:\uC744|\uB97C)?\s*(?:\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70)/,
+  );
+  if (koreanListFirstMatch?.[1]) return koreanListFirstMatch[1].trim();
+
+  const strippedKorean = text
+    .replace(/^(?:.*?)(?:\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5)(?:\uC5D0\uC11C|\uC5D0)?\s*/, "")
+    .replace(/\s*(?:\uC744|\uB97C)?\s*(?:\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70)(?:\uD574|\uD574\uC918|\uD574\s*\uC8FC\uC138\uC694|\uD574\uC904\uB798|\uD574\uB77C)?[.!?\s]*$/i, "")
+    .trim();
+  if (strippedKorean && strippedKorean !== text) return strippedKorean;
+
+  const koreanMatch = text.match(/^(.+?)(?:\uC744|\uB97C)?\s*(?:\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70)/);
+  if (koreanMatch?.[1]) return koreanMatch[1].trim();
+
+  const englishMatch = text.match(/(?:delete|remove)\s+(.+?)(?:\s+from\s+(?:tasks?|todos?))?\.?$/i);
+  return englishMatch?.[1]?.trim() ?? "";
+}
+
+function buildExplicitTodoDeleteAction(request: string, context: Awaited<ReturnType<typeof readAgentListContext>>): AgentAction[] {
+  if (!getRequestedListKinds(request).includes("todo")) return [];
+  const title = extractDeleteTitle(request);
+  if (!title) return [];
+
+  const id = findClosestItemId(context.todos, title, 0.25);
+  return id ? [{ type: "delete_todo", id }] : [];
+}
+
+function isTodoListOnlyClarification(request: string) {
+  const text = normalizeFuzzyText(request);
+  return text === normalizeFuzzyText("\uD560\uC77C\uC5D0") || text === normalizeFuzzyText("\uD560\uC77C\uC5D0\uC11C") || text === "todo" || text === "todos" || text === "tasks";
+}
+
+function buildClarifiedTodoDeleteAction(request: string, context: Awaited<ReturnType<typeof readAgentListContext>>): AgentAction[] {
+  const originalRequest = readClarificationSection(request, "Original request");
+  const clarificationAnswer = readClarificationSection(request, "Clarification answer");
+  const combinedCommand = readClarificationSection(request, "Combined command");
+  if (!originalRequest || !isTodoListOnlyClarification(clarificationAnswer || combinedCommand)) return [];
+
+  const title = extractDeleteTitle(originalRequest) || originalRequest.trim();
+  const id = findClosestItemId(context.todos, title, 0.25);
+  return id ? [{ type: "delete_todo", id }] : [];
+}
+
+function buildItemReferenceClarification(request: string, context: Awaited<ReturnType<typeof readAgentListContext>>) {
+  if (looksLikeMutationRequest(request) || getRequestedListKinds(request).length > 0) return null;
+  const todoId = findClosestItemId(context.todos, request, 0.45);
+  if (!todoId) return null;
+
+  return {
+    message: "\uD560\uC77C\uC5D0\uC11C \uC0AD\uC81C\uD560\uAE4C\uC694?",
+    actions: [],
+    applied: false,
+    targetList: "unknown" as const,
+    clarification: {
+      originalPrompt: request,
+      question: "\uD560\uC77C\uC5D0\uC11C \uC0AD\uC81C\uD560\uAE4C\uC694?",
+    },
+    data: context,
+  };
+}
+
 function buildClarifiedAddTodoAction(request: string): AgentAction[] {
   const originalRequest = readClarificationSection(request, "Original request");
   const clarificationAnswer = readClarificationSection(request, "Clarification answer");
@@ -650,6 +766,58 @@ function buildClarifiedAddTodoAction(request: string): AgentAction[] {
 
   const title = extractAddTitle(combinedCommand) || extractAddTitle(originalRequest);
   return title ? [{ type: "add_todo", title, targetDate: toLocalDateInputValue(), category: "" }] : [];
+}
+
+function resolveActionItemIds(
+  actions: AgentAction[],
+  context: Awaited<ReturnType<typeof readAgentListContext>>,
+  targetList: AgentTargetList = "unknown",
+) {
+  return actions.map((action) => {
+    if ("id" in action) {
+      if (action.type.endsWith("_todo")) {
+        const source =
+          action.type === "restore_todo" || targetList === "archive"
+            ? context.archive.todos
+            : action.type === "permanently_delete_todo" || targetList === "bin"
+              ? context.bin.todos
+              : context.todos;
+        const id = source.some((item) => item.id === action.id) ? action.id : findClosestItemId(source, action.id);
+        return id ? { ...action, id } : action;
+      }
+
+      if (action.type.endsWith("_goal")) {
+        const source =
+          action.type === "restore_goal" || targetList === "archive"
+            ? context.archive.goals
+            : action.type === "permanently_delete_goal" || targetList === "bin"
+              ? context.bin.goals
+              : context.goals;
+        const id = source.some((item) => item.id === action.id) ? action.id : findClosestItemId(source, action.id);
+        return id ? { ...action, id } : action;
+      }
+
+      if (action.type.endsWith("_routine")) {
+        const source =
+          action.type === "restore_routine" || targetList === "archive"
+            ? context.archive.routines
+            : action.type === "permanently_delete_routine" || targetList === "bin"
+              ? context.bin.routines
+              : context.routines;
+        const id = source.some((item) => item.id === action.id) ? action.id : findClosestItemId(source, action.id);
+        return id ? { ...action, id } : action;
+      }
+    }
+
+    if ("goalId" in action) {
+      const goalId = context.goals.some((goal) => goal.id === action.goalId)
+        ? action.goalId
+        : findClosestItemId(context.goals, action.goalId);
+      return goalId ? { ...action, goalId } : action;
+    }
+
+    return action;
+  });
 }
 
 function parseAgentResponse(content: string) {
@@ -782,6 +950,7 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
             "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
             "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
             "If required details are missing or uncertain, including the target list, the exact existing item, or whether the user wants tasks/goals/habits, set targetList to unknown, return no actions, and ask one concise clarification question in both message and clarificationQuestion. " +
+            "If the user names an existing item with a typo or near match, choose the closest existing item title from the provided lists and use its id instead of asking for clarification. " +
             "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
             "Allowed types: add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, " +
             "add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, " +
@@ -1033,6 +1202,40 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     };
   }
 
+  const explicitTodoDeleteActions = buildExplicitTodoDeleteAction(request, context);
+  if (explicitTodoDeleteActions.length > 0) {
+    if (apply) {
+      for (const action of explicitTodoDeleteActions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: apply ? "Deleted the task." : "I can delete the task.",
+      actions: explicitTodoDeleteActions,
+      applied: apply,
+      targetList: "todo",
+      data: apply ? await readAgentListContext() : context,
+    };
+  }
+
+  const clarifiedTodoDeleteActions = buildClarifiedTodoDeleteAction(request, context);
+  if (clarifiedTodoDeleteActions.length > 0) {
+    if (apply) {
+      for (const action of clarifiedTodoDeleteActions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: apply ? "Deleted the task." : "I can delete the task.",
+      actions: clarifiedTodoDeleteActions,
+      applied: apply,
+      targetList: "todo",
+      data: apply ? await readAgentListContext() : context,
+    };
+  }
+
   const clarifiedAddTodoActions = buildClarifiedAddTodoAction(request);
   if (clarifiedAddTodoActions.length > 0) {
     if (apply) {
@@ -1049,6 +1252,9 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
       data: apply ? await readAgentListContext() : context,
     };
   }
+
+  const itemReferenceClarification = buildItemReferenceClarification(request, context);
+  if (itemReferenceClarification) return itemReferenceClarification;
 
   if (looksLikeMutationRequest(request) && requestedKinds.length !== 1 && !isArchiveRequest(request)) {
     const question = buildAmbiguousListMessage(request);
@@ -1072,7 +1278,7 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     prompt: request,
     context,
   });
-  const actions = agentResponse.actions;
+  const actions = resolveActionItemIds(agentResponse.actions, context, agentResponse.targetList);
   validateActionsForTarget(actions, agentResponse.targetList, "The agent");
   validateActionsForRequestedKinds(actions, requestedKinds, "The agent");
   enforceRequestedListKind(actions, request, agentResponse.targetList);
@@ -1111,9 +1317,11 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
 }
 
 export async function applyAgentActions(input: unknown): Promise<AgentResult> {
-  const actions = Array.isArray(input)
+  const context = await readAgentListContext();
+  const coercedActions = Array.isArray(input)
     ? input.map(coerceAction).filter((action): action is AgentAction => Boolean(action)).slice(0, 50)
     : [];
+  const actions = resolveActionItemIds(coercedActions, context, inferTargetListFromActions(coercedActions));
   const targetList = inferTargetListFromActions(actions);
   validateActionsForTarget(actions, targetList, "The proposed actions");
 
