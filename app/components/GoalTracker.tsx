@@ -479,11 +479,30 @@ function buildClarifiedAgentPrompt(originalPrompt: string, question: string, ans
     `Original request: ${originalPrompt}`,
     `Clarification question: ${question}`,
     `Clarification answer: ${answer}`,
+    `Combined command: ${answer} ${originalPrompt}`,
   ].join("\n");
 }
 
 function isAgentClarificationCancel(prompt: string) {
   return /^(cancel|never mind|stop|취소|그만|아니|아니요|중지)$/i.test(prompt.trim());
+}
+
+function extendAgentClarificationHistory(originalPrompt: string, answer: string) {
+  return `${originalPrompt}\nAdditional clarification: ${answer}`;
+}
+
+function getAgentSpeechMessage(response: AgentResponse, language: AppLanguage) {
+  if (!response.clarification) return response.message;
+
+  return /tasks?|todos?|goals?|habits?|routines?|\uD560\s*\uC77C|\uBAA9\uD45C|\uC2B5\uAD00|\uB8E8\uD2F4/.test(
+    response.message,
+  )
+    ? language === "ko"
+      ? "어느 목록인가요?"
+      : "Which list?"
+    : language === "ko"
+      ? "조금 더 알려주세요."
+      : "Please clarify.";
 }
 
 function scoreAgentSpeechVoice(voice: SpeechSynthesisVoice, targetLanguage: AppLanguage) {
@@ -1742,9 +1761,19 @@ export default function GoalTracker() {
     return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  function stopAgentSpeech() {
+    window.speechSynthesis?.cancel();
+  }
+
+  function updateAgentPromptInput(value: string) {
+    stopAgentSpeech();
+    setAgentPrompt(value);
+  }
+
   async function executeAgentPrompt(prompt: string, options?: { speakResponse?: boolean }) {
     const request = prompt.trim();
     if (!request) return;
+    stopAgentSpeech();
     const clarification = pendingAgentClarification;
     if (clarification && isAgentClarificationCancel(request)) {
       setPendingAgentClarification(null);
@@ -1777,7 +1806,16 @@ export default function GoalTracker() {
         { id: createAgentChatMessageId(), role: "user", content: request },
         { id: createAgentChatMessageId(), role: "agent", response: result },
       ]);
-      setPendingAgentClarification(result.clarification ?? null);
+      setPendingAgentClarification(
+        result.clarification
+          ? {
+              originalPrompt: clarification
+                ? extendAgentClarificationHistory(clarification.originalPrompt, request)
+                : result.clarification.originalPrompt,
+              question: result.clarification.question,
+            }
+          : null,
+      );
       setGoals(result.data.goals);
       setTodos(result.data.todos);
       setRoutineReloadKey((key) => key + 1);
@@ -1787,7 +1825,7 @@ export default function GoalTracker() {
       if (result.applied) {
         await refreshArchiveBinData();
       }
-      if (options?.speakResponse) void speakAgentResponse(result.message);
+      if (options?.speakResponse) void speakAgentResponse(getAgentSpeechMessage(result, language));
     } catch (agentError) {
       setError(agentError instanceof Error ? agentError.message : "Failed to run agent");
     } finally {
@@ -1813,6 +1851,8 @@ export default function GoalTracker() {
   }
 
   function toggleAgentVoiceInput() {
+    stopAgentSpeech();
+
     if (isAgentListening) {
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
       agentVoiceSilenceTimer.current = null;

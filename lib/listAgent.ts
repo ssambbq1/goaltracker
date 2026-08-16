@@ -257,6 +257,10 @@ function normalizeActionDate(record: Record<string, unknown>, fields: string[]) 
 function getRequestedListKinds(request: string) {
   const text = request.toLowerCase();
   const kinds: ListKind[] = [];
+  if (/\b(tasks?|todos?|to-?dos?)\b|\uD560\s*\uC77C|\uB2E8\uC21C\s*\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5/.test(text)) kinds.push("todo");
+  if (/\b(habits?|routines?)\b|\uC2B5\uAD00|\uB8E8\uD2F4|\uBC18\uBCF5/.test(text)) kinds.push("routine");
+  if (/\bgoals?\b|\uBAA9\uD45C/.test(text)) kinds.push("goal");
+  if (kinds.length > 0) return [...new Set(kinds)];
   if (/\b(tasks?|todos?|to-?dos?)\b|할\s*일|단순\s*할\s*일|태스크|작업/.test(text)) kinds.push("todo");
   if (/\b(habits?|routines?)\b|습관|루틴|반복/.test(text)) kinds.push("routine");
   if (/\bgoals?\b|장기\s*목표|목표(?!일)|달성/.test(text)) kinds.push("goal");
@@ -417,8 +421,8 @@ function coerceAction(value: unknown): AgentAction | null {
 
   if (type === "add_todo") {
     const title = firstStringField(value, ["title", "task", "name"]);
-    const targetDate = normalizeActionDate(value, ["targetDate", "dueDate", "deadline", "date"]);
-    if (!title || !targetDate) return null;
+    const targetDate = normalizeActionDate(value, ["targetDate", "dueDate", "deadline", "date"]) || toLocalDateInputValue();
+    if (!title) return null;
     return { type, title, targetDate, category: asOptionalString(value.category) };
   }
 
@@ -561,6 +565,7 @@ function coerceAction(value: unknown): AgentAction | null {
 }
 
 function looksLikeMutationRequest(request: string) {
+  if (/add|create|update|edit|delete|remove|complete|archive|restore|execute|\uCD94\uAC00|\uB9CC\uB4E4|\uC0DD\uC131|\uC218\uC815|\uBCC0\uACBD|\uBC14\uAFFF|\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70|\uC644\uB8CC|\uBCF4\uAD00|\uBCF5\uC6D0|\uAE30\uB85D|\uC2E4\uD589/i.test(request)) return true;
   return /add|create|update|edit|delete|remove|complete|archive|restore|추가|만들|수정|변경|바꿔|삭제|지워|제거|완료|보관|복원|기록/i.test(request);
 }
 
@@ -616,6 +621,35 @@ function buildAmbiguousListMessage(request: string) {
   return isKorean
     ? "이 요청이 할일, 목표, 습관 중 어느 리스트에 대한 작업인지 명확하지 않습니다. 예: '할일에 추가', '목표에 추가', '습관에 추가'처럼 리스트를 지정해 주세요."
     : "I cannot tell whether this should change tasks, goals, or habits. Please specify the list, such as tasks, goals, or habits.";
+}
+
+function readClarificationSection(request: string, label: string) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const nextLabel = "(?:Original request|Clarification question|Clarification answer|Combined command|Additional clarification)";
+  const match = request.match(new RegExp(`${escapedLabel}:\\s*([\\s\\S]*?)(?=\\n${nextLabel}:|$)`, "i"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function extractAddTitle(request: string) {
+  const text = request.trim();
+  const koreanListFirstMatch = text.match(/(?:\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5)\uC5D0\s+(.+?)(?:\uC744|\uB97C)?\s*(?:\uCD94\uAC00|\uB9CC\uB4E4|\uC0DD\uC131)/);
+  if (koreanListFirstMatch?.[1]) return koreanListFirstMatch[1].trim();
+
+  const koreanMatch = text.match(/^(.+?)(?:\uC744|\uB97C)?\s*(?:\uCD94\uAC00|\uB9CC\uB4E4|\uC0DD\uC131)/);
+  if (koreanMatch?.[1]) return koreanMatch[1].trim();
+
+  const englishMatch = text.match(/(?:add|create|make)\s+(.+?)(?:\s+(?:to|as|in)\s+(?:tasks?|todos?|goals?|habits?|routines?))?\.?$/i);
+  return englishMatch?.[1]?.trim() ?? "";
+}
+
+function buildClarifiedAddTodoAction(request: string): AgentAction[] {
+  const originalRequest = readClarificationSection(request, "Original request");
+  const clarificationAnswer = readClarificationSection(request, "Clarification answer");
+  const combinedCommand = readClarificationSection(request, "Combined command");
+  if (!originalRequest || getRequestedListKind(clarificationAnswer || combinedCommand) !== "todo" || !looksLikeMutationRequest(originalRequest)) return [];
+
+  const title = extractAddTitle(combinedCommand) || extractAddTitle(originalRequest);
+  return title ? [{ type: "add_todo", title, targetDate: toLocalDateInputValue(), category: "" }] : [];
 }
 
 function parseAgentResponse(content: string) {
@@ -747,13 +781,13 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
             "You manage a personal planning app. Return only JSON with keys targetList, message, actions, and optionally clarificationQuestion. " +
             "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
             "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
-            "If required details are missing or uncertain, including the target list, the exact existing item, the requested date, or whether the user wants tasks/goals/habits, set targetList to unknown, return no actions, and ask one concise clarification question in both message and clarificationQuestion. " +
+            "If required details are missing or uncertain, including the target list, the exact existing item, or whether the user wants tasks/goals/habits, set targetList to unknown, return no actions, and ask one concise clarification question in both message and clarificationQuestion. " +
             "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
             "Allowed types: add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, " +
             "add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, " +
             "add_goal_entry, update_goal_entry, delete_goal_entry, " +
             "add_routine, update_routine, delete_routine, archive_routine, restore_routine, permanently_delete_routine. " +
-            "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. " +
+            "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. If the user did not specify a date for a new task/todo, use today's date. " +
             "For adding a new item to the Goals list, always use add_goal with title/memo/target/unit/deadline; never use add_goal_entry for that. " +
             "Use add_goal_entry, update_goal_entry, or delete_goal_entry only when the user explicitly asks to add/update/delete a progress record, record, entry, log, value, amount, 기록, 진행, 진척, 달성량, 실적, 수치, or 값 for an existing goal. " +
             "If the user says 목표에 ... 추가, 목표 목록에 ... 추가, add ... to goals, or add a goal, this means add_goal unless progress record wording is explicit. " +
@@ -999,6 +1033,23 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     };
   }
 
+  const clarifiedAddTodoActions = buildClarifiedAddTodoAction(request);
+  if (clarifiedAddTodoActions.length > 0) {
+    if (apply) {
+      for (const action of clarifiedAddTodoActions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: apply ? "Added the task." : "I can add the task.",
+      actions: clarifiedAddTodoActions,
+      applied: apply,
+      targetList: "todo",
+      data: apply ? await readAgentListContext() : context,
+    };
+  }
+
   if (looksLikeMutationRequest(request) && requestedKinds.length !== 1 && !isArchiveRequest(request)) {
     const question = buildAmbiguousListMessage(request);
     return {
@@ -1028,7 +1079,7 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
 
   const clarificationQuestion =
     agentResponse.clarificationQuestion ||
-    (agentResponse.targetList === "unknown" && actions.length === 0 && looksLikeMutationRequest(request)
+    (actions.length === 0 && looksLikeMutationRequest(request)
       ? agentResponse.message
       : undefined);
   if (clarificationQuestion) {
@@ -1043,10 +1094,6 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
       },
       data: context,
     };
-  }
-
-  if (apply && actions.length === 0 && looksLikeMutationRequest(request)) {
-    throw new Error("The agent did not return any list changes to apply. Try the request again with a specific task, date, and list.");
   }
 
   if (apply) {
