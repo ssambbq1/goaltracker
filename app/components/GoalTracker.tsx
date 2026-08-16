@@ -114,6 +114,10 @@ type AgentResponse = {
   message: string;
   actions: AgentAction[];
   applied: boolean;
+  clarification?: {
+    originalPrompt: string;
+    question: string;
+  };
   data: {
     goals: Goal[];
     todos: Todo[];
@@ -467,6 +471,19 @@ function appendAgentSpeechTranscript(baseTranscript: string, nextTranscript: str
 
 function mergeAgentSpeechTranscripts(transcripts: string[]) {
   return transcripts.reduce((merged, transcript) => appendAgentSpeechTranscript(merged, transcript), "");
+}
+
+function buildClarifiedAgentPrompt(originalPrompt: string, question: string, answer: string) {
+  return [
+    "The user is clarifying an earlier agent request. Combine the original request and the clarification answer, then execute the combined intent.",
+    `Original request: ${originalPrompt}`,
+    `Clarification question: ${question}`,
+    `Clarification answer: ${answer}`,
+  ].join("\n");
+}
+
+function isAgentClarificationCancel(prompt: string) {
+  return /^(cancel|never mind|stop|취소|그만|아니|아니요|중지)$/i.test(prompt.trim());
 }
 
 function scoreAgentSpeechVoice(voice: SpeechSynthesisVoice, targetLanguage: AppLanguage) {
@@ -1035,6 +1052,7 @@ export default function GoalTracker() {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentApplyChanges, setAgentApplyChanges] = useState(true);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
+  const [pendingAgentClarification, setPendingAgentClarification] = useState<AgentResponse["clarification"] | null>(null);
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListening, setIsAgentListening] = useState(false);
@@ -1122,7 +1140,7 @@ export default function GoalTracker() {
   const agentVoiceFinalResults = useRef<Record<number, string>>({});
   const isAcceptingAgentVoiceResults = useRef(false);
   const text = UI_TEXT[language];
-  const canRunAgentRequest = agentSettings.hasApiKey || isLocalTaskQuery(agentPrompt);
+  const canRunAgentRequest = agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt));
   const agentVoiceButtonTitle = isSpeechRecognitionAvailable
     ? isAgentListening
       ? language === "ko"
@@ -1462,6 +1480,7 @@ export default function GoalTracker() {
     setAgentPrompt("");
     setAgentApplyChanges(true);
     setAgentChatMessages([]);
+    setPendingAgentClarification(null);
     setActiveGoalId(null);
     setCurrentView("list");
     setIsEditingGoal(false);
@@ -1726,7 +1745,18 @@ export default function GoalTracker() {
   async function executeAgentPrompt(prompt: string, options?: { speakResponse?: boolean }) {
     const request = prompt.trim();
     if (!request) return;
-    if (!agentSettings.hasApiKey && !isLocalTaskQuery(request)) {
+    const clarification = pendingAgentClarification;
+    if (clarification && isAgentClarificationCancel(request)) {
+      setPendingAgentClarification(null);
+      setAgentPrompt("");
+      setError("");
+      return;
+    }
+
+    const agentRequest = clarification
+      ? buildClarifiedAgentPrompt(clarification.originalPrompt, clarification.question, request)
+      : request;
+    if (!agentSettings.hasApiKey && !isLocalTaskQuery(agentRequest)) {
       setError(
         language === "ko"
           ? "Agent를 실행하려면 Settings에서 API key를 저장해야 합니다."
@@ -1740,13 +1770,14 @@ export default function GoalTracker() {
     setError("");
 
     try {
-      const result = await runAgentRequest(request, agentApplyChanges);
+      const result = await runAgentRequest(agentRequest, agentApplyChanges);
       setAgentPrompt("");
       setAgentChatMessages((messages) => [
         ...messages,
         { id: createAgentChatMessageId(), role: "user", content: request },
         { id: createAgentChatMessageId(), role: "agent", response: result },
       ]);
+      setPendingAgentClarification(result.clarification ?? null);
       setGoals(result.data.goals);
       setTodos(result.data.todos);
       setRoutineReloadKey((key) => key + 1);
@@ -3290,15 +3321,25 @@ export default function GoalTracker() {
                   </div>
                 )}
                 <div className="grid min-w-0 gap-2">
+                  {pendingAgentClarification && (
+                    <div className="grid gap-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      <div className="font-semibold">{language === "ko" ? "Agent 확인 질문" : "Agent clarification"}</div>
+                      <p className="whitespace-pre-wrap break-words">{pendingAgentClarification.question}</p>
+                    </div>
+                  )}
                   <textarea
                     value={agentPrompt}
                     onChange={(event) => setAgentPrompt(event.target.value)}
                     onKeyDown={handleAgentPromptKeyDown}
                     rows={3}
                     placeholder={
-                      language === "ko"
-                        ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
-                        : "Example: Review this week's tasks and reschedule overdue items."
+                      pendingAgentClarification
+                        ? language === "ko"
+                          ? "Agent 질문에 대한 답변을 입력하세요. 취소하려면 '취소'라고 입력하세요."
+                          : "Answer the agent's question. Type 'cancel' to clear it."
+                        : language === "ko"
+                          ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
+                          : "Example: Review this week's tasks and reschedule overdue items."
                     }
                     className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
                   />
@@ -3323,6 +3364,10 @@ export default function GoalTracker() {
                       ? language === "ko"
                         ? "실행 중..."
                         : "Running..."
+                      : pendingAgentClarification
+                        ? language === "ko"
+                          ? "답변 보내기"
+                          : "Send answer"
                       : agentApplyChanges
                         ? language === "ko"
                           ? "Agent 실행"

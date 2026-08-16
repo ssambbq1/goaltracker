@@ -67,6 +67,10 @@ export type AgentResult = {
   actions: AgentAction[];
   applied: boolean;
   targetList: AgentTargetList;
+  clarification?: {
+    originalPrompt: string;
+    question: string;
+  };
   data: Awaited<ReturnType<typeof readAgentListContext>>;
 };
 
@@ -629,6 +633,7 @@ function parseAgentResponse(content: string) {
     message: asString(parsed.message) || "I reviewed your lists.",
     actions,
     targetList,
+    clarificationQuestion: asOptionalString(parsed.clarificationQuestion),
   };
 }
 
@@ -739,9 +744,10 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
         {
           role: "system",
           content:
-            "You manage a personal planning app. Return only JSON with keys targetList, message, and actions. " +
+            "You manage a personal planning app. Return only JSON with keys targetList, message, actions, and optionally clarificationQuestion. " +
             "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
             "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
+            "If required details are missing or uncertain, including the target list, the exact existing item, the requested date, or whether the user wants tasks/goals/habits, set targetList to unknown, return no actions, and ask one concise clarification question in both message and clarificationQuestion. " +
             "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
             "Allowed types: add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, " +
             "add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, " +
@@ -994,11 +1000,16 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
   }
 
   if (looksLikeMutationRequest(request) && requestedKinds.length !== 1 && !isArchiveRequest(request)) {
+    const question = buildAmbiguousListMessage(request);
     return {
-      message: buildAmbiguousListMessage(request),
+      message: question,
       actions: [],
       applied: false,
       targetList: "unknown",
+      clarification: {
+        originalPrompt: request,
+        question,
+      },
       data: context,
     };
   }
@@ -1014,6 +1025,25 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
   validateActionsForTarget(actions, agentResponse.targetList, "The agent");
   validateActionsForRequestedKinds(actions, requestedKinds, "The agent");
   enforceRequestedListKind(actions, request, agentResponse.targetList);
+
+  const clarificationQuestion =
+    agentResponse.clarificationQuestion ||
+    (agentResponse.targetList === "unknown" && actions.length === 0 && looksLikeMutationRequest(request)
+      ? agentResponse.message
+      : undefined);
+  if (clarificationQuestion) {
+    return {
+      message: clarificationQuestion,
+      actions: [],
+      applied: false,
+      targetList: "unknown",
+      clarification: {
+        originalPrompt: request,
+        question: clarificationQuestion,
+      },
+      data: context,
+    };
+  }
 
   if (apply && actions.length === 0 && looksLikeMutationRequest(request)) {
     throw new Error("The agent did not return any list changes to apply. Try the request again with a specific task, date, and list.");
