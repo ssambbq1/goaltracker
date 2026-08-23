@@ -539,6 +539,15 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     dragImageClone.current.style.top = `${clientY - offsetY}px`;
   }
 
+  function getRoutineReorderTargetId(clientX: number, clientY: number, draggedId: string) {
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const targetCard = element.closest<HTMLElement>('[data-reorder-kind="routine"]');
+      const targetId = targetCard?.dataset.reorderId;
+      if (targetId && targetId !== draggedId) return targetId;
+    }
+    return null;
+  }
+
   function lockListReorderScroll() {
     if (listReorderScrollLock.current) return;
     const body = document.body;
@@ -670,11 +679,8 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       pointerEvent.preventDefault();
       moveFloatingDragCard(pointerEvent.clientX, pointerEvent.clientY, dragOffset.offsetX, dragOffset.offsetY);
 
-      const targetCard = document
-        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
-        ?.closest<HTMLElement>('[data-reorder-kind="routine"]');
-      const targetRoutineId = targetCard?.dataset.reorderId;
-      if (!targetRoutineId || targetRoutineId === routineId) return;
+      const targetRoutineId = getRoutineReorderTargetId(pointerEvent.clientX, pointerEvent.clientY, routineId);
+      if (!targetRoutineId) return;
 
       setRoutineDropTargetId(targetRoutineId);
       setRoutines((currentRoutines) => {
@@ -1058,7 +1064,7 @@ function RoutineListItem({
           : isDropTarget
             ? "border-emerald-500 bg-white shadow-sm"
             : isDragging
-              ? "border-stone-400 bg-white opacity-90 shadow-sm"
+              ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
               : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
       } ${isDragging ? "pt-9" : ""}`}
     >

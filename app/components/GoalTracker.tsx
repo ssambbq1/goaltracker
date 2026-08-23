@@ -2288,6 +2288,16 @@ export default function GoalTracker() {
     dragImageClone.current.style.top = `${clientY - offsetY}px`;
   }
 
+  function getListReorderTargetId(clientX: number, clientY: number, kind: "goal" | "todo", draggedId: string) {
+    const selector = `[data-reorder-kind="${kind}"]`;
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const targetCard = element.closest<HTMLElement>(selector);
+      const targetId = targetCard?.dataset.reorderId;
+      if (targetId && targetId !== draggedId) return targetId;
+    }
+    return null;
+  }
+
   function lockListReorderScroll() {
     if (listReorderScrollLock.current) return;
     const body = document.body;
@@ -2656,11 +2666,8 @@ export default function GoalTracker() {
       pointerEvent.preventDefault();
       moveFloatingDragCard(pointerEvent.clientX, pointerEvent.clientY, dragOffset.offsetX, dragOffset.offsetY);
 
-      const targetCard = document
-        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
-        ?.closest<HTMLElement>('[data-reorder-kind="goal"]');
-      const targetGoalId = targetCard?.dataset.reorderId;
-      if (!targetGoalId || targetGoalId === goalId) return;
+      const targetGoalId = getListReorderTargetId(pointerEvent.clientX, pointerEvent.clientY, "goal", goalId);
+      if (!targetGoalId) return;
 
       setGoalDropTargetId(targetGoalId);
       setGoals((currentGoals) => {
@@ -2819,11 +2826,8 @@ export default function GoalTracker() {
       pointerEvent.preventDefault();
       moveFloatingDragCard(pointerEvent.clientX, pointerEvent.clientY, dragOffset.offsetX, dragOffset.offsetY);
 
-      const targetCard = document
-        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
-        ?.closest<HTMLElement>('[data-reorder-kind="todo"]');
-      const targetTodoId = targetCard?.dataset.reorderId;
-      if (!targetTodoId || targetTodoId === todoId) return;
+      const targetTodoId = getListReorderTargetId(pointerEvent.clientX, pointerEvent.clientY, "todo", todoId);
+      if (!targetTodoId) return;
 
       setTodoDropTargetId(targetTodoId);
       setTodos((currentTodos) => {
@@ -4221,7 +4225,7 @@ export default function GoalTracker() {
                               : goalDropTargetId === goal.id && draggingGoalId !== goal.id
                                 ? "border-emerald-500 bg-white shadow-sm"
                               : draggingGoalId === goal.id
-                                  ? "border-stone-400 bg-white opacity-90 shadow-sm"
+                                  ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
                               : "border-stone-200 bg-white hover:border-stone-400"
                           } ${draggingGoalId === goal.id ? "pt-9" : ""}`}
                         >
@@ -4357,7 +4361,7 @@ export default function GoalTracker() {
                             : todoDropTargetId === todo.id && draggingTodoId !== todo.id
                               ? "border-emerald-500 bg-white shadow-sm"
                             : draggingTodoId === todo.id
-                                ? "border-stone-400 bg-white opacity-90 shadow-sm"
+                                ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
                               : "border-stone-200 bg-white"
                         } ${draggingTodoId === todo.id ? "pt-9" : ""}`}
                       >
