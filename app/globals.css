@@ -31,6 +31,13 @@ html {
   text-size-adjust: 100%;
 }
 
+[data-reorder-card],
+[data-reorder-card] * {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 @media (max-width: 640px) {
   html.pwa-standalone {
     font-size: 18px;

@@ -4213,6 +4213,7 @@ export default function GoalTracker() {
                           onPointerCancel={(event) =>
                             endListReorderLongPress(event, goalReorderLongPressState, goalReorderLongPressTimer)
                           }
+                          onDragStart={(event) => event.preventDefault()}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -4353,6 +4354,7 @@ export default function GoalTracker() {
                         onPointerCancel={(event) =>
                           endListReorderLongPress(event, todoReorderLongPressState, todoReorderLongPressTimer)
                         }
+                        onDragStart={(event) => event.preventDefault()}
                         className={`relative grid overflow-hidden ${
                           isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto]"
                         } items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
