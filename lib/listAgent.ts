@@ -376,7 +376,13 @@ function isArchiveTargetAction(action: AgentAction) {
     action.type === "archive_routine" ||
     action.type === "restore_todo" ||
     action.type === "restore_goal" ||
-    action.type === "restore_routine" ||
+    action.type === "restore_routine"
+  );
+}
+
+function isArchiveScopedAction(action: AgentAction) {
+  return (
+    isArchiveTargetAction(action) ||
     action.type === "delete_todo" ||
     action.type === "delete_goal" ||
     action.type === "delete_routine"
@@ -389,6 +395,15 @@ function inferTargetListFromActions(actions: AgentAction[]): AgentTargetList {
   const kinds = new Set(actions.map(actionListKind));
   if (kinds.size !== 1) return "unknown";
   return [...kinds][0];
+}
+
+function usesBinScope(request: string) {
+  return /\b(bin|trash|deleted items?)\b|\uD734\uC9C0\uD1B5/.test(request.toLowerCase());
+}
+
+function sanitizeActionsForRequest(actions: AgentAction[], request: string) {
+  if (usesBinScope(request)) return actions;
+  return actions.filter((action) => !isPermanentDeleteAction(action));
 }
 
 function validateActionsForTarget(actions: AgentAction[], targetList: AgentTargetList, source: string) {
@@ -408,7 +423,7 @@ function validateActionsForTarget(actions: AgentAction[], targetList: AgentTarge
   }
 
   if (targetList === "archive") {
-    const invalidAction = actions.find((action) => !isArchiveTargetAction(action));
+    const invalidAction = actions.find((action) => !isArchiveScopedAction(action));
     if (invalidAction) {
       throw new Error(`${source} targeted the archive, but returned ${invalidAction.type}. Only archive, restore, or move-to-bin actions are allowed for archive work.`);
     }
@@ -669,6 +684,39 @@ function buildArchiveMessage(request: string, count: number, applied: boolean, m
   return isKorean ? `저장소의 ${scope} ${count}개를 휴지통으로 이동할 수 있습니다.` : `I can move ${count} matching archived ${scope} to the bin.`;
 }
 
+function shouldApplyActionsImmediately(apply: boolean, actions: AgentAction[]) {
+  return apply && actions.length > 0;
+}
+
+function buildMultiActionReviewMessage(request: string, actionCount: number) {
+  return /[\u3131-\uD79D]/.test(request)
+    ? `${actionCount}개 변경을 찾았습니다. 제안된 작업을 확인한 뒤 제안 실행을 눌러 적용하세요.`
+    : `I found ${actionCount} changes. Review the proposed actions, then press Apply actions to run them.`;
+}
+
+function buildAppliedActionsMessage(request: string, actionCount: number) {
+  return /[\u3131-\uD79D]/.test(request)
+    ? `${actionCount}개 변경을 적용했습니다.`
+    : `Applied ${actionCount} change${actionCount === 1 ? "" : "s"}.`;
+}
+
+function looksLikeAlreadySatisfiedAgentMessage(message: string) {
+  return /already|done|completed|no\s+changes?|up[-\s]?to[-\s]?date|nothing\s+to\s+(?:do|change)|이미|완료|되어\s*있|변경할?\s*(?:내용|사항)?\s*없/i.test(
+    message,
+  );
+}
+
+function buildFreshRunRetryPrompt(request: string) {
+  return [
+    request,
+    "",
+    "Important: Re-evaluate this as a fresh command against the current provided lists.",
+    "The user may have manually changed the database after a previous agent run.",
+    "If the current list state still needs the requested change, return the required actions.",
+    "Do not answer that it was already done because of any prior execution.",
+  ].join("\n");
+}
+
 function buildAmbiguousListMessage(request: string) {
   const isKorean = /[\u3131-\uD79D]/.test(request);
   return isKorean
@@ -711,17 +759,28 @@ function extractDeleteTitle(request: string) {
   const koreanMatch = text.match(/^(.+?)(?:\uC744|\uB97C)?\s*(?:\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70)/);
   if (koreanMatch?.[1]) return koreanMatch[1].trim();
 
-  const englishMatch = text.match(/(?:delete|remove)\s+(.+?)(?:\s+from\s+(?:tasks?|todos?))?\.?$/i);
+  const englishMatch = text.match(/(?:delete|remove)\s+(.+?)(?:\s+from\s+(?:tasks?|todos?|goals?|habits?|routines?))?\.?$/i);
   return englishMatch?.[1]?.trim() ?? "";
 }
 
-function buildExplicitTodoDeleteAction(request: string, context: Awaited<ReturnType<typeof readAgentListContext>>): AgentAction[] {
-  if (!getRequestedListKinds(request).includes("todo")) return [];
+function buildExplicitDeleteAction(request: string, context: Awaited<ReturnType<typeof readAgentListContext>>): AgentAction[] {
+  const requestedKind = getRequestedListKind(request);
+  if (!requestedKind || !/\b(delete|remove)\b|\uC0AD\uC81C|\uC9C0\uC6CC|\uC81C\uAC70/.test(request)) return [];
   const title = extractDeleteTitle(request);
   if (!title) return [];
 
-  const id = findClosestItemId(context.todos, title, 0.25);
-  return id ? [{ type: "delete_todo", id }] : [];
+  if (requestedKind === "todo") {
+    const id = findClosestItemId(context.todos, title, 0.25);
+    return id ? [{ type: "delete_todo", id }] : [];
+  }
+
+  if (requestedKind === "goal") {
+    const id = findClosestItemId(context.goals, title, 0.25);
+    return id ? [{ type: "delete_goal", id }] : [];
+  }
+
+  const id = findClosestItemId(context.routines, title, 0.25);
+  return id ? [{ type: "delete_routine", id }] : [];
 }
 
 function isTodoListOnlyClarification(request: string) {
@@ -947,8 +1006,13 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
           role: "system",
           content:
             "You manage a personal planning app. Return only JSON with keys targetList, message, actions, and optionally clarificationQuestion. " +
+            "Treat every request as a fresh independent command. Do not assume a previous agent run is still valid, and do not refuse because something was done earlier. " +
+            "The user may have manually changed the database after your last run; the provided lists are the only source of truth. If the current lists show that the requested change is needed, return the action even if the same request may have been executed before. " +
+            "Only return no actions for an already-satisfied request when the current provided lists already match the requested final state. " +
             "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
             "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
+            "For multi-step requests, decompose the request into one action per concrete change, mention that the user should review the proposed actions before applying them, and never claim changes were applied unless the app reports applied true. " +
+            "If a request combines independent changes that could be misunderstood, prefer asking one clarification question over guessing. " +
             "If required details are missing or uncertain, including the target list, the exact existing item, or whether the user wants tasks/goals/habits, set targetList to unknown, return no actions, and ask one concise clarification question in both message and clarificationQuestion. " +
             "If the user names an existing item with a typo or near match, choose the closest existing item title from the provided lists and use its id instead of asking for clarification. " +
             "In the user-facing message, refer to items by their titles or names, not by ids or item numbers. " +
@@ -967,6 +1031,8 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
             "If the user asks about archive/storage/saved items/저장소/보관함/아카이브, targetList must be archive. For a single named archived item, use only that item's id. For archived items, use restore_todo/restore_goal/restore_routine to restore them, or delete_todo/delete_goal/delete_routine to move them from archive to bin. Only affect every archived item when the user explicitly says all/every/entire/모두/전체/전부/다 or asks to empty/clear the archive. " +
             "When the user asks to restore/delete/empty all archive or bin items and also names a category such as tasks/todos/할일, goals/목표, or habits/routines/습관/루틴, only return actions for that named category. Do not affect other categories. " +
             "If the user asks to empty/clear/purge the bin/trash or 휴지통, targetList must be bin and actions must only be permanently_delete_todo, permanently_delete_goal, or permanently_delete_routine for matching items already in bin. " +
+            "Ordinary delete/remove/delete habits/delete tasks/delete goals requests affect only active list items and must use delete_todo, delete_goal, or delete_routine. Do not include permanently_delete_* unless the user explicitly says bin/trash/휴지통. " +
+            "Never mix active-list delete_* actions with bin permanently_delete_* actions in one response. " +
             "Do not create a goal when the request says task/tasks/todo/todos/할일. Do not create a task when the request says goal/goals/목표. " +
             "For ordinary delete/remove requests, use delete_todo, delete_goal, or delete_routine to move items to bin. " +
             "You may use id, todoId, goalId, routineId, taskId, or habitId fields, but ids must come from the provided lists. " +
@@ -980,6 +1046,9 @@ async function callOpenAiCompatibleChat(input: { apiKey: string; model: string; 
           role: "user",
           content: JSON.stringify({
             today: new Date().toISOString().slice(0, 10),
+            currentListsReadAt: new Date().toISOString(),
+            executionPolicy:
+              "Fresh independent request. Ignore any prior agent execution. Use only these current lists to decide whether actions are needed.",
             request: input.prompt,
             lists: input.context,
           }),
@@ -1169,87 +1238,99 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
 
   if (isEmptyBinRequest(request)) {
     const actions = buildEmptyBinActions(context, requestedKinds);
-    if (apply) {
+    const shouldApply = shouldApplyActionsImmediately(apply, actions);
+    if (shouldApply) {
       for (const action of actions) {
         await applyAction(action);
       }
     }
 
     return {
-      message: buildEmptyBinMessage(request, actions.length, apply, requestedKinds),
+      message:
+        apply && !shouldApply && actions.length > 1
+          ? buildMultiActionReviewMessage(request, actions.length)
+          : buildEmptyBinMessage(request, actions.length, shouldApply, requestedKinds),
       actions,
-      applied: apply,
+      applied: shouldApply,
       targetList: "bin",
-      data: apply ? await readAgentListContext() : context,
+      data: shouldApply ? await readAgentListContext() : context,
     };
   }
 
   if (isEmptyArchiveRequest(request) || isRestoreArchiveRequest(request)) {
     const mode = isRestoreArchiveRequest(request) ? "restore" : "moveToBin";
     const actions = buildArchiveActions(context, mode, requestedKinds);
-    if (apply) {
+    const shouldApply = shouldApplyActionsImmediately(apply, actions);
+    if (shouldApply) {
       for (const action of actions) {
         await applyAction(action);
       }
     }
 
     return {
-      message: buildArchiveMessage(request, actions.length, apply, mode, requestedKinds),
+      message:
+        apply && !shouldApply && actions.length > 1
+          ? buildMultiActionReviewMessage(request, actions.length)
+          : buildArchiveMessage(request, actions.length, shouldApply, mode, requestedKinds),
       actions,
-      applied: apply,
+      applied: shouldApply,
       targetList: "archive",
-      data: apply ? await readAgentListContext() : context,
+      data: shouldApply ? await readAgentListContext() : context,
     };
   }
 
-  const explicitTodoDeleteActions = buildExplicitTodoDeleteAction(request, context);
-  if (explicitTodoDeleteActions.length > 0) {
-    if (apply) {
-      for (const action of explicitTodoDeleteActions) {
+  const explicitDeleteActions = buildExplicitDeleteAction(request, context);
+  if (explicitDeleteActions.length > 0) {
+    const explicitDeleteTarget = inferTargetListFromActions(explicitDeleteActions);
+    const shouldApply = shouldApplyActionsImmediately(apply, explicitDeleteActions);
+    if (shouldApply) {
+      for (const action of explicitDeleteActions) {
         await applyAction(action);
       }
     }
 
     return {
-      message: apply ? "Deleted the task." : "I can delete the task.",
-      actions: explicitTodoDeleteActions,
-      applied: apply,
-      targetList: "todo",
-      data: apply ? await readAgentListContext() : context,
+      message: shouldApply ? "Deleted the item." : "I can delete the item.",
+      actions: explicitDeleteActions,
+      applied: shouldApply,
+      targetList: explicitDeleteTarget,
+      data: shouldApply ? await readAgentListContext() : context,
     };
   }
 
   const clarifiedTodoDeleteActions = buildClarifiedTodoDeleteAction(request, context);
   if (clarifiedTodoDeleteActions.length > 0) {
-    if (apply) {
+    const shouldApply = shouldApplyActionsImmediately(apply, clarifiedTodoDeleteActions);
+    if (shouldApply) {
       for (const action of clarifiedTodoDeleteActions) {
         await applyAction(action);
       }
     }
 
     return {
-      message: apply ? "Deleted the task." : "I can delete the task.",
+      message: shouldApply ? "Deleted the task." : "I can delete the task.",
       actions: clarifiedTodoDeleteActions,
-      applied: apply,
+      applied: shouldApply,
       targetList: "todo",
-      data: apply ? await readAgentListContext() : context,
+      data: shouldApply ? await readAgentListContext() : context,
     };
   }
 
   const clarifiedAddTodoActions = buildClarifiedAddTodoAction(request);
   if (clarifiedAddTodoActions.length > 0) {
-    if (apply) {
+    const shouldApply = shouldApplyActionsImmediately(apply, clarifiedAddTodoActions);
+    if (shouldApply) {
       for (const action of clarifiedAddTodoActions) {
         await applyAction(action);
       }
     }
 
     return {
-      message: apply ? "Added the task." : "I can add the task.",
+      message: shouldApply ? "Added the task." : "I can add the task.",
       actions: clarifiedAddTodoActions,
-      applied: apply,
+      applied: shouldApply,
       targetList: "todo",
-      data: apply ? await readAgentListContext() : context,
+      data: shouldApply ? await readAgentListContext() : context,
     };
   }
 
@@ -1272,19 +1353,41 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
   }
 
   const credentials = await readAgentCredentials();
-  const agentResponse = await callOpenAiCompatibleChat({
+  let agentResponse = await callOpenAiCompatibleChat({
     apiKey: credentials.apiKey,
     model: credentials.model,
     prompt: request,
     context,
   });
-  const actions = resolveActionItemIds(agentResponse.actions, context, agentResponse.targetList);
-  validateActionsForTarget(actions, agentResponse.targetList, "The agent");
+  if (
+    looksLikeMutationRequest(request) &&
+    agentResponse.actions.length === 0 &&
+    !agentResponse.clarificationQuestion &&
+    looksLikeAlreadySatisfiedAgentMessage(agentResponse.message)
+  ) {
+    agentResponse = await callOpenAiCompatibleChat({
+      apiKey: credentials.apiKey,
+      model: credentials.model,
+      prompt: buildFreshRunRetryPrompt(request),
+      context,
+    });
+  }
+  const sanitizedAgentActions = sanitizeActionsForRequest(agentResponse.actions, request);
+  const removedBinActions = sanitizedAgentActions.length !== agentResponse.actions.length;
+  const targetList =
+    !usesBinScope(request) && agentResponse.targetList === "bin"
+      ? inferTargetListFromActions(sanitizedAgentActions)
+      : agentResponse.targetList;
+  const actions = resolveActionItemIds(sanitizedAgentActions, context, targetList);
+  validateActionsForTarget(actions, targetList, "The agent");
   validateActionsForRequestedKinds(actions, requestedKinds, "The agent");
-  enforceRequestedListKind(actions, request, agentResponse.targetList);
+  enforceRequestedListKind(actions, request, targetList);
 
   const clarificationQuestion =
     agentResponse.clarificationQuestion ||
+    (removedBinActions && actions.length === 0 && looksLikeMutationRequest(request)
+      ? "I ignored bin permanent-delete actions because this request did not mention the bin. Specify the active item to delete, or say bin/trash if you want bin cleanup."
+      : undefined) ||
     (actions.length === 0 && looksLikeMutationRequest(request)
       ? agentResponse.message
       : undefined);
@@ -1302,7 +1405,8 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
     };
   }
 
-  if (apply) {
+  const shouldApply = shouldApplyActionsImmediately(apply, actions);
+  if (shouldApply) {
     for (const action of actions) {
       await applyAction(action);
     }
@@ -1310,9 +1414,16 @@ export async function runListAgent(prompt: string, apply: boolean): Promise<Agen
 
   return {
     ...agentResponse,
+    message:
+      shouldApply
+        ? buildAppliedActionsMessage(request, actions.length)
+        : apply && !shouldApply && actions.length > 1
+        ? buildMultiActionReviewMessage(request, actions.length)
+        : agentResponse.message,
     actions,
-    applied: apply,
-    data: await readAgentListContext(),
+    applied: shouldApply,
+    targetList,
+    data: shouldApply ? await readAgentListContext() : context,
   };
 }
 
@@ -1321,6 +1432,9 @@ export async function applyAgentActions(input: unknown): Promise<AgentResult> {
   const coercedActions = Array.isArray(input)
     ? input.map(coerceAction).filter((action): action is AgentAction => Boolean(action)).slice(0, 50)
     : [];
+  if (coercedActions.some(isPermanentDeleteAction) && coercedActions.some((action) => !isPermanentDeleteAction(action))) {
+    throw new Error("Permanent bin deletion cannot be mixed with ordinary list changes. Run bin cleanup separately.");
+  }
   const actions = resolveActionItemIds(coercedActions, context, inferTargetListFromActions(coercedActions));
   const targetList = inferTargetListFromActions(actions);
   validateActionsForTarget(actions, targetList, "The proposed actions");

@@ -199,6 +199,33 @@ type NavDragState = {
   didMove: boolean;
 };
 
+type NavItemDragState = {
+  pointerId: number;
+  itemId: TrackerView;
+  startX: number;
+  startY: number;
+  didLongPress: boolean;
+};
+
+type ReorderLongPressState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  didLongPress: boolean;
+  card: HTMLElement;
+  captureTarget: HTMLElement;
+};
+
+type ScrollLockState = {
+  scrollY: number;
+  bodyOverflow: string;
+  bodyPosition: string;
+  bodyTop: string;
+  bodyWidth: string;
+  bodyTouchAction: string;
+  documentOverscrollBehavior: string;
+};
+
 type ScreenSwipeState = {
   pointerId: number;
   startX: number;
@@ -227,9 +254,15 @@ const emptyGoalForm = {
 };
 
 const NAVIGATION_STORAGE_KEY = "boost-mastery.navigation";
+const NAV_MENU_ORDER_STORAGE_KEY = "boost-mastery.nav-menu-order";
 const THEME_STORAGE_KEY = "boost-mastery.theme";
 const LANGUAGE_STORAGE_KEY = "boost-mastery.language";
-const SWIPE_NAVIGATION_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
+const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
+const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
+const NAV_ITEM_LONG_PRESS_MS = 450;
+const NAV_ITEM_DRAG_CANCEL_DISTANCE = 10;
+const LIST_REORDER_LONG_PRESS_MS = 450;
+const LIST_REORDER_DRAG_CANCEL_DISTANCE = 10;
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
 const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
@@ -295,6 +328,7 @@ const UI_TEXT = {
     archivedEmpty: "Archived items will appear here.",
     deletedEmpty: "Deleted items will appear here.",
     completed: "Completed",
+    cancelCompleted: "Undo complete",
     notCompleted: "Not completed",
     lastProgress: "Last progress",
     emptyBinTitle: "Empty bin?",
@@ -360,6 +394,7 @@ const UI_TEXT = {
     archivedEmpty: "저장한 항목이 여기에 표시됩니다.",
     deletedEmpty: "삭제한 항목이 여기에 표시됩니다.",
     completed: "완료",
+    cancelCompleted: "완료 취소",
     notCompleted: "미완료",
     lastProgress: "최근 진행",
     emptyBinTitle: "휴지통을 비울까요?",
@@ -603,13 +638,6 @@ function getLatestEntry(entries: ProgressEntry[]) {
   );
 }
 
-function needsGoalReminder(goal: Goal) {
-  const latestEntry = getLatestEntry(goal.entries);
-  if (!latestEntry) return true;
-
-  return Date.now() - latestEntry.createdAt >= 14 * 86_400_000;
-}
-
 function toDateInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -633,25 +661,37 @@ function getTodoTargetStatus(targetDate: string | undefined, language: AppLangua
 function getTodoTargetTiming(targetDate: string, language: AppLanguage = "en") {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return language === "ko" ? "목표일 필요" : "target date required";
 
+  const timingState = getTodoTargetTimingState(targetDate);
+  if (timingState === "future") {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(`${targetDate}T00:00:00`);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+    return language === "ko" ? `${diffDays}일 남음` : `${diffDays} day${diffDays === 1 ? "" : "s"} left`;
+  }
+
+  if (timingState === "past") {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(`${targetDate}T00:00:00`);
+    const delayedDays = Math.abs(Math.round((target.getTime() - today.getTime()) / 86_400_000));
+    return language === "ko" ? `${delayedDays}일 지연` : `${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
+  }
+
+  return language === "ko" ? "오늘까지" : "due today";
+}
+
+function getTodoTargetTimingState(targetDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return "unset";
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(`${targetDate}T00:00:00`);
   const diffDays = Math.round((target.getTime() - today.getTime()) / 86_400_000);
 
-  if (diffDays > 0) return language === "ko" ? `${diffDays}일 남음` : `${diffDays} day${diffDays === 1 ? "" : "s"} left`;
-  if (diffDays < 0) {
-    const delayedDays = Math.abs(diffDays);
-    return language === "ko" ? `${delayedDays}일 지연` : `${delayedDays} day${delayedDays === 1 ? "" : "s"} delayed`;
-  }
-  return language === "ko" ? "오늘까지" : "due today";
-}
-
-function isTodoDelayed(todo: Todo) {
-  if (todo.completed || !todo.targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate)) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return new Date(`${todo.targetDate}T00:00:00`).getTime() < today.getTime();
+  if (diffDays > 0) return "future";
+  if (diffDays < 0) return "past";
+  return "today";
 }
 
 function getTodoEditRows(value: string) {
@@ -733,6 +773,35 @@ function clearStoredNavigationState() {
   }
 }
 
+function normalizeNavMenuOrder(value: unknown): TrackerView[] {
+  const storedOrder = Array.isArray(value) ? value : [];
+  const validStoredItems = storedOrder.filter(
+    (item): item is TrackerView => typeof item === "string" && DEFAULT_NAV_MENU_ORDER.includes(item as TrackerView),
+  );
+  return [
+    ...validStoredItems.filter((item, index) => validStoredItems.indexOf(item) === index),
+    ...DEFAULT_NAV_MENU_ORDER.filter((item) => !validStoredItems.includes(item)),
+  ];
+}
+
+function readStoredNavMenuOrder() {
+  try {
+    const stored = window.localStorage.getItem(NAV_MENU_ORDER_STORAGE_KEY);
+    if (!stored) return DEFAULT_NAV_MENU_ORDER;
+    return normalizeNavMenuOrder(JSON.parse(stored) as unknown);
+  } catch {
+    return DEFAULT_NAV_MENU_ORDER;
+  }
+}
+
+function writeStoredNavMenuOrder(order: TrackerView[]) {
+  try {
+    window.localStorage.setItem(NAV_MENU_ORDER_STORAGE_KEY, JSON.stringify(normalizeNavMenuOrder(order)));
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
 function readStoredDarkMode() {
   try {
     return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark";
@@ -790,14 +859,18 @@ function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
   );
 }
 
-function getSwipeTargetView(currentView: TrackerView, deltaX: number) {
+function getSwipeTargetView(currentView: TrackerView, deltaX: number, navigationOrder = SWIPE_NAVIGATION_ORDER) {
   if (currentView === "detail") return deltaX > 0 ? "list" : null;
 
-  const currentIndex = SWIPE_NAVIGATION_ORDER.indexOf(currentView);
+  const currentIndex = navigationOrder.indexOf(currentView);
   if (currentIndex < 0) return null;
 
   const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1;
-  return SWIPE_NAVIGATION_ORDER[nextIndex] ?? null;
+  return navigationOrder[nextIndex] ?? null;
+}
+
+function preventListReorderScrollEvent(event: Event) {
+  event.preventDefault();
 }
 
 async function fetchGoals() {
@@ -1069,7 +1142,7 @@ export default function GoalTracker() {
   const [agentSettingsModel, setAgentSettingsModel] = useState("gpt-4o-mini");
   const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
   const [agentPrompt, setAgentPrompt] = useState("");
-  const [agentApplyChanges, setAgentApplyChanges] = useState(true);
+  const [agentApplyChanges, setAgentApplyChanges] = useState(false);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
   const [pendingAgentClarification, setPendingAgentClarification] = useState<AgentResponse["clarification"] | null>(null);
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
@@ -1105,6 +1178,7 @@ export default function GoalTracker() {
   const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
   const [todoCategory, setTodoCategory] = useState("");
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>([]);
+  const [selectedTodoIds, setSelectedTodoIds] = useState<string[]>([]);
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState(0);
   const [entryMemo, setEntryMemo] = useState("");
@@ -1122,6 +1196,11 @@ export default function GoalTracker() {
   const [language, setLanguage] = useState<AppLanguage>(() =>
     typeof window === "undefined" ? "en" : readStoredLanguage(),
   );
+  const [navMenuOrder, setNavMenuOrder] = useState<TrackerView[]>(() =>
+    typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
+  );
+  const [draggingNavItemId, setDraggingNavItemId] = useState<TrackerView | null>(null);
+  const [navItemDropTargetId, setNavItemDropTargetId] = useState<TrackerView | null>(null);
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
   const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
   const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([]);
@@ -1136,16 +1215,25 @@ export default function GoalTracker() {
   const isApplyingBrowserNavigation = useRef(false);
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
-  const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
   const todosBeforeDrag = useRef<Todo[] | null>(null);
   const latestDraggedGoals = useRef<Goal[] | null>(null);
   const latestDraggedTodos = useRef<Todo[] | null>(null);
+  const goalReorderLongPressState = useRef<ReorderLongPressState | null>(null);
+  const todoReorderLongPressState = useRef<ReorderLongPressState | null>(null);
+  const goalReorderLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todoReorderLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listReorderScrollLock = useRef<ScrollLockState | null>(null);
   const dragImageClone = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
   const navDragState = useRef<NavDragState | null>(null);
+  const navItemDragState = useRef<NavItemDragState | null>(null);
+  const latestNavMenuOrder = useRef<TrackerView[]>(
+    typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
+  );
+  const navItemLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const screenSwipeState = useRef<ScreenSwipeState | null>(null);
   const screenSwipeAnimationTimer = useRef<number | null>(null);
   const suppressNextNavClick = useRef(false);
@@ -1178,14 +1266,20 @@ export default function GoalTracker() {
       : "border-stone-300 hover:bg-stone-100"
   }`;
   const navItems = useMemo(
-    () => [
+    () => {
+      const items: Array<{ id: TrackerView; label: string; shortLabel: string; count: number | null }> = [
       { id: "list", label: text.goalList, shortLabel: text.goalShort, count: null },
       { id: "todo", label: text.todoList, shortLabel: text.todoShort, count: null },
       { id: "routine", label: text.routineList, shortLabel: text.routineShort, count: null },
       { id: "archive", label: text.archive, shortLabel: text.archive, count: null },
       { id: "bin", label: text.bin, shortLabel: text.bin, count: null },
-    ],
-    [text],
+      ];
+      const order = normalizeNavMenuOrder(navMenuOrder);
+      return order
+        .map((itemId) => items.find((item) => item.id === itemId))
+        .filter((item): item is (typeof items)[number] => Boolean(item));
+    },
+    [navMenuOrder, text],
   );
 
   const flashMovedItem = useCallback((kind: "goal" | "todo", itemId: string) => {
@@ -1314,11 +1408,19 @@ export default function GoalTracker() {
       if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
       if (confettiTimer.current) clearTimeout(confettiTimer.current);
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      if (navItemLongPressTimer.current) clearTimeout(navItemLongPressTimer.current);
+      clearListReorderLongPressTimer(goalReorderLongPressTimer);
+      clearListReorderLongPressTimer(todoReorderLongPressTimer);
+      unlockListReorderScroll();
       isAcceptingAgentVoiceResults.current = false;
       agentSpeechRecognition.current?.abort();
       window.speechSynthesis?.cancel();
     };
   }, []);
+
+  useEffect(() => {
+    latestNavMenuOrder.current = normalizeNavMenuOrder(navMenuOrder);
+  }, [navMenuOrder]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark-mode", isDarkMode);
@@ -1359,6 +1461,7 @@ export default function GoalTracker() {
       setIsEntryModalOpen(false);
       setIsEmptyBinModalOpen(false);
       setTodoToDelete(null);
+      setSelectedTodoIds([]);
       setEditingTodoId(null);
       setEditingTodoTitle("");
     }
@@ -1446,14 +1549,14 @@ export default function GoalTracker() {
         : todos.filter((todo) => selectedTodoCategorySet.has(todo.category.trim())),
     [activeSelectedTodoCategories.length, selectedTodoCategorySet, todos],
   );
-
-  useEffect(() => {
-    const textarea = goalMemoTextareaRef.current;
-    if (!textarea || !isEditingGoal) return;
-
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [activeGoalDraft?.memo, activeGoalId, isEditingGoal]);
+  const selectedTodoIdSet = useMemo(() => new Set(selectedTodoIds), [selectedTodoIds]);
+  const selectedTodos = useMemo(
+    () => todos.filter((todo) => selectedTodoIdSet.has(todo.id)),
+    [selectedTodoIdSet, todos],
+  );
+  const selectedTodoCount = selectedTodos.length;
+  const selectedCompletedTodoCount = selectedTodos.filter((todo) => todo.completed).length;
+  const selectedIncompleteTodoCount = selectedTodoCount - selectedCompletedTodoCount;
 
   useEffect(() => {
     const previous = previousView.current;
@@ -1472,6 +1575,7 @@ export default function GoalTracker() {
     setIsEntryModalOpen(false);
     setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
+    setSelectedTodoIds([]);
     setEditingTodoId(null);
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
@@ -2136,10 +2240,7 @@ export default function GoalTracker() {
     }
   }
 
-  function makeFloatingDragCard(event: ReactPointerEvent) {
-    const card = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-reorder-card]");
-    if (!card) return;
-
+  function makeFloatingDragCard(card: HTMLElement, clientX: number, clientY: number) {
     const rect = card.getBoundingClientRect();
     const clone = card.cloneNode(true) as HTMLElement;
     clone.style.position = "fixed";
@@ -2157,8 +2258,8 @@ export default function GoalTracker() {
     dragImageClone.current = clone;
 
     return {
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
+      offsetX: clientX - rect.left,
+      offsetY: clientY - rect.top,
     };
   }
 
@@ -2171,6 +2272,211 @@ export default function GoalTracker() {
     if (!dragImageClone.current) return;
     dragImageClone.current.style.left = `${clientX - offsetX}px`;
     dragImageClone.current.style.top = `${clientY - offsetY}px`;
+  }
+
+  function lockListReorderScroll() {
+    if (listReorderScrollLock.current) return;
+    const body = document.body;
+    const documentElement = document.documentElement;
+    const scrollY = window.scrollY;
+    listReorderScrollLock.current = {
+      scrollY,
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyWidth: body.style.width,
+      bodyTouchAction: body.style.touchAction,
+      documentOverscrollBehavior: documentElement.style.overscrollBehavior,
+    };
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    body.style.touchAction = "none";
+    documentElement.style.overscrollBehavior = "none";
+    window.addEventListener("touchmove", preventListReorderScrollEvent, { passive: false });
+    window.addEventListener("wheel", preventListReorderScrollEvent, { passive: false });
+  }
+
+  function unlockListReorderScroll() {
+    const lock = listReorderScrollLock.current;
+    if (!lock) return;
+    const body = document.body;
+    const documentElement = document.documentElement;
+    body.style.overflow = lock.bodyOverflow;
+    body.style.position = lock.bodyPosition;
+    body.style.top = lock.bodyTop;
+    body.style.width = lock.bodyWidth;
+    body.style.touchAction = lock.bodyTouchAction;
+    documentElement.style.overscrollBehavior = lock.documentOverscrollBehavior;
+    window.removeEventListener("touchmove", preventListReorderScrollEvent);
+    window.removeEventListener("wheel", preventListReorderScrollEvent);
+    listReorderScrollLock.current = null;
+    window.scrollTo(0, lock.scrollY);
+  }
+
+  function isListReorderBlockedTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return true;
+    return Boolean(target.closest("button, input, textarea, select, label, a"));
+  }
+
+  function clearListReorderLongPressTimer(timerRef: { current: ReturnType<typeof setTimeout> | null }) {
+    if (!timerRef.current) return;
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }
+
+  function startListReorderLongPress(
+    event: ReactPointerEvent<HTMLElement>,
+    stateRef: { current: ReorderLongPressState | null },
+    timerRef: { current: ReturnType<typeof setTimeout> | null },
+    onLongPress: (card: HTMLElement, clientX: number, clientY: number) => void,
+    disabled = false,
+  ) {
+    if (disabled || isListReorderBlockedTarget(event.target)) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const card = event.currentTarget.closest<HTMLElement>("[data-reorder-card]");
+    if (!card) return;
+
+    clearListReorderLongPressTimer(timerRef);
+    stateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      didLongPress: false,
+      card,
+      captureTarget: event.currentTarget,
+    };
+    timerRef.current = setTimeout(() => {
+      const pressState = stateRef.current;
+      if (!pressState || pressState.pointerId !== event.pointerId) return;
+      pressState.didLongPress = true;
+      try {
+        pressState.captureTarget.setPointerCapture(pressState.pointerId);
+      } catch {
+        stateRef.current = null;
+        return;
+      }
+      onLongPress(pressState.card, pressState.startX, pressState.startY);
+    }, LIST_REORDER_LONG_PRESS_MS);
+  }
+
+  function moveListReorderLongPress(
+    event: ReactPointerEvent<HTMLElement>,
+    stateRef: { current: ReorderLongPressState | null },
+    timerRef: { current: ReturnType<typeof setTimeout> | null },
+  ) {
+    const pressState = stateRef.current;
+    if (!pressState || pressState.pointerId !== event.pointerId) return;
+    if (pressState.didLongPress) {
+      event.preventDefault();
+      return;
+    }
+
+    const distance = Math.hypot(event.clientX - pressState.startX, event.clientY - pressState.startY);
+    if (distance > LIST_REORDER_DRAG_CANCEL_DISTANCE) {
+      clearListReorderLongPressTimer(timerRef);
+      stateRef.current = null;
+    }
+  }
+
+  function endListReorderLongPress(
+    event: ReactPointerEvent<HTMLElement>,
+    stateRef: { current: ReorderLongPressState | null },
+    timerRef: { current: ReturnType<typeof setTimeout> | null },
+  ) {
+    const pressState = stateRef.current;
+    if (!pressState || pressState.pointerId !== event.pointerId) return;
+    clearListReorderLongPressTimer(timerRef);
+    if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
+      pressState.captureTarget.releasePointerCapture(event.pointerId);
+    }
+    stateRef.current = null;
+  }
+
+  function clearNavItemLongPressTimer() {
+    if (!navItemLongPressTimer.current) return;
+    clearTimeout(navItemLongPressTimer.current);
+    navItemLongPressTimer.current = null;
+  }
+
+  function saveNavMenuOrder(nextOrder: TrackerView[]) {
+    const normalizedOrder = normalizeNavMenuOrder(nextOrder);
+    latestNavMenuOrder.current = normalizedOrder;
+    setNavMenuOrder(normalizedOrder);
+    writeStoredNavMenuOrder(normalizedOrder);
+  }
+
+  function startNavItemDrag(event: ReactPointerEvent<HTMLButtonElement>, itemId: TrackerView) {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    event.stopPropagation();
+    clearNavItemLongPressTimer();
+    navItemDragState.current = {
+      pointerId: event.pointerId,
+      itemId,
+      startX: event.clientX,
+      startY: event.clientY,
+      didLongPress: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    navItemLongPressTimer.current = setTimeout(() => {
+      const dragState = navItemDragState.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      dragState.didLongPress = true;
+      suppressNextNavClick.current = true;
+      setDraggingNavItemId(itemId);
+      setNavItemDropTargetId(itemId);
+    }, NAV_ITEM_LONG_PRESS_MS);
+  }
+
+  function moveNavItemDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = navItemDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    const movedBeforeLongPress =
+      Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > NAV_ITEM_DRAG_CANCEL_DISTANCE;
+    if (!dragState.didLongPress && movedBeforeLongPress) {
+      clearNavItemLongPressTimer();
+      return;
+    }
+    if (!dragState.didLongPress) return;
+
+    event.preventDefault();
+    const targetItemId = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-nav-item-id]")
+      ?.dataset.navItemId as TrackerView | undefined;
+    if (!targetItemId || targetItemId === dragState.itemId || !DEFAULT_NAV_MENU_ORDER.includes(targetItemId)) return;
+
+    setNavItemDropTargetId(targetItemId);
+    setNavMenuOrder((currentOrder) => {
+      const normalizedOrder = normalizeNavMenuOrder(currentOrder);
+      const fromIndex = normalizedOrder.indexOf(dragState.itemId);
+      const toIndex = normalizedOrder.indexOf(targetItemId);
+      const nextOrder = moveToIndex(normalizedOrder, fromIndex, toIndex);
+      latestNavMenuOrder.current = nextOrder;
+      return nextOrder;
+    });
+  }
+
+  function endNavItemDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = navItemDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    clearNavItemLongPressTimer();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    navItemDragState.current = null;
+
+    if (dragState.didLongPress) {
+      saveNavMenuOrder(latestNavMenuOrder.current);
+      window.setTimeout(() => {
+        suppressNextNavClick.current = false;
+      }, 0);
+    }
+    setDraggingNavItemId(null);
+    setNavItemDropTargetId(null);
   }
 
   function startNavDrag(event: ReactPointerEvent<HTMLElement>) {
@@ -2220,7 +2526,7 @@ export default function GoalTracker() {
   function startScreenSwipe(event: ReactPointerEvent<HTMLElement>) {
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
     if (isSwipeNavigationBlockedTarget(event.target)) return;
-    if (currentView !== "detail" && !SWIPE_NAVIGATION_ORDER.includes(currentView)) return;
+    if (currentView !== "detail" && !normalizeNavMenuOrder(navMenuOrder).includes(currentView)) return;
 
     if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
     setIsScreenSwipeAnimating(false);
@@ -2268,7 +2574,7 @@ export default function GoalTracker() {
       return;
     }
 
-    const nextView = getSwipeTargetView(currentView, deltaX);
+    const nextView = getSwipeTargetView(currentView, deltaX, normalizeNavMenuOrder(navMenuOrder));
     if (!nextView) {
       settleScreenSwipe(0);
       return;
@@ -2311,17 +2617,15 @@ export default function GoalTracker() {
     settleScreenSwipe(0);
   }
 
-  function startGoalDrag(event: ReactPointerEvent, goalId: string) {
+  function startGoalDrag(card: HTMLElement, clientX: number, clientY: number, goalId: string) {
     if (isSaving) {
-      event.preventDefault();
       return;
     }
 
-    const dragOffset = makeFloatingDragCard(event);
+    const dragOffset = makeFloatingDragCard(card, clientX, clientY);
     if (!dragOffset) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    lockListReorderScroll();
     goalsBeforeDrag.current = goals;
     latestDraggedGoals.current = goals;
     setDraggingGoalId(goalId);
@@ -2359,6 +2663,7 @@ export default function GoalTracker() {
       setDraggingGoalId(null);
       setGoalDropTargetId(null);
       removeDragImageClone();
+      unlockListReorderScroll();
       goalsBeforeDrag.current = null;
       latestDraggedGoals.current = null;
 
@@ -2371,7 +2676,7 @@ export default function GoalTracker() {
       }, 0);
     };
 
-    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
   }
@@ -2476,17 +2781,15 @@ export default function GoalTracker() {
     }
   }
 
-  function startTodoDrag(event: ReactPointerEvent, todoId: string) {
+  function startTodoDrag(card: HTMLElement, clientX: number, clientY: number, todoId: string) {
     if (isSaving || editingTodoId !== null) {
-      event.preventDefault();
       return;
     }
 
-    const dragOffset = makeFloatingDragCard(event);
+    const dragOffset = makeFloatingDragCard(card, clientX, clientY);
     if (!dragOffset) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    lockListReorderScroll();
     todosBeforeDrag.current = todos;
     latestDraggedTodos.current = todos;
     setDraggingTodoId(todoId);
@@ -2523,6 +2826,7 @@ export default function GoalTracker() {
       setDraggingTodoId(null);
       setTodoDropTargetId(null);
       removeDragImageClone();
+      unlockListReorderScroll();
       todosBeforeDrag.current = null;
       latestDraggedTodos.current = null;
 
@@ -2531,7 +2835,7 @@ export default function GoalTracker() {
       }
     };
 
-    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
   }
@@ -2555,25 +2859,109 @@ export default function GoalTracker() {
     confettiTimer.current = setTimeout(() => setConfettiParticles([]), 3000);
   }
 
-  async function toggleTodoItem(todo: Todo) {
-    if (!loginId) return;
+  function toggleTodoSelection(todoId: string) {
+    setSelectedTodoIds((current) =>
+      current.includes(todoId) ? current.filter((id) => id !== todoId) : [...current, todoId],
+    );
+  }
 
-    const nextCompleted = !todo.completed;
-    const nextTodos = todos.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item));
-    setTodos(nextTodos);
+  async function completeSelectedTodos() {
+    if (!loginId || selectedTodos.length === 0) return;
 
+    const todoIds = selectedTodos.filter((todo) => !todo.completed).map((todo) => todo.id);
+    if (todoIds.length === 0) {
+      setSelectedTodoIds([]);
+      return;
+    }
+
+    const previousTodos = todos;
+    setTodos((current) =>
+      current.map((todo) => (todoIds.includes(todo.id) ? { ...todo, completed: true } : todo)),
+    );
     setIsSaving(true);
     setError("");
 
     try {
-      setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
-      if (nextCompleted) triggerSuccessConfetti();
+      let latestTodos = previousTodos;
+      for (const todoId of todoIds) {
+        latestTodos = await patchTodo(todoId, { completed: true });
+      }
+      setTodos(latestTodos);
+      setSelectedTodoIds([]);
+      triggerSuccessConfetti();
     } catch (updateError) {
-      setTodos(todos);
+      setTodos(previousTodos);
       setError(updateError instanceof Error ? updateError.message : "Failed to update task");
     } finally {
       setIsSaving(false);
     }
+  }
+
+  async function uncompleteSelectedTodos() {
+    if (!loginId || selectedTodos.length === 0) return;
+
+    const todoIds = selectedTodos.filter((todo) => todo.completed).map((todo) => todo.id);
+    if (todoIds.length === 0) {
+      setSelectedTodoIds([]);
+      return;
+    }
+
+    const previousTodos = todos;
+    setTodos((current) =>
+      current.map((todo) => (todoIds.includes(todo.id) ? { ...todo, completed: false } : todo)),
+    );
+    setIsSaving(true);
+    setError("");
+
+    try {
+      let latestTodos = previousTodos;
+      for (const todoId of todoIds) {
+        latestTodos = await patchTodo(todoId, { completed: false });
+      }
+      setTodos(latestTodos);
+      setSelectedTodoIds([]);
+    } catch (updateError) {
+      setTodos(previousTodos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update task");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deleteSelectedTodos() {
+    if (!loginId || selectedTodos.length === 0) return;
+
+    const todoIds = selectedTodos.map((todo) => todo.id);
+    const previousTodos = todos;
+    const previousDeletedTodos = deletedTodos;
+    setTodos((current) => current.filter((todo) => !todoIds.includes(todo.id)));
+    setIsSaving(true);
+    setError("");
+
+    try {
+      let latestTodos = previousTodos;
+      let latestDeletedTodos = previousDeletedTodos;
+      for (const todoId of todoIds) {
+        const result = await removeTodo(todoId);
+        latestTodos = result.todos;
+        latestDeletedTodos = result.deletedTodos;
+      }
+      setTodos(latestTodos);
+      setDeletedTodos(latestDeletedTodos);
+      setSelectedTodoIds([]);
+    } catch (deleteError) {
+      setTodos(previousTodos);
+      setDeletedTodos(previousDeletedTodos);
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete task");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function editSelectedTodo() {
+    const [todo] = selectedTodos;
+    if (selectedTodos.length !== 1 || !todo) return;
+    startEditingTodo(todo);
   }
 
   async function deleteTodoItem(todoId: string) {
@@ -3047,6 +3435,58 @@ export default function GoalTracker() {
     );
   }
 
+  const selectedTodoActionBar = selectedTodoCount > 0 ? (
+    <div className="fixed left-3 right-3 top-3 z-[90] flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-white/95 p-2 text-xs shadow-lg backdrop-blur sm:left-1/2 sm:right-auto sm:w-[min(44rem,calc(100vw-2rem))] sm:-translate-x-1/2">
+      <span className="mr-auto font-semibold text-emerald-800">
+        {language === "ko" ? `${selectedTodoCount}개 선택됨` : `${selectedTodoCount} selected`}
+      </span>
+      {selectedIncompleteTodoCount > 0 && (
+        <button
+          type="button"
+          onClick={completeSelectedTodos}
+          disabled={isSaving}
+          className="flex h-8 items-center justify-center rounded-md border border-emerald-200 px-3 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          {text.completed}
+        </button>
+      )}
+      {selectedCompletedTodoCount > 0 && (
+        <button
+          type="button"
+          onClick={uncompleteSelectedTodos}
+          disabled={isSaving}
+          className="flex h-8 items-center justify-center rounded-md border border-amber-200 px-3 font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          {text.cancelCompleted}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={deleteSelectedTodos}
+        disabled={isSaving}
+        className="flex h-8 items-center justify-center rounded-md border border-red-200 px-3 font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+      >
+        {text.delete}
+      </button>
+      <button
+        type="button"
+        onClick={editSelectedTodo}
+        disabled={isSaving || selectedTodoCount !== 1 || editingTodoId !== null}
+        className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {text.edit}
+      </button>
+      <button
+        type="button"
+        onClick={() => setSelectedTodoIds([])}
+        disabled={isSaving}
+        className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+      >
+        {text.cancel}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <main
       onPointerDown={startScreenSwipe}
@@ -3154,7 +3594,12 @@ export default function GoalTracker() {
           {navItems.map((item) => (
             <button
               key={item.id}
+              data-nav-item-id={item.id}
               type="button"
+              onPointerDown={(event) => startNavItemDrag(event, item.id)}
+              onPointerMove={moveNavItemDrag}
+              onPointerUp={endNavItemDrag}
+              onPointerCancel={endNavItemDrag}
               onClick={(event) => {
                 if (suppressNextNavClick.current) {
                   event.preventDefault();
@@ -3162,10 +3607,14 @@ export default function GoalTracker() {
                 }
                 navigateToView(item.id as TrackerView);
               }}
-              className={`flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 text-xs font-semibold leading-none transition ${
-                currentView === item.id
-                  ? "bg-emerald-700 text-white shadow-sm"
-                  : "text-stone-700 hover:bg-stone-100"
+              className={`flex h-10 min-w-0 flex-1 touch-none items-center justify-center gap-1.5 rounded-full border px-2 text-xs font-semibold leading-none transition ${
+                draggingNavItemId === item.id
+                  ? "scale-95 border-emerald-500 bg-emerald-100 text-emerald-900 opacity-70"
+                  : navItemDropTargetId === item.id
+                    ? "border-emerald-500 bg-white text-emerald-800 shadow-sm"
+                    : currentView === item.id
+                      ? "border-emerald-700 bg-emerald-700 text-white shadow-sm"
+                      : "border-transparent text-stone-700 hover:bg-stone-100"
               }`}
             >
               {item.id === "list" && <ListIcon />}
@@ -3417,8 +3866,8 @@ export default function GoalTracker() {
                           ? "Agent 실행"
                           : "Run Agent"
                         : language === "ko"
-                          ? "분석 받기"
-                          : "Analyze"}
+                        ? "계획 받기"
+                        : "Plan"}
                   </button>
                 </div>
               </>
@@ -3664,6 +4113,18 @@ export default function GoalTracker() {
           </section>
         )}
 
+        {(draggingNavItemId || draggingGoalId || draggingTodoId) && (
+          <div className="fixed left-1/2 top-3 z-[80] -translate-x-1/2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-lg backdrop-blur">
+            {draggingNavItemId
+              ? language === "ko"
+                ? "메뉴 순서 변경 중"
+                : "Reordering menu"
+              : language === "ko"
+                ? "목록 순서 변경 중"
+                : "Reordering list"}
+          </div>
+        )}
+
         <section className="min-w-0">
           <aside className={`min-w-0 flex-col gap-0 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div className={currentView === "list" ? "" : "hidden"}>
@@ -3697,7 +4158,6 @@ export default function GoalTracker() {
                     goals.map((goal) => {
                       const latest = getLatestEntry(goal.entries)?.value ?? 0;
                       const percent = Math.min(100, clampProgress(latest, goal.target));
-                      const showReminder = needsGoalReminder(goal);
 
                       return (
                         <div
@@ -3711,6 +4171,24 @@ export default function GoalTracker() {
                             if (suppressGoalClickAfterDrag.current) return;
                             selectGoal(goal);
                           }}
+                          onPointerDown={(event) =>
+                            startListReorderLongPress(
+                              event,
+                              goalReorderLongPressState,
+                              goalReorderLongPressTimer,
+                              (card, clientX, clientY) => startGoalDrag(card, clientX, clientY, goal.id),
+                              isSaving,
+                            )
+                          }
+                          onPointerMove={(event) =>
+                            moveListReorderLongPress(event, goalReorderLongPressState, goalReorderLongPressTimer)
+                          }
+                          onPointerUp={(event) =>
+                            endListReorderLongPress(event, goalReorderLongPressState, goalReorderLongPressTimer)
+                          }
+                          onPointerCancel={(event) =>
+                            endListReorderLongPress(event, goalReorderLongPressState, goalReorderLongPressTimer)
+                          }
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -3724,17 +4202,15 @@ export default function GoalTracker() {
                                 ? "border-emerald-500 bg-white shadow-sm"
                               : draggingGoalId === goal.id
                                   ? "border-stone-400 bg-white opacity-90 shadow-sm"
-                              : showReminder
-                                ? "border-red-200 bg-red-50/70 hover:border-red-300"
-                                : "border-stone-200 bg-white hover:border-stone-400"
-                          }`}
+                              : "border-stone-200 bg-white hover:border-stone-400"
+                          } ${draggingGoalId === goal.id ? "pt-9" : ""}`}
                         >
-                          {showReminder && (
-                            <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-lg font-black tracking-wide text-red-700/15 sm:text-2xl">
-                              DON&apos;T FORGET
+                          {draggingGoalId === goal.id && (
+                            <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                              {language === "ko" ? "이동 중" : "Moving"}
                             </div>
                           )}
-                          <div className="relative grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+                          <div className="relative min-w-0">
                             <div className="min-w-0">
                               <div className="flex min-w-0 items-start justify-between gap-2">
                                 <span className="min-w-0 font-medium">{goal.title}</span>
@@ -3745,13 +4221,6 @@ export default function GoalTracker() {
                               <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
                                 <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
                               </div>
-                            </div>
-                            <div className="flex shrink-0 justify-end">
-                              <ReorderHandle
-                                disabled={isSaving}
-                                label={`Drag ${goal.title} to reorder`}
-                                onPointerDown={(event) => startGoalDrag(event, goal.id)}
-                              />
                             </div>
                           </div>
                         </div>
@@ -3829,9 +4298,12 @@ export default function GoalTracker() {
                       {text.noTodosForCategory}
                     </p>
                   ) : (
-                    visibleTodos.map((todo) => {
+                    <>
+                    {visibleTodos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
-                      const isDelayedTodo = isTodoDelayed(todo);
+                      const todoTargetTimingState = todo.targetDate
+                        ? getTodoTargetTimingState(todo.targetDate)
+                        : "unset";
 
                       return (
                       <div
@@ -3839,8 +4311,26 @@ export default function GoalTracker() {
                         data-reorder-card
                         data-reorder-kind="todo"
                         data-reorder-id={todo.id}
+                        onPointerDown={(event) =>
+                          startListReorderLongPress(
+                            event,
+                            todoReorderLongPressState,
+                            todoReorderLongPressTimer,
+                            (card, clientX, clientY) => startTodoDrag(card, clientX, clientY, todo.id),
+                            isSaving || editingTodoId !== null,
+                          )
+                        }
+                        onPointerMove={(event) =>
+                          moveListReorderLongPress(event, todoReorderLongPressState, todoReorderLongPressTimer)
+                        }
+                        onPointerUp={(event) =>
+                          endListReorderLongPress(event, todoReorderLongPressState, todoReorderLongPressTimer)
+                        }
+                        onPointerCancel={(event) =>
+                          endListReorderLongPress(event, todoReorderLongPressState, todoReorderLongPressTimer)
+                        }
                         className={`relative grid overflow-hidden ${
-                          isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
+                          isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto]"
                         } items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
                           highlightedTodoId === todo.id
                             ? "border-emerald-500 bg-emerald-100 shadow-sm"
@@ -3848,22 +4338,21 @@ export default function GoalTracker() {
                               ? "border-emerald-500 bg-white shadow-sm"
                             : draggingTodoId === todo.id
                                 ? "border-stone-400 bg-white opacity-90 shadow-sm"
-                            : isDelayedTodo
-                              ? "border-red-200 bg-red-50/70"
                               : "border-stone-200 bg-white"
-                        }`}
+                        } ${draggingTodoId === todo.id ? "pt-9" : ""}`}
                       >
-                        {isDelayedTodo && !isEditingTodo && (
-                          <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-lg font-black tracking-wide text-red-700/15 sm:text-2xl">
-                            DELAYED
+                        {draggingTodoId === todo.id && (
+                          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                            {language === "ko" ? "이동 중" : "Moving"}
                           </div>
                         )}
                         <input
                           type="checkbox"
-                          checked={todo.completed}
-                          onChange={() => toggleTodoItem(todo)}
+                          checked={selectedTodoIdSet.has(todo.id)}
+                          onChange={() => toggleTodoSelection(todo.id)}
+                          onPointerDown={(event) => event.stopPropagation()}
                           disabled={isSaving || isEditingTodo}
-                          aria-label={`Toggle ${todo.title}`}
+                          aria-label={`Select ${todo.title}`}
                           className="relative h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
                         />
                         <div className="relative min-w-0">
@@ -3954,42 +4443,29 @@ export default function GoalTracker() {
                                   {todo.category.trim() || text.noCategory}
                                 </span>
                               )}
-                              <span>{getTodoTargetStatus(todo.targetDate, language)}</span>
+                              {todo.targetDate ? (
+                                <span>
+                                  {text.target}: {todo.targetDate} ·{" "}
+                                  <span
+                                    className={
+                                      todoTargetTimingState === "past" || todoTargetTimingState === "today"
+                                        ? "font-semibold text-red-700"
+                                        : ""
+                                    }
+                                  >
+                                    {getTodoTargetTiming(todo.targetDate, language)}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span>{getTodoTargetStatus(todo.targetDate, language)}</span>
+                              )}
                             </div>
                           )}
                         </div>
-                        {!isEditingTodo && (
-                          <div className="relative flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start">
-                            <button
-                              type="button"
-                              aria-label={`Delete ${todo.title}`}
-                              title="Delete"
-                              onClick={() => setTodoToDelete(todo)}
-                              disabled={isSaving || editingTodoId !== null}
-                              className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <BinIcon />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Edit ${todo.title}`}
-                              title="Edit"
-                              onClick={() => startEditingTodo(todo)}
-                              disabled={isSaving || editingTodoId !== null}
-                              className="flex h-8 w-8 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <EditIcon />
-                            </button>
-                          </div>
-                        )}
-                        <ReorderHandle
-                          disabled={isSaving || editingTodoId !== null}
-                          label={`Drag ${todo.title} to reorder`}
-                          onPointerDown={(event) => startTodoDrag(event, todo.id)}
-                        />
                       </div>
                       );
-                    })
+                    })}
+                    </>
                   )}
                 </div>
               )}
@@ -4262,7 +4738,6 @@ export default function GoalTracker() {
                       <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
                           <textarea
-                            ref={goalMemoTextareaRef}
                             value={activeGoalDraft?.memo ?? ""}
                             onChange={(event) =>
                               setGoalDraft((draft) =>
@@ -4272,7 +4747,7 @@ export default function GoalTracker() {
                             )
                           }
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -4323,7 +4798,7 @@ export default function GoalTracker() {
                     </div>
                   ) : (
                     <div className="mt-5 grid gap-4">
-                      <div className="min-w-0 max-w-full rounded-md border border-stone-200 bg-white p-3">
+                      <div className="min-h-24 min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-200 bg-white p-3">
                         <div className="text-xs font-medium text-stone-500">{text.memo}</div>
                         <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words text-sm text-stone-800">
                           {activeGoal.memo || text.noMemo}
@@ -4676,6 +5151,10 @@ export default function GoalTracker() {
           </div>
         </div>
       </div>
+      {typeof document !== "undefined" && selectedTodoActionBar && createPortal(
+        selectedTodoActionBar,
+        document.body,
+      )}
       {typeof document !== "undefined" && isGoalModalOpen && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -4934,7 +5413,12 @@ export default function GoalTracker() {
         {navItems.map((item) => (
           <button
             key={item.id}
+            data-nav-item-id={item.id}
             type="button"
+            onPointerDown={(event) => startNavItemDrag(event, item.id)}
+            onPointerMove={moveNavItemDrag}
+            onPointerUp={endNavItemDrag}
+            onPointerCancel={endNavItemDrag}
             onClick={(event) => {
               if (suppressNextNavClick.current) {
                 event.preventDefault();
@@ -4942,10 +5426,14 @@ export default function GoalTracker() {
               }
               navigateToView(item.id as TrackerView);
             }}
-            className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:rounded-full sm:px-2 sm:text-xs ${
-              currentView === item.id
-                ? "bg-emerald-700 text-white shadow-sm"
-                : "text-stone-700 hover:bg-stone-100"
+            className={`flex h-14 min-w-0 flex-1 touch-none flex-col items-center justify-center gap-0.5 rounded-md border px-1 text-[10px] font-semibold leading-none transition sm:h-10 sm:flex-row sm:gap-1.5 sm:rounded-full sm:px-2 sm:text-xs ${
+              draggingNavItemId === item.id
+                ? "scale-95 border-emerald-500 bg-emerald-100 text-emerald-900 opacity-70"
+                : navItemDropTargetId === item.id
+                  ? "border-emerald-500 bg-white text-emerald-800 shadow-sm"
+                  : currentView === item.id
+                    ? "border-emerald-700 bg-emerald-700 text-white shadow-sm"
+                    : "border-transparent text-stone-700 hover:bg-stone-100"
             }`}
           >
             {item.id === "list" && <ListIcon />}
@@ -5263,37 +5751,6 @@ function LoginScreen({
         </div>
       </section>
     </main>
-  );
-}
-
-function ReorderHandle({
-  disabled,
-  label,
-  onPointerDown,
-}: {
-  disabled: boolean;
-  label: string;
-  onPointerDown: (event: ReactPointerEvent) => void;
-}) {
-  return (
-    <div
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled}
-      aria-label={label}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-      onPointerDown={disabled ? undefined : onPointerDown}
-      className={`grid h-12 w-8 touch-none cursor-grab select-none place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 active:cursor-grabbing ${
-        disabled ? "cursor-not-allowed opacity-35" : ""
-      }`}
-      title="Drag to reorder"
-    >
-      <span className="grid gap-0.5">
-        <ArrowUpIcon />
-        <ArrowDownIcon />
-      </span>
-    </div>
   );
 }
 

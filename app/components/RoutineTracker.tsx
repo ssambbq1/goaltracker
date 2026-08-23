@@ -41,6 +41,25 @@ type PendingRoutineMarkSave = {
   previous: Routine[];
 };
 
+type ReorderLongPressState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  didLongPress: boolean;
+  card: HTMLElement;
+  captureTarget: HTMLElement;
+};
+
+type ScrollLockState = {
+  scrollY: number;
+  bodyOverflow: string;
+  bodyPosition: string;
+  bodyTop: string;
+  bodyWidth: string;
+  bodyTouchAction: string;
+  documentOverscrollBehavior: string;
+};
+
 type ConfettiParticle = {
   id: string;
   left: number;
@@ -54,6 +73,8 @@ type ConfettiParticle = {
 
 const todayIso = new Date().toISOString().slice(0, 10);
 const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
+const LIST_REORDER_LONG_PRESS_MS = 450;
+const LIST_REORDER_DRAG_CANCEL_DISTANCE = 10;
 const ROUTINE_TEXT = {
   en: {
     routineList: "Habits",
@@ -294,6 +315,10 @@ function pseudoRandom(seed: number) {
   return value - Math.floor(value);
 }
 
+function preventListReorderScrollEvent(event: Event) {
+  event.preventDefault();
+}
+
 export default function RoutineTracker({ language = "en", isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
   language?: AppLanguage;
   isSaving: boolean;
@@ -323,6 +348,10 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
   const confettiBurstId = useRef(0);
   const routinesBeforeDrag = useRef<Routine[] | null>(null);
   const latestDraggedRoutines = useRef<Routine[] | null>(null);
+  const routineReorderLongPressState = useRef<ReorderLongPressState | null>(null);
+  const routineReorderLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressRoutineClickAfterDrag = useRef(false);
+  const listReorderScrollLock = useRef<ScrollLockState | null>(null);
   const dragImageClone = useRef<HTMLElement | null>(null);
   const pendingMarkSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
@@ -356,6 +385,8 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     return () => {
       if (highlightTimer.current) clearTimeout(highlightTimer.current);
       if (confettiTimer.current) clearTimeout(confettiTimer.current);
+      if (routineReorderLongPressTimer.current) clearTimeout(routineReorderLongPressTimer.current);
+      unlockListReorderScroll();
       Object.values(markSaveTimers).forEach((timer) => clearTimeout(timer));
       dragImageClone.current?.remove();
     };
@@ -486,10 +517,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     }
   }
 
-  function makeFloatingDragCard(event: ReactPointerEvent) {
-    const card = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-reorder-card]");
-    if (!card) return null;
-
+  function makeFloatingDragCard(card: HTMLElement, clientX: number, clientY: number) {
     const rect = card.getBoundingClientRect();
     const clone = card.cloneNode(true) as HTMLElement;
     clone.style.position = "fixed";
@@ -507,8 +535,8 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     dragImageClone.current = clone;
 
     return {
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
+      offsetX: clientX - rect.left,
+      offsetY: clientY - rect.top,
     };
   }
 
@@ -523,21 +551,126 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     dragImageClone.current.style.top = `${clientY - offsetY}px`;
   }
 
-  function startRoutineDrag(event: ReactPointerEvent, routineId: string) {
-    if (isSaving) {
+  function lockListReorderScroll() {
+    if (listReorderScrollLock.current) return;
+    const body = document.body;
+    const documentElement = document.documentElement;
+    const scrollY = window.scrollY;
+    listReorderScrollLock.current = {
+      scrollY,
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyWidth: body.style.width,
+      bodyTouchAction: body.style.touchAction,
+      documentOverscrollBehavior: documentElement.style.overscrollBehavior,
+    };
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    body.style.touchAction = "none";
+    documentElement.style.overscrollBehavior = "none";
+    window.addEventListener("touchmove", preventListReorderScrollEvent, { passive: false });
+    window.addEventListener("wheel", preventListReorderScrollEvent, { passive: false });
+  }
+
+  function unlockListReorderScroll() {
+    const lock = listReorderScrollLock.current;
+    if (!lock) return;
+    const body = document.body;
+    const documentElement = document.documentElement;
+    body.style.overflow = lock.bodyOverflow;
+    body.style.position = lock.bodyPosition;
+    body.style.top = lock.bodyTop;
+    body.style.width = lock.bodyWidth;
+    body.style.touchAction = lock.bodyTouchAction;
+    documentElement.style.overscrollBehavior = lock.documentOverscrollBehavior;
+    window.removeEventListener("touchmove", preventListReorderScrollEvent);
+    window.removeEventListener("wheel", preventListReorderScrollEvent);
+    listReorderScrollLock.current = null;
+    window.scrollTo(0, lock.scrollY);
+  }
+
+  function isListReorderBlockedTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return true;
+    return Boolean(target.closest("button, input, textarea, select, label, a"));
+  }
+
+  function clearRoutineReorderLongPressTimer() {
+    if (!routineReorderLongPressTimer.current) return;
+    clearTimeout(routineReorderLongPressTimer.current);
+    routineReorderLongPressTimer.current = null;
+  }
+
+  function startRoutineReorderLongPress(event: ReactPointerEvent<HTMLElement>, routineId: string) {
+    if (isSaving || isListReorderBlockedTarget(event.target)) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const card = event.currentTarget.closest<HTMLElement>("[data-reorder-card]");
+    if (!card) return;
+
+    clearRoutineReorderLongPressTimer();
+    routineReorderLongPressState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      didLongPress: false,
+      card,
+      captureTarget: event.currentTarget,
+    };
+    routineReorderLongPressTimer.current = setTimeout(() => {
+      const pressState = routineReorderLongPressState.current;
+      if (!pressState || pressState.pointerId !== event.pointerId) return;
+      pressState.didLongPress = true;
+      try {
+        pressState.captureTarget.setPointerCapture(pressState.pointerId);
+      } catch {
+        routineReorderLongPressState.current = null;
+        return;
+      }
+      startRoutineDrag(pressState.card, pressState.startX, pressState.startY, routineId);
+    }, LIST_REORDER_LONG_PRESS_MS);
+  }
+
+  function moveRoutineReorderLongPress(event: ReactPointerEvent<HTMLElement>) {
+    const pressState = routineReorderLongPressState.current;
+    if (!pressState || pressState.pointerId !== event.pointerId) return;
+    if (pressState.didLongPress) {
       event.preventDefault();
       return;
     }
 
-    const dragOffset = makeFloatingDragCard(event);
+    const distance = Math.hypot(event.clientX - pressState.startX, event.clientY - pressState.startY);
+    if (distance > LIST_REORDER_DRAG_CANCEL_DISTANCE) {
+      clearRoutineReorderLongPressTimer();
+      routineReorderLongPressState.current = null;
+    }
+  }
+
+  function endRoutineReorderLongPress(event: ReactPointerEvent<HTMLElement>) {
+    const pressState = routineReorderLongPressState.current;
+    if (!pressState || pressState.pointerId !== event.pointerId) return;
+    clearRoutineReorderLongPressTimer();
+    if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
+      pressState.captureTarget.releasePointerCapture(event.pointerId);
+    }
+    routineReorderLongPressState.current = null;
+  }
+
+  function startRoutineDrag(card: HTMLElement, clientX: number, clientY: number, routineId: string) {
+    if (isSaving) {
+      return;
+    }
+
+    const dragOffset = makeFloatingDragCard(card, clientX, clientY);
     if (!dragOffset) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    lockListReorderScroll();
     routinesBeforeDrag.current = routines;
     latestDraggedRoutines.current = routines;
     setDraggingRoutineId(routineId);
     setRoutineDropTargetId(routineId);
+    suppressRoutineClickAfterDrag.current = true;
 
     const handlePointerMove = (pointerEvent: PointerEvent) => {
       pointerEvent.preventDefault();
@@ -570,15 +703,20 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       setDraggingRoutineId(null);
       setRoutineDropTargetId(null);
       removeDragImageClone();
+      unlockListReorderScroll();
       routinesBeforeDrag.current = null;
       latestDraggedRoutines.current = null;
 
       if (previousRoutines && nextRoutines) {
         void saveRoutineOrder(nextRoutines, previousRoutines, routineId);
       }
+
+      window.setTimeout(() => {
+        suppressRoutineClickAfterDrag.current = false;
+      }, 0);
     };
 
-    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
   }
@@ -706,6 +844,12 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
 
   return (
     <div className="grid gap-0">
+      {draggingRoutineId && (
+        <div className="fixed left-1/2 top-3 z-[80] -translate-x-1/2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-lg backdrop-blur">
+          {language === "ko" ? "습관 순서 변경 중" : "Reordering habits"}
+        </div>
+      )}
+
       {confettiParticles.length > 0 && (
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
           <div className="routine-clap-burst">
@@ -854,16 +998,20 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                   <RoutineListItem
                     key={routine.id}
                     routine={routine}
-                    isSaving={isSaving}
+                    language={language}
                     isHighlighted={highlightedRoutineId === routine.id}
                     isDragging={draggingRoutineId === routine.id}
                     isDropTarget={routineDropTargetId === routine.id && draggingRoutineId !== routine.id}
                     onSelect={() => {
+                      if (suppressRoutineClickAfterDrag.current) return;
                       setActiveRoutineId(routine.id);
                       setActiveRoutineResetSignal(resetSignal);
                       setEditingRoutineId(null);
                     }}
-                    onDrag={(event) => startRoutineDrag(event, routine.id)}
+                    onPointerDown={(event) => startRoutineReorderLongPress(event, routine.id)}
+                    onPointerMove={moveRoutineReorderLongPress}
+                    onPointerUp={endRoutineReorderLongPress}
+                    onPointerCancel={endRoutineReorderLongPress}
                   />
                 ))}
               </div>
@@ -1065,23 +1213,28 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
 
 function RoutineListItem({
   routine,
-  isSaving,
+  language,
   isHighlighted,
   isDragging,
   isDropTarget,
   onSelect,
-  onDrag,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
 }: {
   routine: Routine;
-  isSaving: boolean;
+  language: AppLanguage;
   isHighlighted: boolean;
   isDragging: boolean;
   isDropTarget: boolean;
   onSelect: () => void;
-  onDrag: (event: ReactPointerEvent) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const stats = getRoutineStats(routine);
-  const needsCare = stats.rate <= 50;
 
   return (
     <div
@@ -1091,6 +1244,10 @@ function RoutineListItem({
       role="button"
       tabIndex={0}
       onClick={onSelect}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -1104,31 +1261,25 @@ function RoutineListItem({
             ? "border-emerald-500 bg-white shadow-sm"
             : isDragging
               ? "border-stone-400 bg-white opacity-90 shadow-sm"
-              : needsCare
-                ? "border-red-200 bg-red-50/70 hover:border-red-300"
-                : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
-      }`}
+              : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
+      } ${isDragging ? "pt-9" : ""}`}
     >
-      {needsCare && (
-        <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-right text-base font-black tracking-wide text-red-700/15 sm:text-2xl">
-          NEED MORE CARE!
+      {isDragging && (
+        <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+          {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
       <div className="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">
           <div className="break-words font-medium text-stone-950">{routine.title}</div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-600">
-            <span>{routine.startDate} - {routine.endDate}</span>
-            <span>{stats.success} / {stats.total}</span>
-          </div>
+          {routine.memo && (
+            <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-sm text-stone-700">
+              {routine.memo}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-start gap-2">
           <span className="pt-1 text-sm font-semibold text-emerald-700">{stats.rate}%</span>
-          <ReorderHandle
-            disabled={isSaving}
-            label={`Drag ${routine.title} to reorder`}
-            onPointerDown={onDrag}
-          />
         </div>
       </div>
       <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
@@ -1168,21 +1319,12 @@ function RoutineCard({
   const stats = getRoutineStats(routine);
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
-  const memoRef = useRef<HTMLTextAreaElement | null>(null);
   const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (isSaving || !editValue?.title.trim()) return;
     onSaveEdit();
   };
-
-  useEffect(() => {
-    const textarea = memoRef.current;
-    if (!textarea || !editValue) return;
-
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.max(textarea.scrollHeight, 96)}px`;
-  }, [editValue]);
 
   return (
     <div className="grid gap-0">
@@ -1235,11 +1377,10 @@ function RoutineCard({
           {editValue ? (
             <>
               <textarea
-                ref={memoRef}
                 value={editValue.memo}
                 onChange={(event) => onEditChange({ ...editValue, memo: event.target.value })}
                 onKeyDown={handleEditKeyDown}
-                className="mt-2 min-h-24 w-full resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                className="mt-2 min-h-24 w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}
               />
@@ -1652,54 +1793,6 @@ function CloseIcon() {
   );
 }
 
-function ReorderHandle({
-  disabled,
-  label,
-  onPointerDown,
-}: {
-  disabled: boolean;
-  label: string;
-  onPointerDown: (event: ReactPointerEvent) => void;
-}) {
-  return (
-    <div
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled}
-      aria-label={label}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-      onPointerDown={disabled ? undefined : onPointerDown}
-      className={`grid h-12 w-8 touch-none cursor-grab select-none place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 active:cursor-grabbing ${
-        disabled ? "cursor-not-allowed opacity-35" : ""
-      }`}
-      title="Drag to reorder"
-    >
-      <span className="grid gap-0.5">
-        <ArrowUpIcon />
-        <ArrowDownIcon />
-      </span>
-    </div>
-  );
-}
-
-function ArrowUpIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="m18 15-6-6-6 6" />
-    </svg>
-  );
-}
-
 function ArrowLeftIcon() {
   return (
     <svg
@@ -1734,19 +1827,3 @@ function ArrowRightIcon() {
   );
 }
 
-function ArrowDownIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-4 w-4 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
