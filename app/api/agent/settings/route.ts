@@ -22,6 +22,7 @@ export async function PATCH(request: Request) {
       apiKey: typeof body?.apiKey === "string" ? body.apiKey : undefined,
       clearApiKey: body?.clearApiKey === true,
       activeKeyId: typeof body?.activeKeyId === "string" ? body.activeKeyId : undefined,
+      updateKeyId: typeof body?.updateKeyId === "string" ? body.updateKeyId : undefined,
       deleteKeyId: typeof body?.deleteKeyId === "string" ? body.deleteKeyId : undefined,
     });
     return Response.json({ settings });

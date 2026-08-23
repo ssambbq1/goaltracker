@@ -215,6 +215,7 @@ export async function saveAgentSettings(input: {
   apiKey?: string;
   clearApiKey?: boolean;
   activeKeyId?: string;
+  updateKeyId?: string;
   deleteKeyId?: string;
 }) {
   const loginId = await requireLoginId();
@@ -247,6 +248,17 @@ export async function saveAgentSettings(input: {
     const targetId = input.activeKeyId || activeKeyId;
     keys = keys.filter((key) => key.id !== targetId);
     activeKeyId = keys[0]?.id || "";
+  } else if (input.updateKeyId) {
+    keys = keys.map((key) =>
+      key.id === input.updateKeyId
+        ? {
+            ...key,
+            llm_model: normalizeModel(input.llmModel) || DEFAULT_MODEL,
+            api_key_ciphertext: nextApiKey ? encryptApiKey(nextApiKey) : key.api_key_ciphertext,
+            updated_at_ms: now,
+          }
+        : key,
+    );
   } else if (nextApiKey) {
     const newKey: StoredAgentKey = {
       id: randomBytes(9).toString("base64url"),

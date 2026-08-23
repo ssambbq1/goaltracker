@@ -42,7 +42,6 @@ type ReorderLongPressState = {
   startX: number;
   startY: number;
   didLongPress: boolean;
-  isTouchGuardActive: boolean;
   card: HTMLElement;
   captureTarget: HTMLElement;
 };
@@ -298,18 +297,6 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
 
 function preventListReorderScrollEvent(event: Event) {
   event.preventDefault();
-}
-
-function addListReorderTouchGuard(pressState: ReorderLongPressState) {
-  if (pressState.isTouchGuardActive) return;
-  pressState.isTouchGuardActive = true;
-  window.addEventListener("touchmove", preventListReorderScrollEvent, { passive: false });
-}
-
-function removeListReorderTouchGuard(pressState: ReorderLongPressState | null) {
-  if (!pressState?.isTouchGuardActive) return;
-  pressState.isTouchGuardActive = false;
-  window.removeEventListener("touchmove", preventListReorderScrollEvent);
 }
 
 export default function RoutineTracker({ language = "en", isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
@@ -607,17 +594,14 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     if (!card) return;
 
     clearRoutineReorderLongPressTimer();
-    removeListReorderTouchGuard(routineReorderLongPressState.current);
     routineReorderLongPressState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       didLongPress: false,
-      isTouchGuardActive: false,
       card,
       captureTarget: event.currentTarget,
     };
-    if (event.pointerType !== "mouse") addListReorderTouchGuard(routineReorderLongPressState.current);
     routineReorderLongPressTimer.current = setTimeout(() => {
       const pressState = routineReorderLongPressState.current;
       if (!pressState || pressState.pointerId !== event.pointerId) return;
@@ -625,7 +609,6 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       try {
         pressState.captureTarget.setPointerCapture(pressState.pointerId);
       } catch {
-        removeListReorderTouchGuard(pressState);
         routineReorderLongPressState.current = null;
         return;
       }
@@ -644,7 +627,6 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     const distance = Math.hypot(event.clientX - pressState.startX, event.clientY - pressState.startY);
     if (distance > LIST_REORDER_DRAG_CANCEL_DISTANCE) {
       clearRoutineReorderLongPressTimer();
-      removeListReorderTouchGuard(pressState);
       routineReorderLongPressState.current = null;
     }
   }
@@ -656,7 +638,6 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
       pressState.captureTarget.releasePointerCapture(event.pointerId);
     }
-    removeListReorderTouchGuard(pressState);
     routineReorderLongPressState.current = null;
   }
 
