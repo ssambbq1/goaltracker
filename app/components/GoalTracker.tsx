@@ -212,6 +212,7 @@ type ReorderLongPressState = {
   startX: number;
   startY: number;
   didLongPress: boolean;
+  isTouchGuardActive: boolean;
   card: HTMLElement;
   captureTarget: HTMLElement;
 };
@@ -873,6 +874,18 @@ function preventListReorderScrollEvent(event: Event) {
   event.preventDefault();
 }
 
+function addListReorderTouchGuard(pressState: ReorderLongPressState) {
+  if (pressState.isTouchGuardActive) return;
+  pressState.isTouchGuardActive = true;
+  window.addEventListener("touchmove", preventListReorderScrollEvent, { passive: false });
+}
+
+function removeListReorderTouchGuard(pressState: ReorderLongPressState | null) {
+  if (!pressState?.isTouchGuardActive) return;
+  pressState.isTouchGuardActive = false;
+  window.removeEventListener("touchmove", preventListReorderScrollEvent);
+}
+
 async function fetchGoals() {
   const response = await fetch("/api/goals", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; goals?: Goal[] };
@@ -1411,6 +1424,7 @@ export default function GoalTracker() {
       if (navItemLongPressTimer.current) clearTimeout(navItemLongPressTimer.current);
       clearListReorderLongPressTimer(goalReorderLongPressTimer);
       clearListReorderLongPressTimer(todoReorderLongPressTimer);
+      window.removeEventListener("touchmove", preventListReorderScrollEvent);
       unlockListReorderScroll();
       isAcceptingAgentVoiceResults.current = false;
       agentSpeechRecognition.current?.abort();
@@ -2059,7 +2073,7 @@ export default function GoalTracker() {
   }
 
   function handleAgentPromptKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (isSaving || !agentPrompt.trim() || !canRunAgentRequest) return;
     void submitAgentRequest();
@@ -2070,7 +2084,7 @@ export default function GoalTracker() {
     action: () => void | Promise<void>,
     disabled = false,
   ) {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (disabled) return;
     void action();
@@ -2339,14 +2353,17 @@ export default function GoalTracker() {
     if (!card) return;
 
     clearListReorderLongPressTimer(timerRef);
+    removeListReorderTouchGuard(stateRef.current);
     stateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       didLongPress: false,
+      isTouchGuardActive: false,
       card,
       captureTarget: event.currentTarget,
     };
+    if (event.pointerType !== "mouse") addListReorderTouchGuard(stateRef.current);
     timerRef.current = setTimeout(() => {
       const pressState = stateRef.current;
       if (!pressState || pressState.pointerId !== event.pointerId) return;
@@ -2354,6 +2371,7 @@ export default function GoalTracker() {
       try {
         pressState.captureTarget.setPointerCapture(pressState.pointerId);
       } catch {
+        removeListReorderTouchGuard(pressState);
         stateRef.current = null;
         return;
       }
@@ -2376,6 +2394,7 @@ export default function GoalTracker() {
     const distance = Math.hypot(event.clientX - pressState.startX, event.clientY - pressState.startY);
     if (distance > LIST_REORDER_DRAG_CANCEL_DISTANCE) {
       clearListReorderLongPressTimer(timerRef);
+      removeListReorderTouchGuard(pressState);
       stateRef.current = null;
     }
   }
@@ -2391,6 +2410,7 @@ export default function GoalTracker() {
     if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
       pressState.captureTarget.releasePointerCapture(event.pointerId);
     }
+    removeListReorderTouchGuard(pressState);
     stateRef.current = null;
   }
 
