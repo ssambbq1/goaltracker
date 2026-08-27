@@ -51,7 +51,7 @@ function applyGoalPatch(
     ...goal,
     title: patch.title !== undefined && patch.title.trim() ? patch.title.trim() : goal.title,
     memo: patch.memo !== undefined ? patch.memo : goal.memo,
-    target: patch.target !== undefined && patch.target > 0 ? patch.target : goal.target,
+    target: patch.target !== undefined && Number.isFinite(patch.target) ? patch.target : goal.target,
     unit: patch.unit !== undefined && patch.unit.trim() ? patch.unit.trim() : goal.unit,
     deadline: patch.deadline !== undefined ? patch.deadline : goal.deadline,
     createdAt: patch.createdAt !== undefined && Number.isFinite(patch.createdAt) ? patch.createdAt : goal.createdAt,
@@ -228,7 +228,7 @@ export async function addGoal(input: NewGoalInput) {
     id: makeId("goal"),
     title: input.title.trim(),
     memo: input.memo.trim(),
-    target: Number.isFinite(input.target) && input.target > 0 ? input.target : 1,
+    target: Number.isFinite(input.target) ? input.target : 1,
     unit: input.unit.trim() || "units",
     deadline: input.deadline,
     createdAt: typeof input.createdAt === "number" && Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
@@ -348,7 +348,7 @@ export async function addEntry(goalId: string, input: NewEntryInput) {
   const entry: ProgressEntry = {
     id: makeId("entry"),
     createdAt,
-    value: Number.isFinite(input.value) ? Math.max(0, input.value) : 0,
+    value: Number.isFinite(input.value) ? input.value : 0,
     memo: input.memo.trim(),
   };
   const supabase = getSupabaseServerClient();
@@ -388,7 +388,7 @@ export async function updateEntry(goalId: string, entryId: string, patch: EntryP
     .update({
       value:
         patch.value !== undefined && Number.isFinite(patch.value)
-          ? Math.max(0, patch.value)
+          ? patch.value
           : currentEntry.value,
       memo: patch.memo !== undefined ? patch.memo.trim() : currentEntry.memo,
       created_at_ms:

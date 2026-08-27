@@ -8,6 +8,10 @@ type ProgressEntry = {
   value: number;
 };
 
+export type ProgressChartMode = "raw" | "cumulative";
+
+const PROGRESS_VALUE_PRECISION = 1_000_000_000;
+
 function formatShortDate(ts: number) {
   const date = new Date(ts);
   const year = String(date.getFullYear()).slice(-2);
@@ -27,16 +31,23 @@ function formatTickValue(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
 }
 
+function normalizeProgressValue(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * PROGRESS_VALUE_PRECISION) / PROGRESS_VALUE_PRECISION;
+}
+
 export default function ProgressChart({
   entries,
   target,
   unit,
   deadline,
+  mode,
 }: {
   entries: ProgressEntry[];
   target: number;
   unit: string;
   deadline: string;
+  mode: ProgressChartMode;
 }) {
   const [todayTs] = useState(() => Date.now());
 
@@ -49,6 +60,14 @@ export default function ProgressChart({
   }
 
   const sorted = entries.slice().sort((a, b) => a.createdAt - b.createdAt);
+  const chartEntries = sorted.reduce<Array<ProgressEntry & { chartValue: number }>>((items, entry) => {
+    const previousValue = items.at(-1)?.chartValue ?? 0;
+    items.push({
+      ...entry,
+      chartValue: normalizeProgressValue(mode === "cumulative" ? previousValue + entry.value : entry.value),
+    });
+    return items;
+  }, []);
   const width = 720;
   const height = 300;
   const padding = { top: 18, right: 22, bottom: 54, left: 52 };
@@ -59,8 +78,12 @@ export default function ProgressChart({
   const hasPassedDeadline = deadlineTs !== null && deadlineTs < todayTs;
   const minTs = Math.min(sorted[0].createdAt, todayTs, hasPassedDeadline ? deadlineTs : sorted[0].createdAt);
   const maxTs = Math.max(latestRecordTs, deadlineTs ?? latestRecordTs, todayTs);
-  const maxValue = Math.max(target, ...sorted.map((entry) => entry.value), 1);
-  const yMax = Math.ceil(maxValue * 1.1);
+  const rawMinValue = Math.min(0, target, ...chartEntries.map((entry) => entry.chartValue));
+  const rawMaxValue = Math.max(0, target, ...chartEntries.map((entry) => entry.chartValue));
+  const rawValueRange = rawMaxValue - rawMinValue || Math.max(Math.abs(rawMaxValue), 1);
+  const yMin = rawMinValue - rawValueRange * 0.08;
+  const yMax = rawMaxValue + rawValueRange * 0.08;
+  const yRange = yMax - yMin || 1;
 
   function xFor(ts: number) {
     if (maxTs === minTs) return padding.left + plotWidth / 2;
@@ -68,20 +91,21 @@ export default function ProgressChart({
   }
 
   function yFor(value: number) {
-    return padding.top + plotHeight - (value / yMax) * plotHeight;
+    return padding.top + plotHeight - ((value - yMin) / yRange) * plotHeight;
   }
 
-  const linePath = sorted
-    .map((entry, index) => `${index === 0 ? "M" : "L"} ${xFor(entry.createdAt)} ${yFor(entry.value)}`)
+  const linePath = chartEntries
+    .map((entry, index) => `${index === 0 ? "M" : "L"} ${xFor(entry.createdAt)} ${yFor(entry.chartValue)}`)
     .join(" ");
-  const areaPath = `${linePath} L ${xFor(sorted.at(-1)?.createdAt ?? minTs)} ${padding.top + plotHeight} L ${xFor(
-    sorted[0].createdAt,
-  )} ${padding.top + plotHeight} Z`;
+  const baselineY = yFor(0);
+  const areaPath = `${linePath} L ${xFor(chartEntries.at(-1)?.createdAt ?? minTs)} ${baselineY} L ${xFor(
+    chartEntries[0].createdAt,
+  )} ${baselineY} Z`;
   const goalY = yFor(target);
   const todayX = xFor(todayTs);
   const deadlineX = hasPassedDeadline && deadlineTs !== null ? xFor(deadlineTs) : null;
   const latestRecordX = xFor(latestRecordTs);
-  const ticks = [0, target / 2, target];
+  const ticks = Array.from(new Set([rawMinValue, 0, target, rawMaxValue])).sort((left, right) => left - right);
 
   return (
     <div className="w-full overflow-hidden">
@@ -170,11 +194,11 @@ export default function ProgressChart({
         <path className="goal-chart-area" d={areaPath} fill="url(#progress-fill)" />
         <path className="goal-chart-line" d={linePath} fill="none" stroke="var(--chart-primary)" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
 
-        {sorted.map((entry) => (
+        {chartEntries.map((entry) => (
           <g key={entry.id}>
-            <circle className="goal-chart-dot" cx={xFor(entry.createdAt)} cy={yFor(entry.value)} r="5" fill="var(--chart-primary)" />
+            <circle className="goal-chart-dot" cx={xFor(entry.createdAt)} cy={yFor(entry.chartValue)} r="5" fill="var(--chart-primary)" />
             <title>
-              {formatShortDate(entry.createdAt)}: {entry.value} {unit}
+              {formatShortDate(entry.createdAt)}: {formatTickValue(entry.chartValue)} {unit}
             </title>
           </g>
         ))}

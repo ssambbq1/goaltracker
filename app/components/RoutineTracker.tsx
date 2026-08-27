@@ -4,6 +4,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -11,6 +12,8 @@ import { createPortal } from "react-dom";
 
 type RoutineMarkStatus = "success" | "failure";
 type AppLanguage = "en" | "ko";
+type SortDirection = "asc" | "desc";
+type RoutineSortKey = "manual" | "startDate" | "endDate" | "progress";
 
 type RoutineMark = {
   id: string;
@@ -215,6 +218,40 @@ function getRoutineStats(routine: Routine) {
   return { total, success, failure, missed, rate };
 }
 
+function getSortDirectionMultiplier(direction: SortDirection) {
+  return direction === "asc" ? 1 : -1;
+}
+
+function compareNullableValues(left: number | string | null, right: number | string | null, direction: SortDirection) {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  if (left === right) return 0;
+  return (left < right ? -1 : 1) * getSortDirectionMultiplier(direction);
+}
+
+function getRoutineSortValue(routine: Routine, sortKey: RoutineSortKey) {
+  if (sortKey === "startDate") return routine.startDate || null;
+  if (sortKey === "endDate") return routine.endDate || null;
+  if (sortKey === "progress") return getRoutineStats(routine).rate;
+  return null;
+}
+
+function sortRoutines(routines: Routine[], sortKey: RoutineSortKey, direction: SortDirection) {
+  if (sortKey === "manual") return routines;
+  return routines
+    .map((routine, index) => ({ routine, index }))
+    .sort((left, right) => {
+      const compared = compareNullableValues(
+        getRoutineSortValue(left.routine, sortKey),
+        getRoutineSortValue(right.routine, sortKey),
+        direction,
+      );
+      return compared || left.index - right.index;
+    })
+    .map(({ routine }) => routine);
+}
+
 async function fetchRoutines() {
   const response = await fetch("/api/routines", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: Routine[]; schemaMissing?: boolean };
@@ -320,6 +357,8 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
   const [highlightedRoutineId, setHighlightedRoutineId] = useState<string | null>(null);
   const [draggingRoutineId, setDraggingRoutineId] = useState<string | null>(null);
   const [routineDropTargetId, setRoutineDropTargetId] = useState<string | null>(null);
+  const [routineSortKey, setRoutineSortKey] = useState<RoutineSortKey>("manual");
+  const [routineSortDirection, setRoutineSortDirection] = useState<SortDirection>("asc");
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const routinesBeforeDrag = useRef<Routine[] | null>(null);
   const latestDraggedRoutines = useRef<Routine[] | null>(null);
@@ -371,6 +410,10 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
     activeRoutineResetSignal === resetSignal
       ? routines.find((routine) => routine.id === activeRoutineId) ?? null
       : null;
+  const visibleRoutines = useMemo(
+    () => sortRoutines(routines, routineSortKey, routineSortDirection),
+    [routineSortDirection, routineSortKey, routines],
+  );
 
   async function addRoutine() {
     const title = form.title.trim();
@@ -833,18 +876,57 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
         <section className="grid gap-0">
           {routines.length === 0 ? (
             <section className="border border-transparent bg-transparent p-0">
-              <div className="flex items-center gap-2 px-1 pb-2">
+              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <HabitIcon />
                   {text.routineList}
                 </h2>
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <select
+                    value={routineSortKey}
+                    onChange={(event) => setRoutineSortKey(event.target.value as RoutineSortKey)}
+                    aria-label={language === "ko" ? "습관 정렬 기준" : "Habit sort"}
+                    className="h-8 rounded-md border border-stone-300 bg-white px-2 text-xs font-semibold text-stone-700 outline-none focus:border-emerald-600"
+                  >
+                    <option value="manual">{language === "ko" ? "커스텀정렬" : "Custom sort"}</option>
+                    <option value="startDate">{text.start}</option>
+                    <option value="endDate">{language === "ko" ? "완료일" : "End date"}</option>
+                    <option value="progress">{language === "ko" ? "달성도" : text.successRate}</option>
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "습관 오름차순 정렬" : "Sort habits ascending"}
+                    aria-pressed={routineSortDirection === "asc"}
+                    onClick={() => setRoutineSortDirection("asc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      routineSortDirection === "asc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "습관 내림차순 정렬" : "Sort habits descending"}
+                    aria-pressed={routineSortDirection === "desc"}
+                    onClick={() => setRoutineSortDirection("desc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      routineSortDirection === "desc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↓
+                  </button>
+                </div>
                 <button
                   type="button"
                   aria-expanded={isRoutineModalOpen}
                   aria-label="Add habit"
                   onClick={() => setIsRoutineModalOpen(true)}
                   disabled={schemaMissing}
-                  className="ml-auto flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {text.add}
                 </button>
@@ -855,12 +937,51 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
             </section>
           ) : (
             <section className="border border-transparent bg-transparent p-0">
-              <div className="flex items-center gap-2 px-1 pb-2">
+              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <HabitIcon />
                   {text.routineList}
                 </h2>
-                <div className="ml-auto flex shrink-0 items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <select
+                    value={routineSortKey}
+                    onChange={(event) => setRoutineSortKey(event.target.value as RoutineSortKey)}
+                    aria-label={language === "ko" ? "습관 정렬 기준" : "Habit sort"}
+                    className="h-8 rounded-md border border-stone-300 bg-white px-2 text-xs font-semibold text-stone-700 outline-none focus:border-emerald-600"
+                  >
+                    <option value="manual">{language === "ko" ? "커스텀정렬" : "Custom sort"}</option>
+                    <option value="startDate">{text.start}</option>
+                    <option value="endDate">{language === "ko" ? "완료일" : "End date"}</option>
+                    <option value="progress">{language === "ko" ? "달성도" : text.successRate}</option>
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "습관 오름차순 정렬" : "Sort habits ascending"}
+                    aria-pressed={routineSortDirection === "asc"}
+                    onClick={() => setRoutineSortDirection("asc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      routineSortDirection === "asc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "습관 내림차순 정렬" : "Sort habits descending"}
+                    aria-pressed={routineSortDirection === "desc"}
+                    onClick={() => setRoutineSortDirection("desc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      routineSortDirection === "desc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↓
+                  </button>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     aria-expanded={isRoutineModalOpen}
@@ -874,7 +995,7 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                 </div>
               </div>
               <div className="space-y-2">
-                {routines.map((routine) => (
+                {visibleRoutines.map((routine) => (
                   <RoutineListItem
                     key={routine.id}
                     routine={routine}
@@ -889,7 +1010,9 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
                       setActiveRoutineResetSignal(resetSignal);
                       setEditingRoutineId(null);
                     }}
-                    onPointerDown={(event) => startRoutineReorderLongPress(event, routine.id)}
+                    onPointerDown={(event) => {
+                      if (routineSortKey === "manual") startRoutineReorderLongPress(event, routine.id);
+                    }}
                     onPointerMove={moveRoutineReorderLongPress}
                     onPointerUp={endRoutineReorderLongPress}
                     onPointerCancel={endRoutineReorderLongPress}

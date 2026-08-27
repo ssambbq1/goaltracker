@@ -23,7 +23,7 @@ create table if not exists public.goals (
   user_id text references public.app_users(login_id) on delete cascade,
   title text not null,
   memo text not null default '',
-  target double precision not null check (target > 0),
+  target double precision not null,
   unit text not null default 'units',
   deadline text not null default '',
   created_at_ms bigint not null,
@@ -39,7 +39,7 @@ create table if not exists public.progress_entries (
   id text primary key,
   goal_id text not null references public.goals(id) on delete cascade,
   created_at_ms bigint not null,
-  value double precision not null default 0 check (value >= 0),
+  value double precision not null default 0,
   memo text not null default ''
 );
 

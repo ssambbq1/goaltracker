@@ -17,7 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import AppInstallButton from "./AppInstallButton";
 import Head from "./head";
-import ProgressChart from "./ProgressChart";
+import ProgressChart, { type ProgressChartMode } from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
 
 type ProgressEntry = {
@@ -140,6 +140,9 @@ type AgentChatMessage =
 
 type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
 type AppLanguage = "en" | "ko";
+type SortDirection = "asc" | "desc";
+type GoalSortKey = "manual" | "startDate" | "deadline" | "latestRecord" | "progress";
+type TodoSortKey = "manual" | "createdAt" | "targetDate";
 
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
@@ -181,6 +184,10 @@ type SpeechRecognitionWindow = Window &
     SpeechRecognition?: BrowserSpeechRecognitionConstructor;
     webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
   };
+
+const AGENT_VOICE_AUTO_RUN_DELAY_MS = 3200;
+const AGENT_VOICE_RESTART_DELAY_MS = 160;
+const AGENT_VOICE_ERROR_RESTART_DELAY_MS = 700;
 
 type Session = {
   loginId: string | null;
@@ -247,7 +254,7 @@ type ConfettiParticle = {
 const emptyGoalForm = {
   title: "",
   memo: "",
-  target: 100,
+  target: "100",
   unit: "units",
   startDate: toDateInputValue(),
   deadline: "",
@@ -309,7 +316,10 @@ const UI_TEXT = {
     none: "none",
     notSet: "not set",
     progressChart: "Progress chart",
-    progressChartHint: "Records are plotted by saved date.",
+    progressChartHint: "Records are plotted by saved date. Use value mode for balance/current-state records, or cumulative mode for delta records.",
+    chartValueMode: "Value mode",
+    chartRawValue: "Record value",
+    chartCumulativeValue: "Cumulative",
     recordHistory: "Record history",
     addGoal: "Add goal",
     addTodo: "Add task",
@@ -375,7 +385,10 @@ const UI_TEXT = {
     none: "없음",
     notSet: "미설정",
     progressChart: "진행 그래프",
-    progressChartHint: "저장한 날짜 기준으로 기록이 표시됩니다.",
+    progressChartHint: "저장한 날짜 기준으로 기록이 표시됩니다. 잔액/현재상태 기록은 기록값, 변화량 기록은 누적값을 사용하세요.",
+    chartValueMode: "그래프 값",
+    chartRawValue: "기록값",
+    chartCumulativeValue: "누적값",
     recordHistory: "기록 내역",
     addGoal: "목표 추가",
     addTodo: "할일 추가",
@@ -628,9 +641,20 @@ function formatDate(ts: number) {
   }).format(new Date(ts));
 }
 
-function clampProgress(value: number, target: number) {
-  if (!Number.isFinite(value) || !Number.isFinite(target) || target <= 0) return 0;
-  return Math.max(0, Math.round((value / target) * 100));
+const PROGRESS_VALUE_PRECISION = 1_000_000_000;
+
+function normalizeProgressValue(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * PROGRESS_VALUE_PRECISION) / PROGRESS_VALUE_PRECISION;
+}
+
+function clampProgress(value: number, target: number, startValue = 0) {
+  if (!Number.isFinite(value) || !Number.isFinite(target) || !Number.isFinite(startValue)) return 0;
+
+  const range = target - startValue;
+  if (range === 0) return value === target ? 100 : 0;
+
+  return Math.max(0, Math.round(((value - startValue) / range) * 100));
 }
 
 function getLatestEntry(entries: ProgressEntry[]) {
@@ -638,6 +662,81 @@ function getLatestEntry(entries: ProgressEntry[]) {
     (latest, entry) => (!latest || entry.createdAt > latest.createdAt ? entry : latest),
     null,
   );
+}
+
+function getSortDirectionMultiplier(direction: SortDirection) {
+  return direction === "asc" ? 1 : -1;
+}
+
+function compareNullableValues(left: number | string | null, right: number | string | null, direction: SortDirection) {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  if (left === right) return 0;
+  return (left < right ? -1 : 1) * getSortDirectionMultiplier(direction);
+}
+
+function sortWithStableFallback<T extends { id: string }>(
+  items: T[],
+  getValue: (item: T) => number | string | null,
+  direction: SortDirection,
+) {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const compared = compareNullableValues(getValue(left.item), getValue(right.item), direction);
+      return compared || left.index - right.index;
+    })
+    .map(({ item }) => item);
+}
+
+function getGoalChartEntries(entries: ProgressEntry[], mode: ProgressChartMode) {
+  const sorted = entries.slice().sort((left, right) => left.createdAt - right.createdAt);
+
+  return sorted.reduce<Array<ProgressEntry & { chartValue: number }>>((items, entry) => {
+    const previousValue = items.at(-1)?.chartValue ?? 0;
+    items.push({
+      ...entry,
+      chartValue: normalizeProgressValue(mode === "cumulative" ? previousValue + entry.value : entry.value),
+    });
+    return items;
+  }, []);
+}
+
+function getGoalCurrentValue(goal: Goal, mode: ProgressChartMode) {
+  return getGoalChartEntries(goal.entries, mode).at(-1)?.chartValue ?? 0;
+}
+
+function getGoalProgressValue(goal: Goal, mode: ProgressChartMode = "raw") {
+  const chartEntries = getGoalChartEntries(goal.entries, mode);
+  const current = chartEntries.at(-1)?.chartValue ?? 0;
+  const first = chartEntries[0];
+  const startValue = first && (first.chartValue < 0 || goal.target <= 0) ? first.chartValue : 0;
+  return clampProgress(current, goal.target, startValue);
+}
+
+function getGoalSortValue(goal: Goal, sortKey: GoalSortKey, progressMode: ProgressChartMode) {
+  if (sortKey === "startDate") return goal.createdAt;
+  if (sortKey === "deadline") return /^\d{4}-\d{2}-\d{2}$/.test(goal.deadline) ? goal.deadline : null;
+  if (sortKey === "latestRecord") return getLatestEntry(goal.entries)?.createdAt ?? null;
+  if (sortKey === "progress") return getGoalProgressValue(goal, progressMode);
+  return null;
+}
+
+function sortGoals(goals: Goal[], sortKey: GoalSortKey, direction: SortDirection, progressMode: ProgressChartMode) {
+  return sortKey === "manual"
+    ? goals
+    : sortWithStableFallback(goals, (goal) => getGoalSortValue(goal, sortKey, progressMode), direction);
+}
+
+function getTodoSortValue(todo: Todo, sortKey: TodoSortKey) {
+  if (sortKey === "createdAt") return todo.createdAt;
+  if (sortKey === "targetDate") return todo.targetDate && /^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate) ? todo.targetDate : null;
+  return null;
+}
+
+function sortTodos(todos: Todo[], sortKey: TodoSortKey, direction: SortDirection) {
+  return sortKey === "manual" ? todos : sortWithStableFallback(todos, (todo) => getTodoSortValue(todo, sortKey), direction);
 }
 
 function toDateInputValue(date = new Date()) {
@@ -694,11 +793,6 @@ function getTodoTargetTimingState(targetDate: string) {
   if (diffDays > 0) return "future";
   if (diffDays < 0) return "past";
   return "today";
-}
-
-function getTodoEditRows(value: string) {
-  const lineCount = value.split(/\r\n|\r|\n/).reduce((count, line) => count + Math.max(1, Math.ceil(line.length / 30)), 0);
-  return Math.max(2, lineCount);
 }
 
 function toGoalDraft(goal: Goal): GoalDraft {
@@ -870,6 +964,7 @@ function isEditableTarget(target: EventTarget | null) {
 function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return true;
   if (isEditableTarget(target)) return true;
+  if (target.closest("[data-reorder-card]")) return true;
   if (target.closest("[data-screen-swipe-surface]")) return false;
   return Boolean(
     target.closest(
@@ -948,7 +1043,12 @@ async function fetchRoutines() {
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
-async function createGoal(input: Omit<typeof emptyGoalForm, "startDate"> & { createdAt: number }) {
+type CreateGoalPayload = Omit<typeof emptyGoalForm, "startDate" | "target"> & {
+  target: number;
+  createdAt: number;
+};
+
+async function createGoal(input: CreateGoalPayload) {
   const response = await fetch("/api/goals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1194,6 +1294,7 @@ export default function GoalTracker() {
   const [isEmptyBinModalOpen, setIsEmptyBinModalOpen] = useState(false);
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
+  const [todoActionMenuId, setTodoActionMenuId] = useState<string | null>(null);
   const [editingTodoTitle, setEditingTodoTitle] = useState("");
   const [editingTodoTargetDate, setEditingTodoTargetDate] = useState("");
   const [editingTodoCategory, setEditingTodoCategory] = useState("");
@@ -1209,12 +1310,17 @@ export default function GoalTracker() {
   const [todoCategory, setTodoCategory] = useState("");
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>([]);
   const [selectedTodoIds, setSelectedTodoIds] = useState<string[]>([]);
+  const [goalSortKey, setGoalSortKey] = useState<GoalSortKey>("manual");
+  const [goalSortDirection, setGoalSortDirection] = useState<SortDirection>("asc");
+  const [todoSortKey, setTodoSortKey] = useState<TodoSortKey>("manual");
+  const [todoSortDirection, setTodoSortDirection] = useState<SortDirection>("asc");
+  const [progressChartMode, setProgressChartMode] = useState<ProgressChartMode>("raw");
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
-  const [entryValue, setEntryValue] = useState(0);
+  const [entryValue, setEntryValue] = useState("0");
   const [entryMemo, setEntryMemo] = useState("");
   const [entryRecordedAt, setEntryRecordedAt] = useState(() => toDateInputValue());
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [editEntryValue, setEditEntryValue] = useState(0);
+  const [editEntryValue, setEditEntryValue] = useState("0");
   const [editEntryMemo, setEditEntryMemo] = useState("");
   const [editEntryRecordedAt, setEditEntryRecordedAt] = useState(() => toDateInputValue());
   const [isLoading, setIsLoading] = useState(true);
@@ -1275,6 +1381,7 @@ export default function GoalTracker() {
   const confettiBurstId = useRef(0);
   const agentSpeechRecognition = useRef<BrowserSpeechRecognition | null>(null);
   const agentVoiceSilenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentVoiceRestartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentVoiceDraft = useRef("");
   const agentVoiceFinalTranscript = useRef("");
   const agentVoiceFinalResults = useRef<Record<number, string>>({});
@@ -1406,7 +1513,7 @@ export default function GoalTracker() {
         previousView.current = nextView;
         setIsEditingGoal(false);
         setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
-        setEntryValue(nextLatestEntry?.value ?? 0);
+        setEntryValue(String(nextLatestEntry?.value ?? 0));
 
         try {
           const loadedTodos = await fetchTodos();
@@ -1444,6 +1551,7 @@ export default function GoalTracker() {
       if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
       if (confettiTimer.current) clearTimeout(confettiTimer.current);
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
       if (navItemLongPressTimer.current) clearTimeout(navItemLongPressTimer.current);
       clearListReorderLongPressTimer(goalReorderLongPressTimer);
       clearListReorderLongPressTimer(todoReorderLongPressTimer);
@@ -1458,6 +1566,18 @@ export default function GoalTracker() {
   useEffect(() => {
     latestNavMenuOrder.current = normalizeNavMenuOrder(navMenuOrder);
   }, [navMenuOrder]);
+
+  useEffect(() => {
+    if (!todoActionMenuId) return;
+
+    function closeTodoActionMenuOnOutsidePress(event: PointerEvent) {
+      if (event.target instanceof HTMLElement && event.target.closest("[data-todo-action-menu]")) return;
+      setTodoActionMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", closeTodoActionMenuOnOutsidePress, true);
+    return () => document.removeEventListener("pointerdown", closeTodoActionMenuOnOutsidePress, true);
+  }, [todoActionMenuId]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark-mode", isDarkMode);
@@ -1566,11 +1686,18 @@ export default function GoalTracker() {
   );
 
   const latestEntry = activeGoal ? getLatestEntry(activeGoal.entries) : null;
-  const latestValue = latestEntry?.value ?? 0;
-  const progressPercent = activeGoal ? clampProgress(latestValue, activeGoal.target) : 0;
+  const currentGoalValue = activeGoal ? getGoalCurrentValue(activeGoal, progressChartMode) : 0;
+  const progressPercent = activeGoal ? getGoalProgressValue(activeGoal, progressChartMode) : 0;
+  const numericEntryValue = isNumberInputValueValid(entryValue) ? Number(entryValue) : 0;
+  const entryRangeMin = activeGoal ? Math.min(activeGoal.target, numericEntryValue, 0) : 0;
+  const entryRangeMax = activeGoal ? Math.max(activeGoal.target, numericEntryValue, 0) : 1;
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
   const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
   const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
+  const visibleGoals = useMemo(
+    () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
+    [goalSortDirection, goalSortKey, goals, progressChartMode],
+  );
   const todoCategories = useMemo(
     () =>
       Array.from(new Set(todos.map((todo) => todo.category.trim()).filter(Boolean))).sort((left, right) =>
@@ -1584,11 +1711,14 @@ export default function GoalTracker() {
   );
   const selectedTodoCategorySet = useMemo(() => new Set(activeSelectedTodoCategories), [activeSelectedTodoCategories]);
   const visibleTodos = useMemo(
-    () =>
-      activeSelectedTodoCategories.length === 0
-        ? todos
-        : todos.filter((todo) => selectedTodoCategorySet.has(todo.category.trim())),
-    [activeSelectedTodoCategories.length, selectedTodoCategorySet, todos],
+    () => {
+      const filteredTodos =
+        activeSelectedTodoCategories.length === 0
+          ? todos
+          : todos.filter((todo) => selectedTodoCategorySet.has(todo.category.trim()));
+      return sortTodos(filteredTodos, todoSortKey, todoSortDirection);
+    },
+    [activeSelectedTodoCategories.length, selectedTodoCategorySet, todoSortDirection, todoSortKey, todos],
   );
   const selectedTodoIdSet = useMemo(() => new Set(selectedTodoIds), [selectedTodoIds]);
   const selectedTodos = useMemo(
@@ -1673,7 +1803,7 @@ export default function GoalTracker() {
     setTodoCategory("");
     setSelectedTodoCategories([]);
     setGoalDraft(null);
-    setEntryValue(0);
+    setEntryValue("0");
     setEntryMemo("");
     setEditingEntryId(null);
   }
@@ -1687,7 +1817,7 @@ export default function GoalTracker() {
     setActiveGoalId(firstGoal?.id ?? null);
     setIsEditingGoal(false);
     setGoalDraft(firstGoal ? toGoalDraft(firstGoal) : null);
-    setEntryValue(firstLatestEntry?.value ?? 0);
+    setEntryValue(String(firstLatestEntry?.value ?? 0));
   }
 
   async function loadGoalData() {
@@ -2015,6 +2145,8 @@ export default function GoalTracker() {
     agentVoiceSilenceTimer.current = setTimeout(() => {
       const prompt = agentVoiceDraft.current.trim();
       agentVoiceSilenceTimer.current = null;
+      if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
+      agentVoiceRestartTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
       agentVoiceFinalResults.current = {};
@@ -2022,7 +2154,7 @@ export default function GoalTracker() {
       agentSpeechRecognition.current?.stop();
       setIsAgentListening(false);
       void executeAgentPrompt(prompt, { speakResponse: true });
-    }, 1300);
+    }, AGENT_VOICE_AUTO_RUN_DELAY_MS);
   }
 
   function toggleAgentVoiceInput() {
@@ -2030,7 +2162,9 @@ export default function GoalTracker() {
 
     if (isAgentListening) {
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
       agentVoiceSilenceTimer.current = null;
+      agentVoiceRestartTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
       agentVoiceFinalResults.current = {};
@@ -2085,8 +2219,27 @@ export default function GoalTracker() {
       scheduleAgentVoiceAutoRun();
     };
     recognition.onerror = (event) => {
+      if (event.error === "no-speech" && isAcceptingAgentVoiceResults.current) {
+        if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
+        agentVoiceRestartTimer.current = setTimeout(() => {
+          agentVoiceRestartTimer.current = null;
+          if (!isAcceptingAgentVoiceResults.current || agentSpeechRecognition.current !== recognition) return;
+
+          try {
+            recognition.start();
+          } catch {
+            isAcceptingAgentVoiceResults.current = false;
+            agentSpeechRecognition.current = null;
+            setIsAgentListening(false);
+          }
+        }, AGENT_VOICE_ERROR_RESTART_DELAY_MS);
+        return;
+      }
+
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
+      if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
       agentVoiceSilenceTimer.current = null;
+      agentVoiceRestartTimer.current = null;
       agentVoiceDraft.current = "";
       agentVoiceFinalTranscript.current = "";
       agentVoiceFinalResults.current = {};
@@ -2099,6 +2252,25 @@ export default function GoalTracker() {
       setIsAgentListening(false);
     };
     recognition.onend = () => {
+      if (agentSpeechRecognition.current !== recognition) return;
+
+      if (isAcceptingAgentVoiceResults.current) {
+        if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
+        agentVoiceRestartTimer.current = setTimeout(() => {
+          agentVoiceRestartTimer.current = null;
+          if (!isAcceptingAgentVoiceResults.current || agentSpeechRecognition.current !== recognition) return;
+
+          try {
+            recognition.start();
+          } catch {
+            isAcceptingAgentVoiceResults.current = false;
+            agentSpeechRecognition.current = null;
+            setIsAgentListening(false);
+          }
+        }, AGENT_VOICE_RESTART_DELAY_MS);
+        return;
+      }
+
       isAcceptingAgentVoiceResults.current = false;
       setIsAgentListening(false);
       agentSpeechRecognition.current = null;
@@ -2227,7 +2399,8 @@ export default function GoalTracker() {
 
   async function addGoal() {
     const title = goalForm.title.trim();
-    if (!title || goalForm.target <= 0) return;
+    const target = Number(goalForm.target);
+    if (!title || !Number.isFinite(target)) return;
 
     setIsSaving(true);
     setError("");
@@ -2236,7 +2409,7 @@ export default function GoalTracker() {
       const result = await createGoal({
         title,
         memo: goalForm.memo,
-        target: goalForm.target,
+        target,
         unit: goalForm.unit.trim() || "units",
         createdAt: parseDateInputValue(goalForm.startDate),
         deadline: goalForm.deadline,
@@ -2247,7 +2420,7 @@ export default function GoalTracker() {
       setActiveGoalId(result.goal.id);
       setIsEditingGoal(false);
       setGoalDraft(toGoalDraft(result.goal));
-      setEntryValue(0);
+      setEntryValue("0");
       setEntryMemo("");
       setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
@@ -2785,6 +2958,7 @@ export default function GoalTracker() {
     setEditingTodoTargetDate(todo.targetDate ?? toDateInputValue());
     setEditingTodoCategory(todo.category);
     setTodoToDelete(null);
+    setTodoActionMenuId(null);
   }
 
   function cancelEditingTodo() {
@@ -2936,6 +3110,26 @@ export default function GoalTracker() {
     );
   }
 
+  async function toggleTodoCompleted(todo: Todo) {
+    if (!loginId) return;
+
+    const previousTodos = todos;
+    const nextCompleted = !todo.completed;
+    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item)));
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
+      if (nextCompleted) triggerSuccessConfetti();
+    } catch (updateError) {
+      setTodos(previousTodos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update task");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function completeSelectedTodos() {
     if (!loginId || selectedTodos.length === 0) return;
 
@@ -3069,7 +3263,7 @@ export default function GoalTracker() {
           ? {
               ...goal,
               ...patch,
-              target: patch.target !== undefined ? Math.max(1, patch.target) : goal.target,
+              target: patch.target !== undefined ? patch.target : goal.target,
               unit: patch.unit !== undefined ? patch.unit || "units" : goal.unit,
             }
           : goal,
@@ -3130,7 +3324,7 @@ export default function GoalTracker() {
     if (field === "target") {
       const targetText = rawValue ?? draft.target;
       const target = Number(targetText);
-      if (!Number.isFinite(target) || target <= 0) {
+      if (!Number.isFinite(target)) {
         setGoalDraft((draft) => (draft ? { ...draft, target: String(activeGoal.target) } : draft));
         return;
       }
@@ -3177,22 +3371,23 @@ export default function GoalTracker() {
   }
 
   async function addEntry() {
-    if (!activeGoal || !Number.isFinite(entryValue)) return;
+    const value = Number(entryValue);
+    if (!activeGoal || !Number.isFinite(value)) return;
 
-    const previousLatestValue = getLatestEntry(activeGoal.entries)?.value ?? 0;
+    const previousProgressPercent = getGoalProgressValue(activeGoal, progressChartMode);
     setIsSaving(true);
     setError("");
 
     try {
       const savedGoals = await createEntry(activeGoal.id, {
-        value: Math.max(0, entryValue),
+        value,
         memo: entryMemo.trim(),
         createdAt: parseDateInputValue(entryRecordedAt),
       });
       const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
-      const nextLatestValue = getLatestEntry(savedGoal?.entries ?? [])?.value ?? 0;
+      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, progressChartMode) : 0;
       setGoals(savedGoals);
-      if (nextLatestValue > previousLatestValue) triggerSuccessConfetti();
+      if (nextProgressPercent > previousProgressPercent) triggerSuccessConfetti();
       setEntryMemo("");
       setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
@@ -3212,7 +3407,7 @@ export default function GoalTracker() {
       setActiveGoalId(nextGoal?.id ?? null);
       setIsEditingGoal(false);
       setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
-      setEntryValue(nextLatestEntry?.value ?? 0);
+      setEntryValue(String(nextLatestEntry?.value ?? 0));
       setCurrentView("bin");
     }
     setGoals(nextGoals);
@@ -3240,7 +3435,7 @@ export default function GoalTracker() {
       setActiveGoalId(nextGoal?.id ?? null);
       setIsEditingGoal(false);
       setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
-      setEntryValue(nextLatestEntry?.value ?? 0);
+      setEntryValue(String(nextLatestEntry?.value ?? 0));
       setCurrentView("archive");
     }
     setGoals(nextGoals);
@@ -3272,7 +3467,7 @@ export default function GoalTracker() {
       setActiveGoalId(restoredGoal?.id ?? result.goals[0]?.id ?? null);
       setIsEditingGoal(false);
       setGoalDraft(restoredGoal ? toGoalDraft(restoredGoal) : result.goals[0] ? toGoalDraft(result.goals[0]) : null);
-      setEntryValue(restoredLatestEntry?.value ?? getLatestEntry(result.goals[0]?.entries ?? [])?.value ?? 0);
+      setEntryValue(String(restoredLatestEntry?.value ?? getLatestEntry(result.goals[0]?.entries ?? [])?.value ?? 0));
       setEntryMemo("");
       setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
@@ -3427,7 +3622,7 @@ export default function GoalTracker() {
     setCurrentView("detail");
     setIsEditingGoal(false);
     setGoalDraft(toGoalDraft(goal));
-    setEntryValue(goalLatestEntry?.value ?? 0);
+    setEntryValue(String(goalLatestEntry?.value ?? 0));
     setEntryMemo("");
     setEntryRecordedAt(toDateInputValue());
     setEditingEntryId(null);
@@ -3436,29 +3631,30 @@ export default function GoalTracker() {
 
   function startEditingEntry(entry: ProgressEntry) {
     setEditingEntryId(entry.id);
-    setEditEntryValue(entry.value);
+    setEditEntryValue(String(entry.value));
     setEditEntryMemo(entry.memo);
     setEditEntryRecordedAt(toDateInputValue(new Date(entry.createdAt)));
     setError("");
   }
 
   async function updateEntryRecord(entryId: string) {
-    if (!activeGoal || !Number.isFinite(editEntryValue)) return;
+    const value = Number(editEntryValue);
+    if (!activeGoal || !Number.isFinite(value)) return;
 
-    const previousLatestValue = getLatestEntry(activeGoal.entries)?.value ?? 0;
+    const previousProgressPercent = getGoalProgressValue(activeGoal, progressChartMode);
     setIsSaving(true);
     setError("");
 
     try {
       const savedGoals = await patchEntry(activeGoal.id, entryId, {
-        value: Math.max(0, editEntryValue),
+        value,
         memo: editEntryMemo.trim(),
         createdAt: parseDateInputValue(editEntryRecordedAt),
       });
       const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
-      const nextLatestValue = getLatestEntry(savedGoal?.entries ?? [])?.value ?? 0;
+      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, progressChartMode) : 0;
       setGoals(savedGoals);
-      if (nextLatestValue > previousLatestValue) triggerSuccessConfetti();
+      if (nextProgressPercent > previousProgressPercent) triggerSuccessConfetti();
       setEditingEntryId(null);
     } catch (entryError) {
       setError(entryError instanceof Error ? entryError.message : "Failed to update record");
@@ -3507,8 +3703,8 @@ export default function GoalTracker() {
   }
 
   const selectedTodoActionBar = selectedTodoCount > 0 ? (
-    <div className="fixed left-3 right-3 top-3 z-[90] flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-white/95 p-2 text-xs shadow-lg backdrop-blur sm:left-1/2 sm:right-auto sm:w-[min(44rem,calc(100vw-2rem))] sm:-translate-x-1/2">
-      <span className="mr-auto font-semibold text-emerald-800">
+    <div className="fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom))] left-3 right-3 z-[90] flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-white/95 p-2 text-xs shadow-lg backdrop-blur sm:bottom-4 sm:left-1/2 sm:right-auto sm:w-[min(44rem,calc(100vw-2rem))] sm:-translate-x-1/2">
+      <span className="mr-auto px-1 font-semibold text-emerald-800">
         {language === "ko" ? `${selectedTodoCount}개 선택됨` : `${selectedTodoCount} selected`}
       </span>
       {selectedIncompleteTodoCount > 0 && (
@@ -3516,8 +3712,9 @@ export default function GoalTracker() {
           type="button"
           onClick={completeSelectedTodos}
           disabled={isSaving}
-          className="flex h-8 items-center justify-center rounded-md border border-emerald-200 px-3 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+          className="flex h-8 items-center justify-center gap-1 rounded-md border border-emerald-200 px-2 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60 sm:px-3"
         >
+          <CheckIcon />
           {text.completed}
         </button>
       )}
@@ -3526,7 +3723,7 @@ export default function GoalTracker() {
           type="button"
           onClick={uncompleteSelectedTodos}
           disabled={isSaving}
-          className="flex h-8 items-center justify-center rounded-md border border-amber-200 px-3 font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md border border-amber-200 px-2 font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60 sm:px-3"
         >
           {text.cancelCompleted}
         </button>
@@ -3535,23 +3732,25 @@ export default function GoalTracker() {
         type="button"
         onClick={deleteSelectedTodos}
         disabled={isSaving}
-        className="flex h-8 items-center justify-center rounded-md border border-red-200 px-3 font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+        className="flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 px-2 font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60 sm:px-3"
       >
+        <BinIcon />
         {text.delete}
       </button>
       <button
         type="button"
         onClick={editSelectedTodo}
         disabled={isSaving || selectedTodoCount !== 1 || editingTodoId !== null}
-        className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 items-center justify-center gap-1 rounded-md border border-stone-300 px-2 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3"
       >
+        <EditIcon />
         {text.edit}
       </button>
       <button
         type="button"
         onClick={() => setSelectedTodoIds([])}
         disabled={isSaving}
-        className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+        className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-2 font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60 sm:px-3"
       >
         {text.cancel}
       </button>
@@ -3740,16 +3939,28 @@ export default function GoalTracker() {
                   </span>
                 </h2>
                 {!isAgentPanelExpanded && (
-                  <input
-                    type="text"
-                    value={agentPrompt}
-                    onChange={(event) => updateAgentPromptInput(event.target.value)}
-                    onKeyDown={handleAgentPromptKeyDown}
-                    disabled={isSaving}
-                    aria-label={language === "ko" ? "AI Agent 명령 입력" : "AI Agent command"}
-                    placeholder={language === "ko" ? "명령" : "Command"}
-                    className="h-8 w-24 min-w-0 flex-none truncate rounded-md border border-stone-300 px-2 text-sm outline-none focus:border-emerald-600 disabled:cursor-wait disabled:opacity-60 sm:w-40"
-                  />
+                  <div className="flex min-w-0 flex-none items-center gap-1">
+                    <input
+                      type="text"
+                      value={agentPrompt}
+                      onChange={(event) => updateAgentPromptInput(event.target.value)}
+                      onKeyDown={handleAgentPromptKeyDown}
+                      disabled={isSaving}
+                      aria-label={language === "ko" ? "AI Agent 명령 입력" : "AI Agent command"}
+                      placeholder={language === "ko" ? "명령" : "Command"}
+                      className="h-8 w-20 min-w-0 truncate rounded-md border border-stone-300 px-2 text-sm outline-none focus:border-emerald-600 disabled:cursor-wait disabled:opacity-60 sm:w-40"
+                    />
+                    <button
+                      type="button"
+                      onClick={submitAgentRequest}
+                      disabled={isSaving || !agentPrompt.trim() || !canRunAgentRequest}
+                      aria-label={language === "ko" ? "AI Agent 명령 실행" : "Run AI Agent command"}
+                      title={language === "ko" ? "실행" : "Run"}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:bg-stone-300 disabled:text-white/80"
+                    >
+                      <CheckIcon />
+                    </button>
+                  </div>
                 )}
                 <div className="ml-auto flex min-w-0 items-center gap-2">
                   <span
@@ -4193,12 +4404,52 @@ export default function GoalTracker() {
         <section className="min-w-0">
           <aside className={`min-w-0 flex-col gap-0 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div className={currentView === "list" ? "" : "hidden"}>
-              <div className="flex items-center gap-2 px-1 pb-2">
+              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <ListIcon />
                   {text.goalList}
                 </h2>
-                <div className="ml-auto flex shrink-0 items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <select
+                    value={goalSortKey}
+                    onChange={(event) => setGoalSortKey(event.target.value as GoalSortKey)}
+                    aria-label={language === "ko" ? "목표 정렬 기준" : "Goal sort"}
+                    className="h-8 rounded-md border border-stone-300 bg-white px-2 text-xs font-semibold text-stone-700 outline-none focus:border-emerald-600"
+                  >
+                    <option value="manual">{language === "ko" ? "커스텀정렬" : "Custom sort"}</option>
+                    <option value="startDate">{language === "ko" ? "시작일" : "Start date"}</option>
+                    <option value="deadline">{language === "ko" ? "완료일" : "Due date"}</option>
+                    <option value="latestRecord">{language === "ko" ? "최신 record 일" : "Latest record"}</option>
+                    <option value="progress">{language === "ko" ? "달성도" : "Progress"}</option>
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "목표 오름차순 정렬" : "Sort goals ascending"}
+                    aria-pressed={goalSortDirection === "asc"}
+                    onClick={() => setGoalSortDirection("asc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      goalSortDirection === "asc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "목표 내림차순 정렬" : "Sort goals descending"}
+                    aria-pressed={goalSortDirection === "desc"}
+                    onClick={() => setGoalSortDirection("desc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      goalSortDirection === "desc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↓
+                  </button>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     aria-expanded={isGoalModalOpen}
@@ -4220,9 +4471,9 @@ export default function GoalTracker() {
                       {text.noGoals}
                     </p>
                   ) : (
-                    goals.map((goal) => {
-                      const latest = getLatestEntry(goal.entries)?.value ?? 0;
-                      const percent = Math.min(100, clampProgress(latest, goal.target));
+                    visibleGoals.map((goal) => {
+                      const latest = getGoalCurrentValue(goal, progressChartMode);
+                      const percent = Math.min(100, getGoalProgressValue(goal, progressChartMode));
 
                       return (
                         <div
@@ -4242,7 +4493,7 @@ export default function GoalTracker() {
                               goalReorderLongPressState,
                               goalReorderLongPressTimer,
                               (card, clientX, clientY) => startGoalDrag(card, clientX, clientY, goal.id),
-                              isSaving,
+                              isSaving || goalSortKey !== "manual",
                             )
                           }
                           onPointerMove={(event) =>
@@ -4302,11 +4553,49 @@ export default function GoalTracker() {
                 currentView === "todo" ? "" : "hidden"
               }`}
             >
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <TodoIcon />
                   {text.todoList}
                 </h2>
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <select
+                    value={todoSortKey}
+                    onChange={(event) => setTodoSortKey(event.target.value as TodoSortKey)}
+                    aria-label={language === "ko" ? "할일 정렬 기준" : "Task sort"}
+                    className="h-8 rounded-md border border-stone-300 bg-white px-2 text-xs font-semibold text-stone-700 outline-none focus:border-emerald-600"
+                  >
+                    <option value="manual">{language === "ko" ? "커스텀정렬" : "Custom sort"}</option>
+                    <option value="createdAt">{language === "ko" ? "생성일" : "Created date"}</option>
+                    <option value="targetDate">{language === "ko" ? "목표일" : "Target date"}</option>
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "할일 오름차순 정렬" : "Sort tasks ascending"}
+                    aria-pressed={todoSortDirection === "asc"}
+                    onClick={() => setTodoSortDirection("asc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      todoSortDirection === "asc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={language === "ko" ? "할일 내림차순 정렬" : "Sort tasks descending"}
+                    aria-pressed={todoSortDirection === "desc"}
+                    onClick={() => setTodoSortDirection("desc")}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
+                      todoSortDirection === "desc"
+                        ? "border-emerald-700 bg-emerald-700 text-white"
+                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    ↓
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -4377,13 +4666,17 @@ export default function GoalTracker() {
                         data-reorder-card
                         data-reorder-kind="todo"
                         data-reorder-id={todo.id}
+                        onClick={() => {
+                          if (selectedTodoCount > 0 && !isEditingTodo) toggleTodoSelection(todo.id);
+                          if (todoActionMenuId) setTodoActionMenuId(null);
+                        }}
                         onPointerDown={(event) =>
                           startListReorderLongPress(
                             event,
                             todoReorderLongPressState,
                             todoReorderLongPressTimer,
                             (card, clientX, clientY) => startTodoDrag(card, clientX, clientY, todo.id),
-                            isSaving || editingTodoId !== null,
+                            isSaving || editingTodoId !== null || todoSortKey !== "manual",
                           )
                         }
                         onPointerMove={(event) =>
@@ -4396,9 +4689,7 @@ export default function GoalTracker() {
                           endListReorderLongPress(event, todoReorderLongPressState, todoReorderLongPressTimer)
                         }
                         onDragStart={(event) => event.preventDefault()}
-                        className={`relative grid overflow-hidden ${
-                          isEditingTodo ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto]"
-                        } items-center gap-2 rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
+                        className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 overflow-visible rounded-md border p-3 transition-all duration-500 sm:gap-3 ${
                           highlightedTodoId === todo.id
                             ? "border-emerald-500 bg-emerald-100 shadow-sm"
                             : todoDropTargetId === todo.id && draggingTodoId !== todo.id
@@ -4413,19 +4704,49 @@ export default function GoalTracker() {
                             {language === "ko" ? "이동 중" : "Moving"}
                           </div>
                         )}
-                        <input
-                          type="checkbox"
-                          checked={selectedTodoIdSet.has(todo.id)}
-                          onChange={() => toggleTodoSelection(todo.id)}
-                          onPointerDown={(event) => event.stopPropagation()}
-                          disabled={isSaving || isEditingTodo}
-                          aria-label={`Select ${todo.title}`}
-                          className="relative h-5 w-5 rounded border-stone-300 accent-emerald-700 disabled:cursor-wait"
-                        />
+                        {selectedTodoCount > 0 ? (
+                          <button
+                            type="button"
+                            aria-pressed={selectedTodoIdSet.has(todo.id)}
+                            aria-label={`Select ${todo.title}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleTodoSelection(todo.id);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            disabled={isSaving || isEditingTodo}
+                            className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition disabled:cursor-wait disabled:opacity-50 ${
+                              selectedTodoIdSet.has(todo.id)
+                                ? "border-emerald-700 bg-emerald-700 text-white"
+                                : "border-stone-300 bg-white text-transparent hover:border-emerald-500"
+                            }`}
+                          >
+                            <CheckIcon />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-pressed={todo.completed}
+                            aria-label={todo.completed ? `Mark ${todo.title} incomplete` : `Complete ${todo.title}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void toggleTodoCompleted(todo);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            disabled={isSaving || isEditingTodo}
+                            className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-wait disabled:opacity-50 ${
+                              todo.completed
+                                ? "border-stone-500 bg-stone-500 text-white"
+                                : "border-stone-300 bg-white text-transparent hover:border-stone-500 hover:text-stone-500"
+                            }`}
+                          >
+                            <CheckIcon />
+                          </button>
+                        )}
                         <div className="relative min-w-0">
                           {isEditingTodo ? (
-                            <div className="grid min-w-0 gap-2">
-                              <textarea
+                            <div className="grid min-w-0 gap-1">
+                              <input
                                 value={editingTodoTitle}
                                 onChange={(event) => setEditingTodoTitle(event.target.value)}
                                 onKeyDown={(event) =>
@@ -4436,12 +4757,10 @@ export default function GoalTracker() {
                                   )
                                 }
                                 autoFocus
-                                rows={getTodoEditRows(editingTodoTitle)}
-                                className="w-full resize-none overflow-hidden rounded-md border border-stone-300 px-2 py-1 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
+                                className="h-7 min-w-0 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
                                 aria-label={`Edit ${todo.title}`}
                               />
-                              <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-stone-500">
-                                <span>{text.target}:</span>
+                              <div className="grid min-w-0 grid-cols-[minmax(7.5rem,auto)_minmax(0,1fr)] items-center gap-1 text-xs text-stone-500">
                                 <input
                                   type="date"
                                   value={editingTodoTargetDate}
@@ -4453,13 +4772,9 @@ export default function GoalTracker() {
                                       isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim(),
                                     )
                                   }
-                                  className="h-6 rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                                  className="h-7 min-w-0 rounded-md border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                                   aria-label={`Edit target date for ${todo.title}`}
                                 />
-                                <span>· {getTodoTargetTiming(editingTodoTargetDate, language)}</span>
-                              </div>
-                              <label className="grid gap-1 text-xs font-medium text-stone-500">
-                                {text.category}
                                 <input
                                   value={editingTodoCategory}
                                   onChange={(event) => setEditingTodoCategory(event.target.value)}
@@ -4470,28 +4785,10 @@ export default function GoalTracker() {
                                       isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim(),
                                     )
                                   }
-                                  className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-normal text-stone-900 outline-none focus:border-emerald-600"
+                                  className="h-7 min-w-0 rounded-md border border-stone-300 bg-white px-2 text-xs font-normal text-stone-700 outline-none focus:border-emerald-600"
                                   aria-label={`Edit category for ${todo.title}`}
                                   placeholder={text.category}
                                 />
-                              </label>
-                              <div className="flex flex-wrap justify-end gap-2 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => saveTodoTitle(todo)}
-                                  disabled={isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim()}
-                                  className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                                >
-                                  {text.saveTitle}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={cancelEditingTodo}
-                                  disabled={isSaving}
-                                  className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                                >
-                                  {text.cancel}
-                                </button>
                               </div>
                             </div>
                           ) : (
@@ -4529,6 +4826,88 @@ export default function GoalTracker() {
                             </div>
                           )}
                         </div>
+                        {isEditingTodo ? (
+                          <div className="flex shrink-0 flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => saveTodoTitle(todo)}
+                              disabled={isSaving || !editingTodoTitle.trim() || !editingTodoTargetDate.trim()}
+                              aria-label={text.saveTitle}
+                              title={text.saveTitle}
+                              className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <CheckIcon />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEditingTodo}
+                              disabled={isSaving}
+                              aria-label={text.cancel}
+                              title={text.cancel}
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <CloseIcon />
+                            </button>
+                          </div>
+                        ) : selectedTodoCount === 0 ? (
+                          <div className="relative" data-todo-action-menu>
+                            <button
+                              type="button"
+                              aria-expanded={todoActionMenuId === todo.id}
+                              aria-label={language === "ko" ? `${todo.title} 메뉴` : `${todo.title} menu`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setTodoActionMenuId((current) => (current === todo.id ? null : todo.id));
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              disabled={isSaving}
+                              className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <MoreIcon />
+                            </button>
+                            {todoActionMenuId === todo.id && (
+                              <div className="absolute right-0 top-9 z-20 grid w-32 overflow-hidden rounded-md border border-stone-200 bg-white py-1 text-xs font-semibold text-stone-700 shadow-lg">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setSelectedTodoIds([todo.id]);
+                                    setTodoActionMenuId(null);
+                                  }}
+                                  className="flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-100"
+                                >
+                                  <CheckIcon />
+                                  {language === "ko" ? "선택" : "Select"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    startEditingTodo(todo);
+                                  }}
+                                  className="flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-100"
+                                >
+                                  <EditIcon />
+                                  {text.edit}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setTodoToDelete(todo);
+                                    setTodoActionMenuId(null);
+                                  }}
+                                  className="flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50"
+                                >
+                                  <BinIcon />
+                                  {text.delete}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span aria-hidden="true" className="h-8 w-8" />
+                        )}
                       </div>
                       );
                     })}
@@ -4581,7 +4960,7 @@ export default function GoalTracker() {
                   <>
                     <ArchiveGroup title={text.goalList} count={archivedGoals.length}>
                       {archivedGoals.map((goal) => {
-                        const latest = getLatestEntry(goal.entries)?.value ?? 0;
+                        const latest = getGoalCurrentValue(goal, progressChartMode);
                         return (
                           <StoredItemCard
                             key={goal.id}
@@ -4675,7 +5054,7 @@ export default function GoalTracker() {
                   <>
                     <ArchiveGroup title={text.goalList} count={deletedGoals.length}>
                       {deletedGoals.map((goal) => {
-                        const latest = getLatestEntry(goal.entries)?.value ?? 0;
+                        const latest = getGoalCurrentValue(goal, progressChartMode);
                         return (
                           <StoredItemCard
                             key={goal.id}
@@ -4821,13 +5200,12 @@ export default function GoalTracker() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                         <span>
                           <span className="font-medium text-stone-500">{text.current}</span>{" "}
-                          <span className="font-semibold text-stone-900">{latestValue}</span>
+                          <span className="font-semibold text-stone-900">{currentGoalValue}</span>
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <span className="font-medium text-stone-500">{text.target}</span>{" "}
                           <input
                             type="number"
-                            min={1}
                             value={activeGoalDraft?.target ?? ""}
                             onChange={(event) =>
                               setGoalDraft((draft) =>
@@ -4874,7 +5252,7 @@ export default function GoalTracker() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                         <span>
                           <span className="font-medium text-stone-500">{text.current}</span>{" "}
-                          <span className="font-semibold text-stone-900">{latestValue}</span>
+                          <span className="font-semibold text-stone-900">{currentGoalValue}</span>
                         </span>
                         <span>
                           <span className="font-medium text-stone-500">{text.target}</span>{" "}
@@ -4984,24 +5362,36 @@ export default function GoalTracker() {
                           <h2 className="text-base font-semibold">{text.progressChart}</h2>
                           <p className="text-sm text-stone-600">{text.progressChartHint}</p>
                         </div>
-                        <button
-                          type="button"
-                          aria-label="Add progress record"
-                          onClick={() => {
-                            setEntryRecordedAt(toDateInputValue());
-                            setIsEntryModalOpen(true);
-                          }}
-                          disabled={isSaving}
-                          className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {text.add}
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <select
+                            value={progressChartMode}
+                            onChange={(event) => setProgressChartMode(event.target.value as ProgressChartMode)}
+                            aria-label={text.chartValueMode}
+                            className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-semibold text-stone-700 outline-none hover:bg-stone-50 focus:border-emerald-600"
+                          >
+                            <option value="raw">{text.chartRawValue}</option>
+                            <option value="cumulative">{text.chartCumulativeValue}</option>
+                          </select>
+                          <button
+                            type="button"
+                            aria-label="Add progress record"
+                            onClick={() => {
+                              setEntryRecordedAt(toDateInputValue());
+                              setIsEntryModalOpen(true);
+                            }}
+                            disabled={isSaving}
+                            className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {text.add}
+                          </button>
+                        </div>
                       </div>
                       <ProgressChart
                         entries={activeGoal.entries}
                         target={activeGoal.target}
                         unit={activeGoal.unit}
                         deadline={activeGoal.deadline}
+                        mode={progressChartMode}
                       />
                     </div>
 
@@ -5024,10 +5414,15 @@ export default function GoalTracker() {
                                       Value
                                       <input
                                         type="number"
-                                        min={0}
                                         value={editEntryValue}
-                                        onChange={(event) => setEditEntryValue(Number(event.target.value))}
-                                        onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
+                                        onChange={(event) => setEditEntryValue(event.target.value)}
+                                        onKeyDown={(event) =>
+                                          handleInputSaveKeyDown(
+                                            event,
+                                            () => updateEntryRecord(entry.id),
+                                            isSaving || !isNumberInputValueValid(editEntryValue),
+                                          )
+                                        }
                                         className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                                       />
                                     </label>
@@ -5057,7 +5452,7 @@ export default function GoalTracker() {
                                       aria-label="Save progress record"
                                       title={text.saveTitle}
                                       onClick={() => updateEntryRecord(entry.id)}
-                                      disabled={isSaving}
+                                      disabled={isSaving || !isNumberInputValueValid(editEntryValue)}
                                       className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                                     >
                                       {text.save}
@@ -5148,19 +5543,20 @@ export default function GoalTracker() {
                   {text.current}
                   <input
                     type="number"
-                    min={0}
                     value={entryValue}
-                    onChange={(event) => setEntryValue(Number(event.target.value))}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
+                    onChange={(event) => setEntryValue(event.target.value)}
+                    onKeyDown={(event) =>
+                      handleInputSaveKeyDown(event, addEntry, isSaving || !isNumberInputValueValid(entryValue))
+                    }
                     className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
                 <input
                   type="range"
-                  min={0}
-                  max={Math.max(activeGoal.target, entryValue, 1)}
-                  value={entryValue}
-                  onChange={(event) => setEntryValue(Number(event.target.value))}
+                  min={entryRangeMin}
+                  max={entryRangeMax > entryRangeMin ? entryRangeMax : entryRangeMin + 1}
+                  value={numericEntryValue}
+                  onChange={(event) => setEntryValue(event.target.value)}
                   className="w-full accent-emerald-700"
                 />
                 <label className="grid min-w-0 gap-1 text-sm font-medium">
@@ -5170,7 +5566,9 @@ export default function GoalTracker() {
                       type="date"
                       value={entryRecordedAt}
                       onChange={(event) => setEntryRecordedAt(event.target.value)}
-                      onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
+                      onKeyDown={(event) =>
+                        handleInputSaveKeyDown(event, addEntry, isSaving || !isNumberInputValueValid(entryValue))
+                      }
                       className="w-full min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     />
                     <button
@@ -5187,7 +5585,9 @@ export default function GoalTracker() {
                   <textarea
                     value={entryMemo}
                     onChange={(event) => setEntryMemo(event.target.value)}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addEntry, isSaving)}
+                    onKeyDown={(event) =>
+                      handleInputSaveKeyDown(event, addEntry, isSaving || !isNumberInputValueValid(entryValue))
+                    }
                     className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                     placeholder="What changed since the last record?"
                   />
@@ -5204,7 +5604,7 @@ export default function GoalTracker() {
                   <button
                     type="button"
                     onClick={addEntry}
-                    disabled={isSaving}
+                    disabled={isSaving || !isNumberInputValueValid(entryValue)}
                     className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                   >
                     {text.saveTitle}
@@ -5331,7 +5731,7 @@ export default function GoalTracker() {
                 <input
                   value={goalForm.title}
                   onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
-                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                   autoFocus
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Example: TOEIC 900"
@@ -5342,7 +5742,7 @@ export default function GoalTracker() {
                 <textarea
                   value={goalForm.memo}
                   onChange={(event) => setGoalForm((form) => ({ ...form, memo: event.target.value }))}
-                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                  onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                   className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Describe the final goal or why it matters."
                 />
@@ -5352,10 +5752,9 @@ export default function GoalTracker() {
                   {text.target}
                   <input
                     type="number"
-                    min={1}
                     value={goalForm.target}
-                    onChange={(event) => setGoalForm((form) => ({ ...form, target: Number(event.target.value) }))}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                    onChange={(event) => setGoalForm((form) => ({ ...form, target: event.target.value }))}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                     className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -5364,7 +5763,7 @@ export default function GoalTracker() {
                   <input
                     value={goalForm.unit}
                     onChange={(event) => setGoalForm((form) => ({ ...form, unit: event.target.value }))}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                     className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -5376,7 +5775,7 @@ export default function GoalTracker() {
                     type="date"
                     value={goalForm.startDate}
                     onChange={(event) => setGoalForm((form) => ({ ...form, startDate: event.target.value }))}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -5386,7 +5785,7 @@ export default function GoalTracker() {
                     type="date"
                     value={goalForm.deadline}
                     onChange={(event) => setGoalForm((form) => ({ ...form, deadline: event.target.value }))}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || goalForm.target <= 0)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                     className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   />
                 </label>
@@ -5403,7 +5802,7 @@ export default function GoalTracker() {
                 <button
                   type="button"
                   onClick={addGoal}
-                  disabled={isSaving}
+                  disabled={isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target)}
                   className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
                   {text.add}
@@ -5797,6 +6196,50 @@ function EditIcon() {
     >
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function isGoalFormTargetValid(target: string) {
+  return Number.isFinite(Number(target));
+}
+
+function isNumberInputValueValid(value: string) {
+  return value.trim() !== "" && Number.isFinite(Number(value));
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 12h.01" />
+      <path d="M19 12h.01" />
+      <path d="M5 12h.01" />
     </svg>
   );
 }
