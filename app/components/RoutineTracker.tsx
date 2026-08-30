@@ -62,6 +62,8 @@ type ScrollLockState = {
 const todayIso = new Date().toISOString().slice(0, 10);
 const LIST_REORDER_LONG_PRESS_MS = 450;
 const LIST_REORDER_DRAG_CANCEL_DISTANCE = 10;
+const ROUTINE_SORT_KEY_STORAGE_KEY = "boost-mastery.routine-sort-key";
+const ROUTINE_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.routine-sort-direction";
 const ROUTINE_TEXT = {
   en: {
     routineList: "Habits",
@@ -252,6 +254,48 @@ function sortRoutines(routines: Routine[], sortKey: RoutineSortKey, direction: S
     .map(({ routine }) => routine);
 }
 
+function isSortDirection(value: string | null): value is SortDirection {
+  return value === "asc" || value === "desc";
+}
+
+function isRoutineSortKey(value: string | null): value is RoutineSortKey {
+  return value === "manual" || value === "startDate" || value === "endDate" || value === "progress";
+}
+
+function readStoredRoutineSortKey(): RoutineSortKey {
+  try {
+    const stored = window.localStorage.getItem(ROUTINE_SORT_KEY_STORAGE_KEY);
+    return isRoutineSortKey(stored) ? stored : "manual";
+  } catch {
+    return "manual";
+  }
+}
+
+function readStoredRoutineSortDirection(): SortDirection {
+  try {
+    const stored = window.localStorage.getItem(ROUTINE_SORT_DIRECTION_STORAGE_KEY);
+    return isSortDirection(stored) ? stored : "asc";
+  } catch {
+    return "asc";
+  }
+}
+
+function writeStoredRoutineSortKey(sortKey: RoutineSortKey) {
+  try {
+    window.localStorage.setItem(ROUTINE_SORT_KEY_STORAGE_KEY, sortKey);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredRoutineSortDirection(direction: SortDirection) {
+  try {
+    window.localStorage.setItem(ROUTINE_SORT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
 async function fetchRoutines() {
   const response = await fetch("/api/routines", { cache: "no-store" });
   const data = (await response.json()) as { error?: string; routines?: Routine[]; schemaMissing?: boolean };
@@ -357,8 +401,12 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
   const [highlightedRoutineId, setHighlightedRoutineId] = useState<string | null>(null);
   const [draggingRoutineId, setDraggingRoutineId] = useState<string | null>(null);
   const [routineDropTargetId, setRoutineDropTargetId] = useState<string | null>(null);
-  const [routineSortKey, setRoutineSortKey] = useState<RoutineSortKey>("manual");
-  const [routineSortDirection, setRoutineSortDirection] = useState<SortDirection>("asc");
+  const [routineSortKey, setRoutineSortKey] = useState<RoutineSortKey>(() =>
+    typeof window === "undefined" ? "manual" : readStoredRoutineSortKey(),
+  );
+  const [routineSortDirection, setRoutineSortDirection] = useState<SortDirection>(() =>
+    typeof window === "undefined" ? "asc" : readStoredRoutineSortDirection(),
+  );
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const routinesBeforeDrag = useRef<Routine[] | null>(null);
   const latestDraggedRoutines = useRef<Routine[] | null>(null);
@@ -405,6 +453,14 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
       dragImageClone.current?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    writeStoredRoutineSortKey(routineSortKey);
+  }, [routineSortKey]);
+
+  useEffect(() => {
+    writeStoredRoutineSortDirection(routineSortDirection);
+  }, [routineSortDirection]);
 
   const activeRoutine =
     activeRoutineResetSignal === resetSignal

@@ -143,6 +143,11 @@ type AppLanguage = "en" | "ko";
 type SortDirection = "asc" | "desc";
 type GoalSortKey = "manual" | "startDate" | "deadline" | "latestRecord" | "progress";
 type TodoSortKey = "manual" | "createdAt" | "targetDate";
+type TodoGroup = {
+  key: string;
+  label: string;
+  todos: Todo[];
+};
 
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
@@ -265,6 +270,12 @@ const NAV_MENU_ORDER_STORAGE_KEY = "boost-mastery.nav-menu-order";
 const THEME_STORAGE_KEY = "boost-mastery.theme";
 const LANGUAGE_STORAGE_KEY = "boost-mastery.language";
 const AGENT_ENABLED_STORAGE_KEY = "boost-mastery.agent-enabled";
+const GOAL_SORT_KEY_STORAGE_KEY = "boost-mastery.goal-sort-key";
+const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
+const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
+const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
+const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
+const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
 const NAV_ITEM_LONG_PRESS_MS = 450;
@@ -739,6 +750,26 @@ function sortTodos(todos: Todo[], sortKey: TodoSortKey, direction: SortDirection
   return sortKey === "manual" ? todos : sortWithStableFallback(todos, (todo) => getTodoSortValue(todo, sortKey), direction);
 }
 
+function getTodoCategoryKey(todo: Pick<Todo, "category">) {
+  return todo.category.trim() || UNCATEGORIZED_TODO_CATEGORY_KEY;
+}
+
+function getTodoCategoryLabel(categoryKey: string, language: AppLanguage) {
+  return categoryKey === UNCATEGORIZED_TODO_CATEGORY_KEY ? UI_TEXT[language].noCategory : categoryKey;
+}
+
+function isSortDirection(value: string | null): value is SortDirection {
+  return value === "asc" || value === "desc";
+}
+
+function isGoalSortKey(value: string | null): value is GoalSortKey {
+  return value === "manual" || value === "startDate" || value === "deadline" || value === "latestRecord" || value === "progress";
+}
+
+function isTodoSortKey(value: string | null): value is TodoSortKey {
+  return value === "manual" || value === "createdAt" || value === "targetDate";
+}
+
 function toDateInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -942,6 +973,101 @@ function readStoredAgentEnabled() {
 function writeStoredAgentEnabled(isEnabled: boolean) {
   try {
     window.localStorage.setItem(AGENT_ENABLED_STORAGE_KEY, isEnabled ? "true" : "false");
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function readStoredGoalSortKey(): GoalSortKey {
+  try {
+    const stored = window.localStorage.getItem(GOAL_SORT_KEY_STORAGE_KEY);
+    return isGoalSortKey(stored) ? stored : "manual";
+  } catch {
+    return "manual";
+  }
+}
+
+function readStoredGoalSortDirection(): SortDirection {
+  try {
+    const stored = window.localStorage.getItem(GOAL_SORT_DIRECTION_STORAGE_KEY);
+    return isSortDirection(stored) ? stored : "asc";
+  } catch {
+    return "asc";
+  }
+}
+
+function readStoredTodoSortKey(): TodoSortKey {
+  try {
+    const stored = window.localStorage.getItem(TODO_SORT_KEY_STORAGE_KEY);
+    return isTodoSortKey(stored) ? stored : "manual";
+  } catch {
+    return "manual";
+  }
+}
+
+function readStoredTodoSortDirection(): SortDirection {
+  try {
+    const stored = window.localStorage.getItem(TODO_SORT_DIRECTION_STORAGE_KEY);
+    return isSortDirection(stored) ? stored : "asc";
+  } catch {
+    return "asc";
+  }
+}
+
+function writeStoredGoalSortKey(sortKey: GoalSortKey) {
+  try {
+    window.localStorage.setItem(GOAL_SORT_KEY_STORAGE_KEY, sortKey);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredGoalSortDirection(direction: SortDirection) {
+  try {
+    window.localStorage.setItem(GOAL_SORT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredTodoSortKey(sortKey: TodoSortKey) {
+  try {
+    window.localStorage.setItem(TODO_SORT_KEY_STORAGE_KEY, sortKey);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredTodoSortDirection(direction: SortDirection) {
+  try {
+    window.localStorage.setItem(TODO_SORT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function normalizeTodoCategoryFilter(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const categories = value
+    .filter((category): category is string => typeof category === "string")
+    .map((category) => category.trim())
+    .filter(Boolean);
+  return categories.filter((category, index) => categories.indexOf(category) === index);
+}
+
+function readStoredTodoCategoryFilter() {
+  try {
+    const stored = window.localStorage.getItem(TODO_CATEGORY_FILTER_STORAGE_KEY);
+    if (!stored) return [];
+    return normalizeTodoCategoryFilter(JSON.parse(stored) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredTodoCategoryFilter(categories: string[]) {
+  try {
+    window.localStorage.setItem(TODO_CATEGORY_FILTER_STORAGE_KEY, JSON.stringify(normalizeTodoCategoryFilter(categories)));
   } catch {
     // Ignore unavailable storage.
   }
@@ -1308,12 +1434,22 @@ export default function GoalTracker() {
   const [todoTitle, setTodoTitle] = useState("");
   const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
   const [todoCategory, setTodoCategory] = useState("");
-  const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>([]);
+  const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>(() =>
+    typeof window === "undefined" ? [] : readStoredTodoCategoryFilter(),
+  );
   const [selectedTodoIds, setSelectedTodoIds] = useState<string[]>([]);
-  const [goalSortKey, setGoalSortKey] = useState<GoalSortKey>("manual");
-  const [goalSortDirection, setGoalSortDirection] = useState<SortDirection>("asc");
-  const [todoSortKey, setTodoSortKey] = useState<TodoSortKey>("manual");
-  const [todoSortDirection, setTodoSortDirection] = useState<SortDirection>("asc");
+  const [goalSortKey, setGoalSortKey] = useState<GoalSortKey>(() =>
+    typeof window === "undefined" ? "manual" : readStoredGoalSortKey(),
+  );
+  const [goalSortDirection, setGoalSortDirection] = useState<SortDirection>(() =>
+    typeof window === "undefined" ? "asc" : readStoredGoalSortDirection(),
+  );
+  const [todoSortKey, setTodoSortKey] = useState<TodoSortKey>(() =>
+    typeof window === "undefined" ? "manual" : readStoredTodoSortKey(),
+  );
+  const [todoSortDirection, setTodoSortDirection] = useState<SortDirection>(() =>
+    typeof window === "undefined" ? "asc" : readStoredTodoSortDirection(),
+  );
   const [progressChartMode, setProgressChartMode] = useState<ProgressChartMode>("raw");
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState("0");
@@ -1597,6 +1733,26 @@ export default function GoalTracker() {
   }, [isAgentEnabled]);
 
   useEffect(() => {
+    writeStoredGoalSortKey(goalSortKey);
+  }, [goalSortKey]);
+
+  useEffect(() => {
+    writeStoredGoalSortDirection(goalSortDirection);
+  }, [goalSortDirection]);
+
+  useEffect(() => {
+    writeStoredTodoSortKey(todoSortKey);
+  }, [todoSortKey]);
+
+  useEffect(() => {
+    writeStoredTodoSortDirection(todoSortDirection);
+  }, [todoSortDirection]);
+
+  useEffect(() => {
+    writeStoredTodoCategoryFilter(selectedTodoCategories);
+  }, [selectedTodoCategories]);
+
+  useEffect(() => {
     const chat = agentChatScrollRef.current;
     if (!chat) return;
 
@@ -1698,27 +1854,43 @@ export default function GoalTracker() {
     () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
     [goalSortDirection, goalSortKey, goals, progressChartMode],
   );
-  const todoCategories = useMemo(
+  const todoCategoryKeys = useMemo(
     () =>
-      Array.from(new Set(todos.map((todo) => todo.category.trim()).filter(Boolean))).sort((left, right) =>
-        left.localeCompare(right),
-      ),
+      Array.from(new Set(todos.map(getTodoCategoryKey))).sort((left, right) => {
+        if (left === UNCATEGORIZED_TODO_CATEGORY_KEY) return 1;
+        if (right === UNCATEGORIZED_TODO_CATEGORY_KEY) return -1;
+        return left.localeCompare(right);
+      }),
     [todos],
   );
   const activeSelectedTodoCategories = useMemo(
-    () => selectedTodoCategories.filter((category) => todoCategories.includes(category)),
-    [selectedTodoCategories, todoCategories],
+    () => selectedTodoCategories.filter((category) => todoCategoryKeys.includes(category)),
+    [selectedTodoCategories, todoCategoryKeys],
   );
   const selectedTodoCategorySet = useMemo(() => new Set(activeSelectedTodoCategories), [activeSelectedTodoCategories]);
   const visibleTodos = useMemo(
+    () => sortTodos(todos, todoSortKey, todoSortDirection),
+    [todoSortDirection, todoSortKey, todos],
+  );
+  const visibleTodoGroups = useMemo<TodoGroup[]>(
     () => {
-      const filteredTodos =
-        activeSelectedTodoCategories.length === 0
-          ? todos
-          : todos.filter((todo) => selectedTodoCategorySet.has(todo.category.trim()));
-      return sortTodos(filteredTodos, todoSortKey, todoSortDirection);
+      const todosByCategory = new Map<string, Todo[]>();
+      for (const todo of visibleTodos) {
+        const categoryKey = getTodoCategoryKey(todo);
+        const categoryTodos = todosByCategory.get(categoryKey) ?? [];
+        categoryTodos.push(todo);
+        todosByCategory.set(categoryKey, categoryTodos);
+      }
+
+      return todoCategoryKeys
+        .map((categoryKey) => ({
+          key: categoryKey,
+          label: getTodoCategoryLabel(categoryKey, language),
+          todos: todosByCategory.get(categoryKey) ?? [],
+        }))
+        .filter((group) => group.todos.length > 0);
     },
-    [activeSelectedTodoCategories.length, selectedTodoCategorySet, todoSortDirection, todoSortKey, todos],
+    [language, todoCategoryKeys, visibleTodos],
   );
   const selectedTodoIdSet = useMemo(() => new Set(selectedTodoIds), [selectedTodoIds]);
   const selectedTodos = useMemo(
@@ -4611,50 +4783,38 @@ export default function GoalTracker() {
                   </button>
                 </div>
               </div>
-              {todoCategories.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2 px-1">
-                  {todoCategories.map((category) => {
-                    const isSelected = selectedTodoCategorySet.has(category);
-                    return (
-                      <button
-                        key={category}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => toggleTodoCategoryFilter(category)}
-                        className={`min-h-8 rounded-md border px-3 py-1 text-xs font-semibold transition ${
-                          isSelected
-                            ? "border-emerald-700 bg-emerald-700 text-white"
-                            : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    );
-                  })}
-                  {activeSelectedTodoCategories.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTodoCategories([])}
-                      className="min-h-8 rounded-md border border-stone-300 px-3 py-1 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-                    >
-                      {text.all}
-                    </button>
-                  )}
-                </div>
-              )}
               {currentView === "todo" && (
                 <div className="space-y-2">
                   {todos.length === 0 ? (
                     <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                       {text.noTodos}
                     </p>
-                  ) : visibleTodos.length === 0 ? (
-                    <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
-                      {text.noTodosForCategory}
-                    </p>
                   ) : (
-                    <>
-                    {visibleTodos.map((todo) => {
+                    visibleTodoGroups.map((group) => {
+                      const isExpanded = selectedTodoCategorySet.has(group.key);
+                      const completedCount = group.todos.filter((todo) => todo.completed).length;
+
+                      return (
+                        <section key={group.key} className="space-y-2">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            onClick={() => toggleTodoCategoryFilter(group.key)}
+                            className="flex w-full items-center gap-2 border-y border-stone-200/70 bg-stone-50/60 px-1.5 py-1 text-left hover:bg-stone-100/70"
+                          >
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-stone-500">
+                              {isExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
+                            </span>
+                            <span className="min-w-0 flex-1 break-words text-xs font-semibold text-stone-600">
+                              {group.label}
+                            </span>
+                            <span className="shrink-0 text-[11px] font-medium text-stone-400">
+                              {completedCount}/{group.todos.length}
+                            </span>
+                          </button>
+                          {isExpanded && (
+                            <div className="space-y-2 pl-3">
+                              {group.todos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
                       const todoTargetTimingState = todo.targetDate
                         ? getTodoTargetTimingState(todo.targetDate)
@@ -4910,8 +5070,12 @@ export default function GoalTracker() {
                         )}
                       </div>
                       );
-                    })}
-                    </>
+                              })}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })
                   )}
                 </div>
               )}
