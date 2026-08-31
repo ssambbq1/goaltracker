@@ -59,7 +59,7 @@ type ScrollLockState = {
   documentOverscrollBehavior: string;
 };
 
-const todayIso = new Date().toISOString().slice(0, 10);
+const todayIso = toIsoDate(new Date());
 const LIST_REORDER_LONG_PRESS_MS = 450;
 const LIST_REORDER_DRAG_CANCEL_DISTANCE = 10;
 const ROUTINE_SORT_KEY_STORAGE_KEY = "boost-mastery.routine-sort-key";
@@ -163,6 +163,11 @@ function toIsoDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 function addDaysToIsoDate(date: string, days: number) {
   return toIsoDate(addDays(parseLocalDate(date), days));
 }
@@ -218,6 +223,44 @@ function getRoutineStats(routine: Routine) {
   const missed = dates.length - total;
   const rate = total ? Math.round((success / total) * 100) : 0;
   return { total, success, failure, missed, rate };
+}
+
+function isRoutineScheduledOn(routine: Routine, date: string) {
+  return date >= routine.startDate && date <= routine.endDate;
+}
+
+function areScheduledRoutinesSuccessfulOn(routines: Routine[], date: string) {
+  const scheduledRoutines = routines.filter((routine) => isRoutineScheduledOn(routine, date));
+  if (scheduledRoutines.length === 0) return false;
+  return scheduledRoutines.every((routine) => routine.marks.some((mark) => mark.date === date && mark.status === "success"));
+}
+
+function applyRoutineMarkToRoutines(
+  routines: Routine[],
+  routineId: string,
+  date: string,
+  status: RoutineMarkStatus | null,
+) {
+  return routines.map((routine) =>
+    routine.id === routineId
+      ? {
+          ...routine,
+          marks:
+            status === null
+              ? routine.marks.filter((mark) => mark.date !== date)
+              : [
+                  ...routine.marks.filter((mark) => mark.date !== date),
+                  {
+                    id: `pending-${routineId}-${date}`,
+                    routineId,
+                    date,
+                    status,
+                    createdAt: Date.now(),
+                  },
+                ],
+        }
+      : routine,
+  );
 }
 
 function getSortDirectionMultiplier(direction: SortDirection) {
@@ -380,13 +423,24 @@ function preventListReorderScrollEvent(event: Event) {
   event.preventDefault();
 }
 
-export default function RoutineTracker({ language = "en", isSaving, resetSignal, reloadSignal, onSavingChange, onError }: {
+export default function RoutineTracker({
+  language = "en",
+  isSaving,
+  resetSignal,
+  reloadSignal,
+  onSavingChange,
+  onError,
+  onTodayChecklistComplete,
+  onTodayChecklistIncomplete,
+}: {
   language?: AppLanguage;
   isSaving: boolean;
   resetSignal: number;
   reloadSignal: number;
   onSavingChange: (isSaving: boolean) => void;
   onError: (error: string) => void;
+  onTodayChecklistComplete?: () => void;
+  onTodayChecklistIncomplete?: () => void;
 }) {
   const text = ROUTINE_TEXT[language];
   const [routines, setRoutines] = useState<Routine[]>([]);
@@ -803,29 +857,21 @@ export default function RoutineTracker({ language = "en", isSaving, resetSignal,
 
   function setRoutineMark(routine: Routine, date: string, nextStatus: RoutineMarkStatus | null) {
     const previous = routines;
+    const nextRoutines = applyRoutineMarkToRoutines(routines, routine.id, date, nextStatus);
+    const shouldShowTodayCompleteReaction =
+      date === todayIso &&
+      nextStatus === "success" &&
+      !areScheduledRoutinesSuccessfulOn(routines, todayIso) &&
+      areScheduledRoutinesSuccessfulOn(nextRoutines, todayIso);
+    const shouldStopTodayCompleteReaction =
+      date === todayIso &&
+      nextStatus === "failure" &&
+      areScheduledRoutinesSuccessfulOn(routines, todayIso) &&
+      !areScheduledRoutinesSuccessfulOn(nextRoutines, todayIso);
     const saveKey = `${routine.id}:${date}`;
-    setRoutines((current) =>
-      current.map((item) =>
-        item.id === routine.id
-          ? {
-              ...item,
-              marks:
-                nextStatus === null
-                  ? item.marks.filter((mark) => mark.date !== date)
-                  : [
-                      ...item.marks.filter((mark) => mark.date !== date),
-                      {
-                        id: `pending-${routine.id}-${date}`,
-                        routineId: routine.id,
-                        date,
-                        status: nextStatus,
-                        createdAt: Date.now(),
-                      },
-                    ],
-            }
-          : item,
-      ),
-    );
+    setRoutines(nextRoutines);
+    if (shouldShowTodayCompleteReaction) onTodayChecklistComplete?.();
+    if (shouldStopTodayCompleteReaction) onTodayChecklistIncomplete?.();
 
     if (pendingMarkSaveTimers.current[saveKey]) clearTimeout(pendingMarkSaveTimers.current[saveKey]);
     pendingMarkSaves.current[saveKey] = {
@@ -1199,6 +1245,7 @@ function RoutineListItem({
 }) {
   const recentWeekDates = getRecentWeekDates();
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
+  const stats = getRoutineStats(routine);
 
   return (
     <div
@@ -1238,41 +1285,49 @@ function RoutineListItem({
         <div className="min-w-0">
           <div className="break-words font-medium text-stone-950">{routine.title}</div>
         </div>
-        <div className="grid shrink-0 grid-cols-7 justify-items-start gap-0.5">
-          {recentWeekDates.map((date) => {
-            const status = date >= routine.startDate && date <= routine.endDate ? markByDate.get(date) : undefined;
-            const isOutOfRange = date < routine.startDate || date > routine.endDate;
-            return (
-              <button
-                type="button"
-                key={`${routine.id}-${date}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onMark(routine, date, status);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                disabled={isSaving || isOutOfRange}
-                aria-label={`Mark ${routine.title} on ${date}`}
-                title={`${date}: ${status ? (status === "success" ? "Success" : "Failure") : "Unmarked"}`}
-                className={`relative flex h-7 w-7 items-start overflow-hidden rounded-md border p-0.5 text-[10px] font-semibold transition ${
-                status === "success"
-                  ? "border-emerald-600 bg-emerald-600 text-white"
-                  : status === "failure"
-                    ? "border-red-500 bg-red-500 text-white"
-                    : isOutOfRange
-                      ? "border-stone-200 bg-stone-50 text-stone-400"
-                      : "border-stone-300 bg-white text-stone-700 hover:border-emerald-500"
-              } disabled:cursor-not-allowed disabled:opacity-60`}
-              >
-              {(status === "success" || status === "failure") && (
-                <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-lg font-black leading-none text-white/35">
-                  {status === "success" ? <ThumbsUpMark /> : "X"}
-                </span>
-              )}
-              <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
-              </button>
-            );
-          })}
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className="w-10 shrink-0 text-right text-xs font-semibold text-emerald-700"
+            title={`${ROUTINE_TEXT[language].successRate}: ${stats.rate}%`}
+          >
+            {stats.rate}%
+          </span>
+          <div className="grid shrink-0 grid-cols-7 justify-items-start gap-0.5">
+            {recentWeekDates.map((date) => {
+              const status = date >= routine.startDate && date <= routine.endDate ? markByDate.get(date) : undefined;
+              const isOutOfRange = date < routine.startDate || date > routine.endDate;
+              return (
+                <button
+                  type="button"
+                  key={`${routine.id}-${date}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onMark(routine, date, status);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  disabled={isSaving || isOutOfRange}
+                  aria-label={`Mark ${routine.title} on ${date}`}
+                  title={`${date}: ${status ? (status === "success" ? "Success" : "Failure") : "Unmarked"}`}
+                  className={`relative flex h-7 w-7 items-start overflow-hidden rounded-md border p-0.5 text-[10px] font-semibold transition ${
+                  status === "success"
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : status === "failure"
+                      ? "border-red-500 bg-red-500 text-white"
+                      : isOutOfRange
+                        ? "border-stone-200 bg-stone-50 text-stone-400"
+                        : "border-stone-300 bg-white text-stone-700 hover:border-emerald-500"
+                } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                {(status === "success" || status === "failure") && (
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-lg font-black leading-none text-white/35">
+                    {status === "success" ? <ThumbsUpMark /> : "X"}
+                  </span>
+                )}
+                <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -1309,12 +1364,18 @@ function RoutineCard({
   const stats = getRoutineStats(routine);
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
+  const memoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (isSaving || !editValue?.title.trim()) return;
     onSaveEdit();
   };
+
+  useEffect(() => {
+    if (!editValue || !memoTextareaRef.current) return;
+    resizeTextareaToContent(memoTextareaRef.current);
+  }, [editValue]);
 
   return (
     <div className="grid gap-0">
@@ -1367,10 +1428,14 @@ function RoutineCard({
           {editValue ? (
             <>
               <textarea
+                ref={memoTextareaRef}
                 value={editValue.memo}
-                onChange={(event) => onEditChange({ ...editValue, memo: event.target.value })}
+                onChange={(event) => {
+                  resizeTextareaToContent(event.currentTarget);
+                  onEditChange({ ...editValue, memo: event.target.value });
+                }}
                 onKeyDown={handleEditKeyDown}
-                className="mt-2 min-h-24 w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                className="mt-2 min-h-24 w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}
               />

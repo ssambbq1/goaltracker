@@ -219,6 +219,14 @@ type NavItemDragState = {
   didLongPress: boolean;
 };
 
+type TodoCategoryDragState = {
+  pointerId: number;
+  categoryKey: string;
+  startX: number;
+  startY: number;
+  didLongPress: boolean;
+};
+
 type ReorderLongPressState = {
   pointerId: number;
   startX: number;
@@ -275,6 +283,7 @@ const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
 const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
 const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
+const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
@@ -846,6 +855,11 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
+function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 function pseudoRandom(seed: number) {
   const value = Math.sin(seed * 12.9898) * 43758.5453;
   return value - Math.floor(value);
@@ -1068,6 +1082,40 @@ function readStoredTodoCategoryFilter() {
 function writeStoredTodoCategoryFilter(categories: string[]) {
   try {
     window.localStorage.setItem(TODO_CATEGORY_FILTER_STORAGE_KEY, JSON.stringify(normalizeTodoCategoryFilter(categories)));
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function normalizeTodoCategoryOrder(value: unknown, categoryKeys: string[]) {
+  const storedOrder = Array.isArray(value) ? value : [];
+  const validStoredCategories = storedOrder.filter(
+    (category): category is string => typeof category === "string" && categoryKeys.includes(category),
+  );
+  return [
+    ...validStoredCategories.filter((category, index) => validStoredCategories.indexOf(category) === index),
+    ...categoryKeys.filter((category) => !validStoredCategories.includes(category)),
+  ];
+}
+
+function readStoredTodoCategoryOrder() {
+  try {
+    const stored = window.localStorage.getItem(TODO_CATEGORY_ORDER_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((category): category is string => typeof category === "string");
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredTodoCategoryOrder(order: string[]) {
+  try {
+    window.localStorage.setItem(
+      TODO_CATEGORY_ORDER_STORAGE_KEY,
+      JSON.stringify(order.filter((category, index) => order.indexOf(category) === index)),
+    );
   } catch {
     // Ignore unavailable storage.
   }
@@ -1437,6 +1485,9 @@ export default function GoalTracker() {
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>(() =>
     typeof window === "undefined" ? [] : readStoredTodoCategoryFilter(),
   );
+  const [todoCategoryOrder, setTodoCategoryOrder] = useState<string[]>(() =>
+    typeof window === "undefined" ? [] : readStoredTodoCategoryOrder(),
+  );
   const [selectedTodoIds, setSelectedTodoIds] = useState<string[]>([]);
   const [goalSortKey, setGoalSortKey] = useState<GoalSortKey>(() =>
     typeof window === "undefined" ? "manual" : readStoredGoalSortKey(),
@@ -1474,11 +1525,14 @@ export default function GoalTracker() {
   const [navMenuOrder, setNavMenuOrder] = useState<TrackerView[]>(() =>
     typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
   );
+  const [draggingTodoCategoryKey, setDraggingTodoCategoryKey] = useState<string | null>(null);
+  const [todoCategoryDropTargetKey, setTodoCategoryDropTargetKey] = useState<string | null>(null);
   const [draggingNavItemId, setDraggingNavItemId] = useState<TrackerView | null>(null);
   const [navItemDropTargetId, setNavItemDropTargetId] = useState<TrackerView | null>(null);
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
   const [isScreenSwipeAnimating, setIsScreenSwipeAnimating] = useState(false);
   const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([]);
+  const [isBestDayMessageVisible, setIsBestDayMessageVisible] = useState(false);
   const goalSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingGoalPatches = useRef<Record<string, GoalPatch>>({});
   const goalSaveVersions = useRef<Record<string, number>>({});
@@ -1491,6 +1545,7 @@ export default function GoalTracker() {
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
+  const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
   const todosBeforeDrag = useRef<Todo[] | null>(null);
@@ -1505,15 +1560,22 @@ export default function GoalTracker() {
   const navRef = useRef<HTMLElement | null>(null);
   const navDragState = useRef<NavDragState | null>(null);
   const navItemDragState = useRef<NavItemDragState | null>(null);
+  const todoCategoryDragState = useRef<TodoCategoryDragState | null>(null);
+  const latestTodoCategoryOrder = useRef<string[]>(
+    typeof window === "undefined" ? [] : readStoredTodoCategoryOrder(),
+  );
   const latestNavMenuOrder = useRef<TrackerView[]>(
     typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
   );
   const navItemLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todoCategoryLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const screenSwipeState = useRef<ScreenSwipeState | null>(null);
   const screenSwipeAnimationTimer = useRef<number | null>(null);
   const suppressNextNavClick = useRef(false);
+  const suppressNextTodoCategoryClick = useRef(false);
   const suppressNextScreenClick = useRef(false);
   const confettiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bestDayMessageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const confettiBurstId = useRef(0);
   const agentSpeechRecognition = useRef<BrowserSpeechRecognition | null>(null);
   const agentVoiceSilenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1686,9 +1748,11 @@ export default function GoalTracker() {
       });
       if (screenSwipeAnimationTimer.current) clearTimeout(screenSwipeAnimationTimer.current);
       if (confettiTimer.current) clearTimeout(confettiTimer.current);
+      if (bestDayMessageTimer.current) clearTimeout(bestDayMessageTimer.current);
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
       if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
       if (navItemLongPressTimer.current) clearTimeout(navItemLongPressTimer.current);
+      if (todoCategoryLongPressTimer.current) clearTimeout(todoCategoryLongPressTimer.current);
       clearListReorderLongPressTimer(goalReorderLongPressTimer);
       clearListReorderLongPressTimer(todoReorderLongPressTimer);
       window.removeEventListener("touchmove", preventListReorderScrollEvent);
@@ -1850,6 +1914,12 @@ export default function GoalTracker() {
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
   const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
   const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
+
+  useEffect(() => {
+    if (!isEditingGoal || !goalMemoTextareaRef.current) return;
+    resizeTextareaToContent(goalMemoTextareaRef.current);
+  }, [activeGoalDraft?.memo, isEditingGoal]);
+
   const visibleGoals = useMemo(
     () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
     [goalSortDirection, goalSortKey, goals, progressChartMode],
@@ -1863,6 +1933,15 @@ export default function GoalTracker() {
       }),
     [todos],
   );
+  const orderedTodoCategoryKeys = useMemo(
+    () => normalizeTodoCategoryOrder(todoCategoryOrder, todoCategoryKeys),
+    [todoCategoryKeys, todoCategoryOrder],
+  );
+
+  useEffect(() => {
+    latestTodoCategoryOrder.current = orderedTodoCategoryKeys;
+  }, [orderedTodoCategoryKeys]);
+
   const activeSelectedTodoCategories = useMemo(
     () => selectedTodoCategories.filter((category) => todoCategoryKeys.includes(category)),
     [selectedTodoCategories, todoCategoryKeys],
@@ -1882,7 +1961,7 @@ export default function GoalTracker() {
         todosByCategory.set(categoryKey, categoryTodos);
       }
 
-      return todoCategoryKeys
+      return orderedTodoCategoryKeys
         .map((categoryKey) => ({
           key: categoryKey,
           label: getTodoCategoryLabel(categoryKey, language),
@@ -1890,7 +1969,7 @@ export default function GoalTracker() {
         }))
         .filter((group) => group.todos.length > 0);
     },
-    [language, todoCategoryKeys, visibleTodos],
+    [language, orderedTodoCategoryKeys, visibleTodos],
   );
   const selectedTodoIdSet = useMemo(() => new Set(selectedTodoIds), [selectedTodoIds]);
   const selectedTodos = useMemo(
@@ -2901,6 +2980,89 @@ export default function GoalTracker() {
     setNavItemDropTargetId(null);
   }
 
+  function clearTodoCategoryLongPressTimer() {
+    if (!todoCategoryLongPressTimer.current) return;
+    clearTimeout(todoCategoryLongPressTimer.current);
+    todoCategoryLongPressTimer.current = null;
+  }
+
+  function startTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>, categoryKey: string) {
+    if ((event.button !== 0 && event.pointerType === "mouse") || isSaving) return;
+    event.stopPropagation();
+    clearTodoCategoryLongPressTimer();
+    todoCategoryDragState.current = {
+      pointerId: event.pointerId,
+      categoryKey,
+      startX: event.clientX,
+      startY: event.clientY,
+      didLongPress: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    todoCategoryLongPressTimer.current = setTimeout(() => {
+      const dragState = todoCategoryDragState.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      dragState.didLongPress = true;
+      suppressNextTodoCategoryClick.current = true;
+      lockListReorderScroll();
+      const normalizedOrder = normalizeTodoCategoryOrder(todoCategoryOrder, todoCategoryKeys);
+      latestTodoCategoryOrder.current = normalizedOrder;
+      setTodoCategoryOrder(normalizedOrder);
+      setDraggingTodoCategoryKey(categoryKey);
+      setTodoCategoryDropTargetKey(categoryKey);
+    }, LIST_REORDER_LONG_PRESS_MS);
+  }
+
+  function moveTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = todoCategoryDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    const movedBeforeLongPress =
+      Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > LIST_REORDER_DRAG_CANCEL_DISTANCE;
+    if (!dragState.didLongPress && movedBeforeLongPress) {
+      clearTodoCategoryLongPressTimer();
+      return;
+    }
+    if (!dragState.didLongPress) return;
+
+    event.preventDefault();
+    const targetCategoryKey = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-todo-category-key]")
+      ?.dataset.todoCategoryKey;
+    if (!targetCategoryKey || targetCategoryKey === dragState.categoryKey) return;
+
+    setTodoCategoryDropTargetKey(targetCategoryKey);
+    setTodoCategoryOrder((currentOrder) => {
+      const normalizedOrder = normalizeTodoCategoryOrder(currentOrder, todoCategoryKeys);
+      const fromIndex = normalizedOrder.indexOf(dragState.categoryKey);
+      const toIndex = normalizedOrder.indexOf(targetCategoryKey);
+      const nextOrder = moveToIndex(normalizedOrder, fromIndex, toIndex);
+      latestTodoCategoryOrder.current = nextOrder;
+      return nextOrder;
+    });
+  }
+
+  function endTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = todoCategoryDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    clearTodoCategoryLongPressTimer();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    todoCategoryDragState.current = null;
+
+    if (dragState.didLongPress) {
+      writeStoredTodoCategoryOrder(latestTodoCategoryOrder.current);
+      unlockListReorderScroll();
+      window.setTimeout(() => {
+        suppressNextTodoCategoryClick.current = false;
+      }, 0);
+    }
+    setDraggingTodoCategoryKey(null);
+    setTodoCategoryDropTargetKey(null);
+  }
+
   function startNavDrag(event: ReactPointerEvent<HTMLElement>) {
     if (event.pointerType !== "mouse" || event.button !== 0) return;
     const nav = navRef.current;
@@ -3274,6 +3436,26 @@ export default function GoalTracker() {
     setConfettiParticles(particles);
     if (confettiTimer.current) clearTimeout(confettiTimer.current);
     confettiTimer.current = setTimeout(() => setConfettiParticles([]), 3000);
+  }
+
+  function triggerTodayChecklistCompleteReaction() {
+    triggerSuccessConfetti();
+    setIsBestDayMessageVisible(true);
+    if (bestDayMessageTimer.current) clearTimeout(bestDayMessageTimer.current);
+    bestDayMessageTimer.current = setTimeout(() => setIsBestDayMessageVisible(false), 3000);
+  }
+
+  function stopTodayChecklistCompleteReaction() {
+    setConfettiParticles([]);
+    setIsBestDayMessageVisible(false);
+    if (confettiTimer.current) {
+      clearTimeout(confettiTimer.current);
+      confettiTimer.current = null;
+    }
+    if (bestDayMessageTimer.current) {
+      clearTimeout(bestDayMessageTimer.current);
+      bestDayMessageTimer.current = null;
+    }
   }
 
   function toggleTodoSelection(todoId: string) {
@@ -3988,6 +4170,14 @@ export default function GoalTracker() {
         </div>
       )}
 
+      {isBestDayMessageVisible && (
+        <div aria-live="polite" className="pointer-events-none fixed inset-0 z-[75] overflow-hidden">
+          <div className="routine-best-day-message">
+            최고의 날입니다!
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5">
         <Head
           language={language}
@@ -4561,12 +4751,16 @@ export default function GoalTracker() {
           </section>
         )}
 
-        {(draggingNavItemId || draggingGoalId || draggingTodoId) && (
+        {(draggingNavItemId || draggingGoalId || draggingTodoId || draggingTodoCategoryKey) && (
           <div className="fixed left-1/2 top-3 z-[80] -translate-x-1/2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-lg backdrop-blur">
             {draggingNavItemId
               ? language === "ko"
                 ? "메뉴 순서 변경 중"
                 : "Reordering menu"
+              : draggingTodoCategoryKey
+                ? language === "ko"
+                  ? "카테고리 순서 변경 중"
+                  : "Reordering categories"
               : language === "ko"
                 ? "목록 순서 변경 중"
                 : "Reordering list"}
@@ -4795,12 +4989,35 @@ export default function GoalTracker() {
                       const completedCount = group.todos.filter((todo) => todo.completed).length;
 
                       return (
-                        <section key={group.key} className="space-y-2">
+                        <section
+                          key={group.key}
+                          data-todo-category-key={group.key}
+                          className={`relative transition-all duration-200 ${
+                            draggingTodoCategoryKey === group.key
+                              ? "scale-[0.99] opacity-60"
+                              : todoCategoryDropTargetKey === group.key
+                                ? "rounded-md bg-emerald-50/80"
+                                : ""
+                          }`}
+                        >
                           <button
                             type="button"
                             aria-expanded={isExpanded}
-                            onClick={() => toggleTodoCategoryFilter(group.key)}
-                            className="flex w-full items-center gap-2 border-y border-stone-200/70 bg-stone-50/60 px-1.5 py-1 text-left hover:bg-stone-100/70"
+                            onClick={() => {
+                              if (suppressNextTodoCategoryClick.current) return;
+                              toggleTodoCategoryFilter(group.key);
+                            }}
+                            onPointerDown={(event) => startTodoCategoryDrag(event, group.key)}
+                            onPointerMove={moveTodoCategoryDrag}
+                            onPointerUp={endTodoCategoryDrag}
+                            onPointerCancel={endTodoCategoryDrag}
+                            className={`flex w-full touch-none items-center gap-2 border-y border-stone-200/70 px-1.5 py-1 text-left transition ${
+                              draggingTodoCategoryKey === group.key
+                                ? "cursor-grabbing bg-emerald-100/80"
+                                : todoCategoryDropTargetKey === group.key
+                                  ? "cursor-grabbing bg-white text-emerald-800 shadow-sm"
+                                  : "cursor-grab bg-stone-50/60 hover:bg-stone-100/70 active:cursor-grabbing"
+                            }`}
                           >
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center text-stone-500">
                               {isExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
@@ -4812,8 +5029,15 @@ export default function GoalTracker() {
                               {completedCount}/{group.todos.length}
                             </span>
                           </button>
-                          {isExpanded && (
-                            <div className="space-y-2 pl-3">
+                          <div
+                            className={`grid transition-all duration-300 ease-out ${
+                              isExpanded
+                                ? "grid-rows-[1fr] translate-y-0 opacity-100"
+                                : "pointer-events-none grid-rows-[0fr] -translate-y-2 opacity-0"
+                            }`}
+                          >
+                            <div className="min-h-0 overflow-hidden">
+                              <div className="space-y-2 pl-3 pt-2">
                               {group.todos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
                       const todoTargetTimingState = todo.targetDate
@@ -4897,7 +5121,7 @@ export default function GoalTracker() {
                             className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-wait disabled:opacity-50 ${
                               todo.completed
                                 ? "border-stone-500 bg-stone-500 text-white"
-                                : "border-stone-300 bg-white text-transparent hover:border-stone-500 hover:text-stone-500"
+                                : "border-stone-300 bg-white text-stone-300 hover:border-stone-500 hover:text-stone-500"
                             }`}
                           >
                             <CheckIcon />
@@ -5010,23 +5234,25 @@ export default function GoalTracker() {
                             </button>
                           </div>
                         ) : selectedTodoCount === 0 ? (
-                          <div className="relative" data-todo-action-menu>
+                          <div data-todo-action-menu>
                             <button
                               type="button"
                               aria-expanded={todoActionMenuId === todo.id}
                               aria-label={language === "ko" ? `${todo.title} 메뉴` : `${todo.title} menu`}
                               onClick={(event) => {
+                                event.preventDefault();
                                 event.stopPropagation();
-                                setTodoActionMenuId((current) => (current === todo.id ? null : todo.id));
+                                setTodoActionMenuId(todoActionMenuId === todo.id ? null : todo.id);
                               }}
                               onPointerDown={(event) => event.stopPropagation()}
+                              onPointerUp={(event) => event.stopPropagation()}
                               disabled={isSaving}
                               className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                             >
                               <MoreIcon />
                             </button>
                             {todoActionMenuId === todo.id && (
-                              <div className="absolute right-0 top-9 z-20 grid w-32 overflow-hidden rounded-md border border-stone-200 bg-white py-1 text-xs font-semibold text-stone-700 shadow-lg">
+                              <div className="todo-action-menu-panel absolute inset-y-0 right-14 z-20 flex min-w-60 max-w-[calc(100%-4rem)] items-stretch overflow-hidden rounded-md border border-stone-200 text-sm font-semibold text-stone-700 shadow-xl">
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -5034,7 +5260,7 @@ export default function GoalTracker() {
                                     setSelectedTodoIds([todo.id]);
                                     setTodoActionMenuId(null);
                                   }}
-                                  className="flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-100"
+                                  className="flex min-w-20 shrink-0 items-center justify-center gap-2 px-4 whitespace-nowrap hover:bg-stone-100"
                                 >
                                   <CheckIcon />
                                   {language === "ko" ? "선택" : "Select"}
@@ -5045,7 +5271,7 @@ export default function GoalTracker() {
                                     event.stopPropagation();
                                     startEditingTodo(todo);
                                   }}
-                                  className="flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-100"
+                                  className="flex min-w-20 shrink-0 items-center justify-center gap-2 border-l border-stone-200 px-4 whitespace-nowrap hover:bg-stone-100"
                                 >
                                   <EditIcon />
                                   {text.edit}
@@ -5057,7 +5283,7 @@ export default function GoalTracker() {
                                     setTodoToDelete(todo);
                                     setTodoActionMenuId(null);
                                   }}
-                                  className="flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50"
+                                  className="flex min-w-20 shrink-0 items-center justify-center gap-2 border-l border-stone-200 px-4 whitespace-nowrap text-red-700 hover:bg-red-50"
                                 >
                                   <BinIcon />
                                   {text.delete}
@@ -5071,8 +5297,9 @@ export default function GoalTracker() {
                       </div>
                       );
                               })}
+                              </div>
                             </div>
-                          )}
+                          </div>
                         </section>
                       );
                     })
@@ -5089,6 +5316,8 @@ export default function GoalTracker() {
                 reloadSignal={routineReloadKey}
                 onSavingChange={setIsSaving}
                 onError={setError}
+                onTodayChecklistComplete={triggerTodayChecklistCompleteReaction}
+                onTodayChecklistIncomplete={stopTodayChecklistCompleteReaction}
               />
             </div>
 
@@ -5348,16 +5577,18 @@ export default function GoalTracker() {
                       <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
                           <textarea
+                            ref={goalMemoTextareaRef}
                             value={activeGoalDraft?.memo ?? ""}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              resizeTextareaToContent(event.currentTarget);
                               setGoalDraft((draft) =>
                               draft
                                 ? { ...draft, memo: event.target.value }
                                 : { ...toGoalDraft(activeGoal), memo: event.target.value },
-                            )
-                          }
+                              );
+                            }}
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
