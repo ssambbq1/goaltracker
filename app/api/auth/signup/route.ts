@@ -9,8 +9,10 @@ export async function POST(request: Request) {
     const loginId = await signupWithId(
       typeof body?.loginId === "string" ? body.loginId : "",
       typeof body?.password === "string" ? body.password : "",
+      typeof body?.displayName === "string" ? body.displayName : "",
     );
-    return sessionResponse({ loginId }, loginId, { status: 201 });
+    const displayName = typeof body?.displayName === "string" ? body.displayName.trim() || null : null;
+    return sessionResponse({ loginId, displayName }, loginId, { status: 201 });
   } catch (error) {
     const message = getErrorMessage(error, "Failed to sign up");
     console.error("Signup failed:", error);

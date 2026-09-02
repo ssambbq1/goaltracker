@@ -75,6 +75,7 @@ const ROUTINE_TEXT = {
     start: "Start",
     end: "End",
     memo: "Memo",
+    editing: "Editing",
     success: "Success",
     failure: "Failure",
     missed: "missed",
@@ -102,6 +103,7 @@ const ROUTINE_TEXT = {
     start: "시작",
     end: "종료",
     memo: "메모",
+    editing: "수정중",
     success: "성공",
     failure: "실패",
     missed: "미체크",
@@ -1281,18 +1283,17 @@ function RoutineListItem({
           {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
-      <div className="relative flex min-w-0 items-center justify-between gap-3">
+      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_2.5rem_auto] items-center gap-2">
         <div className="min-w-0">
-          <div className="break-words font-medium text-stone-950">{routine.title}</div>
+          <div className="truncate font-medium text-stone-950">{routine.title}</div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span
-            className="w-10 shrink-0 text-right text-xs font-semibold text-emerald-700"
-            title={`${ROUTINE_TEXT[language].successRate}: ${stats.rate}%`}
-          >
-            {stats.rate}%
-          </span>
-          <div className="grid shrink-0 grid-cols-7 justify-items-start gap-0.5">
+        <span
+          className="text-right text-xs font-semibold text-emerald-700"
+          title={`${ROUTINE_TEXT[language].successRate}: ${stats.rate}%`}
+        >
+          {stats.rate}%
+        </span>
+        <div className="grid shrink-0 grid-cols-7 justify-items-start gap-0.5">
             {recentWeekDates.map((date) => {
               const status = date >= routine.startDate && date <= routine.endDate ? markByDate.get(date) : undefined;
               const isOutOfRange = date < routine.startDate || date > routine.endDate;
@@ -1328,7 +1329,6 @@ function RoutineListItem({
               );
             })}
           </div>
-        </div>
       </div>
     </div>
   );
@@ -1365,11 +1365,29 @@ function RoutineCard({
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
   const memoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const memoDoubleTapTime = useRef(0);
   const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (isSaving || !editValue?.title.trim()) return;
     onSaveEdit();
+  };
+  const saveMemoEdit = () => {
+    if (isSaving || !editValue?.title.trim()) return;
+    onSaveEdit();
+  };
+  const handleMemoDoubleTap = (
+    event: ReactPointerEvent<HTMLElement>,
+    action: () => void,
+  ) => {
+    if (event.pointerType === "mouse") return;
+    const now = Date.now();
+    if (now - memoDoubleTapTime.current < 340) {
+      memoDoubleTapTime.current = 0;
+      action();
+      return;
+    }
+    memoDoubleTapTime.current = now;
   };
 
   useEffect(() => {
@@ -1381,12 +1399,17 @@ function RoutineCard({
     <div className="grid gap-0">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
+          {editValue && (
+            <div className="mb-2 inline-flex -rotate-1 items-center rounded-sm border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900 shadow-sm">
+              {text.editing}
+            </div>
+          )}
           {editValue ? (
             <input
               value={editValue.title}
               onChange={(event) => onEditChange({ ...editValue, title: event.target.value })}
               onKeyDown={handleEditKeyDown}
-              className="w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
+              className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
               aria-label="Edit routine title"
             />
           ) : (
@@ -1402,7 +1425,7 @@ function RoutineCard({
                     value={editValue.startDate}
                     onChange={(event) => onEditChange({ ...editValue, startDate: event.target.value })}
                     onKeyDown={handleEditKeyDown}
-                    className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                    className="editing-text-field h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                     aria-label="Edit routine start date"
                   />
                 </span>
@@ -1413,7 +1436,7 @@ function RoutineCard({
                     value={editValue.endDate}
                     onChange={(event) => onEditChange({ ...editValue, endDate: event.target.value })}
                     onKeyDown={handleEditKeyDown}
-                    className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                    className="editing-text-field h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                     aria-label="Edit routine end date"
                   />
                 </span>
@@ -1430,22 +1453,28 @@ function RoutineCard({
               <textarea
                 ref={memoTextareaRef}
                 value={editValue.memo}
+                onDoubleClick={saveMemoEdit}
+                onPointerUp={(event) => handleMemoDoubleTap(event, saveMemoEdit)}
                 onChange={(event) => {
                   resizeTextareaToContent(event.currentTarget);
                   onEditChange({ ...editValue, memo: event.target.value });
                 }}
                 onKeyDown={handleEditKeyDown}
-                className="mt-2 min-h-24 w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                className="editing-text-field mt-2 min-h-24 w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}
               />
             </>
           ) : (
-            routine.memo && (
-              <p className="mt-2 whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700">
-                {routine.memo}
-              </p>
-            )
+            <p
+              className={`mt-2 whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
+                routine.memo ? "text-stone-700" : "text-stone-500"
+              }`}
+              onDoubleClick={onEdit}
+              onPointerUp={(event) => handleMemoDoubleTap(event, onEdit)}
+            >
+              {routine.memo || text.memo}
+            </p>
           )}
         </div>
         <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">

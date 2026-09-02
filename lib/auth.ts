@@ -34,6 +34,12 @@ function validatePassword(password: string) {
   }
 }
 
+function normalizeDisplayName(displayName: string | null | undefined) {
+  const value = (displayName ?? "").trim();
+  if (value.length > 30) throw new Error("Nickname must be 30 characters or fewer.");
+  return value || null;
+}
+
 function hashPassword(password: string) {
   validatePassword(password);
   const salt = randomBytes(16).toString("base64url");
@@ -186,9 +192,25 @@ export async function loginWithId(rawLoginId: string, rawPassword: string) {
   return loginId;
 }
 
-export async function signupWithId(rawLoginId: string, rawPassword: string) {
+export async function getAccountProfile(loginId: string) {
+  const supabase = getSupabaseServerClient();
+  const { data: user, error } = await supabase
+    .from("app_users")
+    .select("login_id, display_name")
+    .eq("login_id", loginId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return {
+    loginId,
+    displayName: user?.display_name ?? null,
+  };
+}
+
+export async function signupWithId(rawLoginId: string, rawPassword: string, rawDisplayName?: string) {
   const loginId = normalizeLoginId(rawLoginId);
   const password = rawPassword;
+  const displayName = normalizeDisplayName(rawDisplayName);
   validateManualLoginId(loginId);
   validatePassword(password);
 
@@ -198,6 +220,7 @@ export async function signupWithId(rawLoginId: string, rawPassword: string) {
   const { error } = await supabase.from("app_users").insert({
     login_id: loginId,
     password_hash: hashPassword(password),
+    display_name: displayName,
     created_at_ms: now,
     last_login_at_ms: now,
   });
@@ -260,6 +283,62 @@ export async function loginWithGoogleUser(user: User) {
   if (shouldClaimUnassignedGoals) await claimUnassignedGoals(loginId);
 
   return loginId;
+}
+
+export async function loginWithKakaoUser(user: User) {
+  const kakaoUserId = user.id;
+  const loginId = `kakao_${kakaoUserId.replaceAll("-", "")}`;
+  const kakaoEmail = user.email?.toLowerCase() ?? null;
+  const displayName =
+    typeof user.user_metadata?.name === "string"
+      ? user.user_metadata.name
+      : typeof user.user_metadata?.full_name === "string"
+        ? user.user_metadata.full_name
+        : typeof user.user_metadata?.nickname === "string"
+          ? user.user_metadata.nickname
+          : kakaoEmail;
+
+  const supabase = getSupabaseServerClient();
+  const shouldClaimUnassignedGoals = await isFirstUser();
+  const now = Date.now();
+
+  const { data: existingUser, error: existingError } = await supabase
+    .from("app_users")
+    .select("login_id")
+    .eq("login_id", loginId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  if (existingUser) {
+    const update: { display_name?: string | null; last_login_at_ms: number } = { last_login_at_ms: now };
+    if (displayName) update.display_name = displayName;
+    const { error } = await supabase.from("app_users").update(update).eq("login_id", existingUser.login_id);
+    if (error) throw error;
+    return existingUser.login_id;
+  }
+
+  const { error } = await supabase.from("app_users").insert({
+    login_id: loginId,
+    display_name: displayName,
+    created_at_ms: now,
+    last_login_at_ms: now,
+  });
+  if (error) throw error;
+
+  if (shouldClaimUnassignedGoals) await claimUnassignedGoals(loginId);
+
+  return loginId;
+}
+
+export async function updateCurrentDisplayName(rawDisplayName: string) {
+  const loginId = await requireLoginId();
+  const displayName = normalizeDisplayName(rawDisplayName);
+  const { error } = await getSupabaseServerClient()
+    .from("app_users")
+    .update({ display_name: displayName })
+    .eq("login_id", loginId);
+  if (error) throw error;
+  return displayName;
 }
 
 export async function deleteCurrentAccount(rawPassword?: string) {

@@ -114,7 +114,7 @@ export default function AppInstallButton({ language }: { language: AppLanguage }
         onClick={installApp}
         aria-label={text.title}
         title={text.title}
-        className="flex h-7 min-w-7 items-center justify-center gap-1.5 rounded-full border border-stone-300 bg-white px-1 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11"
+        className="flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md border border-stone-300 bg-white px-1.5 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-10"
       >
         <InstallIcon />
         <span className="hidden sm:inline">{buttonText}</span>

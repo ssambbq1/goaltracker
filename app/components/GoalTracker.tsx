@@ -196,6 +196,7 @@ const AGENT_VOICE_ERROR_RESTART_DELAY_MS = 700;
 
 type Session = {
   loginId: string | null;
+  displayName: string | null;
 };
 
 type NavigationState = {
@@ -330,6 +331,7 @@ const UI_TEXT = {
     current: "Current",
     unit: "Unit",
     memo: "Memo",
+    editing: "Editing",
     start: "Start",
     deadline: "Deadline",
     latest: "Latest",
@@ -399,6 +401,7 @@ const UI_TEXT = {
     current: "현재",
     unit: "단위",
     memo: "메모",
+    editing: "수정중",
     start: "시작",
     deadline: "마감",
     latest: "최근",
@@ -629,15 +632,26 @@ async function login(loginId: string, password: string) {
   return data.loginId;
 }
 
-async function signup(loginId: string, password: string) {
+async function signup(loginId: string, password: string, displayName: string) {
   const response = await fetch("/api/auth/signup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ loginId, password }),
+    body: JSON.stringify({ loginId, password, displayName }),
   });
   const data = (await response.json()) as { error?: string; loginId?: string };
   if (!response.ok || !data.loginId) throw new Error(data.error || "Failed to sign up");
   return data.loginId;
+}
+
+async function updateAccountDisplayName(displayName: string) {
+  const response = await fetch("/api/auth/account", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName }),
+  });
+  const data = (await response.json()) as { error?: string; displayName?: string | null };
+  if (!response.ok) throw new Error(data.error || "Failed to update nickname");
+  return data.displayName ?? "";
 }
 
 async function logout() {
@@ -1422,6 +1436,8 @@ export default function GoalTracker() {
   const [loginId, setLoginId] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState("");
   const [passwordForm, setPasswordForm] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [isAccountDeleteOpen, setIsAccountDeleteOpen] = useState(false);
   const [accountDeletePassword, setAccountDeletePassword] = useState("");
@@ -1546,6 +1562,7 @@ export default function GoalTracker() {
   const previousView = useRef<TrackerView>("list");
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
   const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const goalMemoDoubleTapTime = useRef(0);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
   const todosBeforeDrag = useRef<Todo[] | null>(null);
@@ -1598,7 +1615,7 @@ export default function GoalTracker() {
     : language === "ko"
       ? "이 브라우저는 음성 입력을 지원하지 않습니다"
       : "Voice input is not supported in this browser";
-  const agentVoiceButtonClassName = `grid h-8 w-8 shrink-0 place-items-center rounded-md border text-stone-700 transition disabled:cursor-not-allowed disabled:opacity-40 ${
+  const agentVoiceButtonClassName = `grid h-9 w-9 shrink-0 place-items-center rounded-md border text-stone-700 transition disabled:cursor-not-allowed disabled:opacity-40 ${
     isAgentListening
       ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
       : "border-stone-300 hover:bg-stone-100"
@@ -1649,6 +1666,8 @@ export default function GoalTracker() {
 
         if (!session.loginId) {
           setLoginId(null);
+          setDisplayName("");
+          setDisplayNameDraft("");
           resetGoalState();
           setIsLoading(false);
           return;
@@ -1656,6 +1675,8 @@ export default function GoalTracker() {
 
         setLoginId(session.loginId);
         setLoginForm(session.loginId);
+        setDisplayName(session.displayName ?? "");
+        setDisplayNameDraft(session.displayName ?? "");
         fetchAgentSettings()
           .then((settings) => {
             if (!isActive) return;
@@ -2119,8 +2140,11 @@ export default function GoalTracker() {
 
     try {
       const loggedInId = await login(nextLoginId, passwordForm);
+      const session = await fetchSession();
       setLoginId(loggedInId);
       setLoginForm(loggedInId);
+      setDisplayName(session.displayName ?? "");
+      setDisplayNameDraft(session.displayName ?? "");
       setPasswordForm("");
       await loadGoalData();
     } catch (loginError) {
@@ -2142,9 +2166,11 @@ export default function GoalTracker() {
     setError("");
 
     try {
-      const signedUpId = await signup(nextLoginId, passwordForm);
+      const signedUpId = await signup(nextLoginId, passwordForm, displayNameDraft);
       setLoginId(signedUpId);
       setLoginForm(signedUpId);
+      setDisplayName(displayNameDraft.trim());
+      setDisplayNameDraft(displayNameDraft.trim());
       setPasswordForm("");
       await loadGoalData();
     } catch (signupError) {
@@ -2161,6 +2187,8 @@ export default function GoalTracker() {
     try {
       await logout();
       setLoginId(null);
+      setDisplayName("");
+      setDisplayNameDraft("");
       setPasswordForm("");
       resetGoalState();
     } catch (logoutError) {
@@ -2183,6 +2211,8 @@ export default function GoalTracker() {
       await deleteAccount(accountDeletePassword);
       setLoginId(null);
       setLoginForm("");
+      setDisplayName("");
+      setDisplayNameDraft("");
       setPasswordForm("");
       setAccountDeletePassword("");
       setAccountDeleteConfirm("");
@@ -2406,6 +2436,21 @@ export default function GoalTracker() {
       setIsAgentListening(false);
       void executeAgentPrompt(prompt, { speakResponse: true });
     }, AGENT_VOICE_AUTO_RUN_DELAY_MS);
+  }
+
+  async function submitDisplayName() {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const nextDisplayName = await updateAccountDisplayName(displayNameDraft);
+      setDisplayName(nextDisplayName);
+      setDisplayNameDraft(nextDisplayName);
+    } catch (displayNameError) {
+      setError(displayNameError instanceof Error ? displayNameError.message : "Failed to update nickname");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function toggleAgentVoiceInput() {
@@ -3719,6 +3764,32 @@ export default function GoalTracker() {
     setIsEditingGoal(false);
   }
 
+  function startEditingGoalMemo() {
+    if (!activeGoal) return;
+    setGoalDraft(toGoalDraft(activeGoal));
+    setIsEditingGoal(true);
+  }
+
+  function finishEditingGoalMemo() {
+    if (!activeGoal || !activeGoalDraft) return;
+    commitGoalDraft("memo", activeGoalDraft.memo);
+    setIsEditingGoal(false);
+  }
+
+  function handleGoalMemoDoubleTap(
+    event: ReactPointerEvent<HTMLElement>,
+    action: () => void,
+  ) {
+    if (event.pointerType === "mouse") return;
+    const now = Date.now();
+    if (now - goalMemoDoubleTapTime.current < 340) {
+      goalMemoDoubleTapTime.current = 0;
+      action();
+      return;
+    }
+    goalMemoDoubleTapTime.current = now;
+  }
+
   function cancelEditingGoal() {
     if (activeGoal) setGoalDraft(toGoalDraft(activeGoal));
     setIsEditingGoal(false);
@@ -4043,12 +4114,14 @@ export default function GoalTracker() {
       <LoginScreen
         loginId={loginForm}
         password={passwordForm}
+        displayName={displayNameDraft}
         mode={authMode}
         language={language}
         error={error}
         isSaving={isSaving}
         onLoginIdChange={setLoginForm}
         onPasswordChange={setPasswordForm}
+        onDisplayNameChange={setDisplayNameDraft}
         onModeChange={setAuthMode}
         onSubmit={submitLogin}
         onSignup={submitSignup}
@@ -4178,13 +4251,23 @@ export default function GoalTracker() {
         </div>
       )}
 
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-2.5 py-6 sm:px-4 lg:px-5">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-2.5 py-5 sm:gap-6 sm:px-4 sm:py-6 lg:px-5">
         <Head
           language={language}
           text={text}
           isDarkMode={isDarkMode}
           isUserView={currentView === "user"}
           onLanguageChange={setLanguage}
+          onHomeOpen={() => {
+            setCurrentView("list");
+            setIsEditingGoal(false);
+            setIsGoalModalOpen(false);
+            setIsTodoModalOpen(false);
+            setIsEntryModalOpen(false);
+            setTodoToDelete(null);
+            setEditingTodoId(null);
+            setEditingTodoTitle("");
+          }}
           onThemeToggle={() => setIsDarkMode((current) => !current)}
           onUserOpen={() => {
             setCurrentView("user");
@@ -4221,7 +4304,7 @@ export default function GoalTracker() {
           onPointerMove={moveNavDrag}
           onPointerUp={endNavDrag}
           onPointerCancel={endNavDrag}
-          className="sticky top-0 z-40 hidden cursor-grab gap-1 overflow-x-auto rounded-full border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur active:cursor-grabbing sm:flex sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
+          className="sticky top-0 z-40 hidden cursor-grab gap-1 overflow-x-auto rounded-lg border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur active:cursor-grabbing sm:flex sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
         >
           {navItems.map((item) => (
             <button
@@ -4239,7 +4322,7 @@ export default function GoalTracker() {
                 }
                 navigateToView(item.id as TrackerView);
               }}
-              className={`flex h-10 min-w-0 flex-1 touch-none items-center justify-center gap-1.5 rounded-full border px-2 text-xs font-semibold leading-none transition ${
+              className={`flex h-10 min-w-0 flex-1 touch-none items-center justify-center gap-1.5 rounded-md border px-2 text-xs font-semibold leading-none transition ${
                 draggingNavItemId === item.id
                   ? "scale-95 border-emerald-500 bg-emerald-100 text-emerald-900 opacity-70"
                   : navItemDropTargetId === item.id
@@ -4268,12 +4351,35 @@ export default function GoalTracker() {
           ))}
         </nav>
 
-        {isAgentEnabled && currentView !== "user" && currentView !== "detail" && (
-          <section
-            className={`grid rounded-md border border-stone-200 bg-white shadow-sm ${
-              isAgentPanelExpanded ? "gap-3 p-3" : "gap-0 p-2"
-            }`}
+        {isAgentEnabled && currentView !== "user" && currentView !== "detail" && !isAgentPanelExpanded && (
+          <button
+            type="button"
+            data-swipe-ignore
+            onClick={() => setIsAgentPanelExpanded(true)}
+            aria-label={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
+            className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 z-[95] grid h-14 w-14 place-items-center rounded-full border border-emerald-500/40 bg-emerald-700 text-white shadow-xl shadow-emerald-950/20 transition hover:-translate-y-0.5 hover:bg-emerald-800 sm:bottom-5 [&_svg]:h-9 [&_svg]:w-9"
           >
+            <span className={isAgentRunning ? "animate-pulse" : ""}>
+              <RobotIcon />
+            </span>
+            {(isAgentRunning || pendingAgentClarification) && (
+              <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-amber-400 ring-2 ring-white" />
+            )}
+          </button>
+        )}
+
+        {isAgentEnabled && currentView !== "user" && currentView !== "detail" && isAgentPanelExpanded && (
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-[105] cursor-default bg-stone-950/35 backdrop-blur-sm"
+              aria-label={language === "ko" ? "AI 에이전트 닫기" : "Close AI Agent"}
+              onClick={() => setIsAgentPanelExpanded(false)}
+            />
+            <section
+              data-swipe-ignore
+              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-[110] grid max-h-[min(82vh,42rem)] w-[calc(100vw-1.5rem)] max-w-xl gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:right-5 sm:p-4"
+            >
             <div className="grid gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <h2
@@ -4318,7 +4424,7 @@ export default function GoalTracker() {
                       disabled={isSaving || !agentPrompt.trim() || !canRunAgentRequest}
                       aria-label={language === "ko" ? "AI Agent 명령 실행" : "Run AI Agent command"}
                       title={language === "ko" ? "실행" : "Run"}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:bg-stone-300 disabled:text-white/80"
+                      className="agent-run-button flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:bg-stone-300 disabled:text-white/80"
                     >
                       <CheckIcon />
                     </button>
@@ -4342,33 +4448,14 @@ export default function GoalTracker() {
                         ? "Settings에서 API key 필요"
                         : "API key needed in Settings"}
                   </span>
-                  <button
-                    type="button"
-                    onClick={toggleAgentVoiceInput}
-                    disabled={!isSpeechRecognitionAvailable}
-                    aria-pressed={isAgentListening}
-                    aria-label={language === "ko" ? "음성으로 Agent 명령 입력" : "Dictate agent command"}
-                    title={agentVoiceButtonTitle}
-                    className={agentVoiceButtonClassName}
-                  >
-                    <MicIcon />
-                  </button>
                 <button
                   type="button"
                   onClick={() => setIsAgentPanelExpanded((expanded) => !expanded)}
                   aria-expanded={isAgentPanelExpanded}
                   className="grid h-8 w-8 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
-                  title={
-                    isAgentPanelExpanded
-                      ? language === "ko"
-                        ? "AI Agent 숨기기"
-                        : "Collapse AI Agent"
-                      : language === "ko"
-                        ? "AI Agent 펼치기"
-                        : "Expand AI Agent"
-                  }
+                  title={language === "ko" ? "AI Agent 닫기" : "Close AI Agent"}
                 >
-                  {isAgentPanelExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
+                  <CloseIcon />
                 </button>
                 </div>
               </div>
@@ -4491,32 +4578,46 @@ export default function GoalTracker() {
                     />
                     {language === "ko" ? "Agent가 제안한 변경을 바로 적용" : "Apply returned changes immediately"}
                   </label>
-                  <button
-                    type="button"
-                    onClick={submitAgentRequest}
-                    disabled={isSaving || !agentPrompt.trim() || !canRunAgentRequest}
-                    className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {isSaving
-                      ? language === "ko"
-                        ? "실행 중..."
-                        : "Running..."
-                      : pendingAgentClarification
+                  <div className="flex shrink-0 items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={submitAgentRequest}
+                      disabled={isSaving || !agentPrompt.trim() || !canRunAgentRequest}
+                      className="agent-run-button h-9 rounded-md bg-emerald-700 px-3.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isSaving
                         ? language === "ko"
-                          ? "답변 보내기"
-                          : "Send answer"
-                      : agentApplyChanges
-                        ? language === "ko"
-                          ? "Agent 실행"
-                          : "Run Agent"
-                        : language === "ko"
-                        ? "계획 받기"
-                        : "Plan"}
-                  </button>
+                          ? "실행 중..."
+                          : "Running..."
+                        : pendingAgentClarification
+                          ? language === "ko"
+                            ? "답변 보내기"
+                            : "Send answer"
+                        : agentApplyChanges
+                          ? language === "ko"
+                            ? "Agent 실행"
+                            : "Run Agent"
+                          : language === "ko"
+                          ? "계획 받기"
+                          : "Plan"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleAgentVoiceInput}
+                      disabled={!isSpeechRecognitionAvailable}
+                      aria-pressed={isAgentListening}
+                      aria-label={language === "ko" ? "음성으로 Agent 명령 입력" : "Dictate agent command"}
+                      title={agentVoiceButtonTitle}
+                      className={agentVoiceButtonClassName}
+                    >
+                      <MicIcon />
+                    </button>
+                  </div>
                 </div>
               </>
             )}
-          </section>
+            </section>
+          </>
         )}
 
         <div className="relative min-w-0 overflow-hidden">
@@ -4559,6 +4660,27 @@ export default function GoalTracker() {
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                 <span className="text-xs font-medium text-stone-500">Login ID</span>
                 <span className="truncate font-semibold text-stone-900">{loginId}</span>
+              </div>
+              <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <label className="grid gap-1 font-medium">
+                  <span className="text-xs text-stone-500">{language === "ko" ? "닉네임" : "Nickname"}</span>
+                  <input
+                    value={displayNameDraft}
+                    onChange={(event) => setDisplayNameDraft(event.target.value)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, submitDisplayName, isSaving)}
+                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                    placeholder={language === "ko" ? "표시할 이름" : "Display name"}
+                    maxLength={30}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={submitDisplayName}
+                  disabled={isSaving || displayNameDraft.trim() === displayName}
+                  className="h-9 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {text.save}
+                </button>
               </div>
               <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
                   {[
@@ -4996,7 +5118,9 @@ export default function GoalTracker() {
                             draggingTodoCategoryKey === group.key
                               ? "scale-[0.99] opacity-60"
                               : todoCategoryDropTargetKey === group.key
-                                ? "rounded-md bg-emerald-50/80"
+                                ? isDarkMode
+                                  ? "rounded-md bg-[#0b2a22]"
+                                  : "rounded-md bg-emerald-50/80"
                                 : ""
                           }`}
                         >
@@ -5011,12 +5135,18 @@ export default function GoalTracker() {
                             onPointerMove={moveTodoCategoryDrag}
                             onPointerUp={endTodoCategoryDrag}
                             onPointerCancel={endTodoCategoryDrag}
-                            className={`flex w-full touch-none items-center gap-2 border-y border-stone-200/70 px-1.5 py-1 text-left transition ${
+                            className={`todo-category-row flex w-full touch-none items-center gap-2 border-y border-stone-200/70 px-1.5 py-1 text-left transition ${
                               draggingTodoCategoryKey === group.key
-                                ? "cursor-grabbing bg-emerald-100/80"
+                                ? isDarkMode
+                                  ? "cursor-grabbing bg-[#0b2a22]"
+                                  : "cursor-grabbing bg-emerald-100/80"
                                 : todoCategoryDropTargetKey === group.key
-                                  ? "cursor-grabbing bg-white text-emerald-800 shadow-sm"
-                                  : "cursor-grab bg-stone-50/60 hover:bg-stone-100/70 active:cursor-grabbing"
+                                  ? isDarkMode
+                                    ? "cursor-grabbing bg-[#0d1a18] text-emerald-300 shadow-sm"
+                                    : "cursor-grabbing bg-white text-emerald-800 shadow-sm"
+                                  : isDarkMode
+                                    ? "cursor-grab bg-[#0a1017] hover:bg-[#0f1720] active:cursor-grabbing"
+                                    : "cursor-grab bg-stone-50/60 hover:bg-stone-100/70 active:cursor-grabbing"
                             }`}
                           >
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center text-stone-500">
@@ -5187,7 +5317,7 @@ export default function GoalTracker() {
                           {!isEditingTodo && (
                             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
                               {todo.category.trim() && (
-                                <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 font-medium text-stone-700">
+                                <span className="todo-category-chip rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 font-medium text-stone-700">
                                   {todo.category.trim() || text.noCategory}
                                 </span>
                               )}
@@ -5508,6 +5638,11 @@ export default function GoalTracker() {
                 <div className="min-w-0 border border-transparent bg-transparent p-0">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0">
+                      {isEditingGoal && (
+                        <div className="mb-2 inline-flex -rotate-1 items-center rounded-sm border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900 shadow-sm">
+                          {text.editing}
+                        </div>
+                      )}
                       {isEditingGoal ? (
                         <input
                           value={activeGoalDraft?.title ?? ""}
@@ -5519,7 +5654,7 @@ export default function GoalTracker() {
                             )
                           }
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="w-full rounded-md border border-stone-300 px-2 py-1 text-2xl font-semibold outline-none focus:border-emerald-600"
+                          className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-2xl font-semibold outline-none focus:border-emerald-600"
                         />
                       ) : (
                         <h2 className="break-words py-1 text-2xl font-semibold">{activeGoal.title}</h2>
@@ -5539,7 +5674,7 @@ export default function GoalTracker() {
                                 )
                               }
                               onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                              className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                              className="editing-text-field h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                               aria-label="Edit goal start date"
                             />
                           ) : (
@@ -5561,7 +5696,7 @@ export default function GoalTracker() {
                                 )
                               }
                               onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                              className="h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                              className="editing-text-field h-6 w-[8.5rem] rounded border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
                               aria-label="Edit goal deadline"
                             />
                           ) : (
@@ -5579,6 +5714,8 @@ export default function GoalTracker() {
                           <textarea
                             ref={goalMemoTextareaRef}
                             value={activeGoalDraft?.memo ?? ""}
+                            onDoubleClick={finishEditingGoalMemo}
+                            onPointerUp={(event) => handleGoalMemoDoubleTap(event, finishEditingGoalMemo)}
                             onChange={(event) => {
                               resizeTextareaToContent(event.currentTarget);
                               setGoalDraft((draft) =>
@@ -5588,7 +5725,7 @@ export default function GoalTracker() {
                               );
                             }}
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="editing-text-field min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -5610,7 +5747,7 @@ export default function GoalTracker() {
                               )
                             }
                             onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                            className="h-6 w-16 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
+                            className="editing-text-field h-6 w-16 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
                             aria-label="Edit goal target"
                           />
                         </span>
@@ -5626,7 +5763,7 @@ export default function GoalTracker() {
                               )
                             }
                             onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                            className="h-6 w-20 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
+                            className="editing-text-field h-6 w-20 rounded border border-stone-300 bg-white px-1.5 text-sm font-semibold text-stone-900 outline-none focus:border-emerald-600"
                             aria-label="Edit goal unit"
                           />
                         </span>
@@ -5638,7 +5775,11 @@ export default function GoalTracker() {
                     </div>
                   ) : (
                     <div className="mt-5 grid gap-4">
-                      <div className="min-h-24 min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-200 bg-white p-3">
+                      <div
+                        className="min-h-24 min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-200 bg-white p-3"
+                        onDoubleClick={startEditingGoalMemo}
+                        onPointerUp={(event) => handleGoalMemoDoubleTap(event, startEditingGoalMemo)}
+                      >
                         <div className="text-xs font-medium text-stone-500">{text.memo}</div>
                         <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words text-sm text-stone-800">
                           {activeGoal.memo || text.noMemo}
@@ -6683,29 +6824,34 @@ function UserIcon() {
 function LoginScreen({
   loginId,
   password,
+  displayName,
   mode,
   language,
   error,
   isSaving,
   onLoginIdChange,
   onPasswordChange,
+  onDisplayNameChange,
   onModeChange,
   onSubmit,
   onSignup,
 }: {
   loginId: string;
   password: string;
+  displayName: string;
   mode: "login" | "signup";
   language: AppLanguage;
   error: string;
   isSaving: boolean;
   onLoginIdChange: (loginId: string) => void;
   onPasswordChange: (password: string) => void;
+  onDisplayNameChange: (displayName: string) => void;
   onModeChange: (mode: "login" | "signup") => void;
   onSubmit: () => void;
   onSignup: () => void;
 }) {
   const primaryAction = mode === "login" ? onSubmit : onSignup;
+  const isKorean = language === "ko";
   const handleLoginKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     event.preventDefault();
@@ -6714,38 +6860,69 @@ function LoginScreen({
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f7f4] px-2.5 text-stone-950">
-      <section className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-emerald-700">PlanTree</p>
-            <h1 className="mt-2 text-2xl font-semibold">{mode === "login" ? "Login" : "Sign up"}</h1>
+    <main className="flex min-h-screen items-center justify-center bg-[#eef4ee] px-3 py-8 text-stone-950">
+      <section className="w-full max-w-md overflow-hidden rounded-lg border border-stone-300 bg-white shadow-lg">
+        <div className="border-b border-stone-200 bg-[#f7faf6] px-5 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-emerald-700">PlanTree</p>
+              <h1 className="mt-2 text-2xl font-semibold">
+                {mode === "login" ? (isKorean ? "로그인" : "Login") : isKorean ? "회원가입" : "Sign up"}
+              </h1>
+            </div>
+            <AppInstallButton language={language} />
           </div>
-          <AppInstallButton language={language} />
         </div>
-        <div className="mt-5 grid gap-3">
+        <div className="grid gap-4 p-5">
           <div className="grid grid-cols-2 rounded-md border border-stone-300 bg-stone-100 p-1">
             <button
               type="button"
               onClick={() => onModeChange("login")}
-              className={`rounded px-3 py-2 text-sm font-medium ${
+              className={`rounded px-3 py-2 text-sm font-semibold transition ${
                 mode === "login" ? "bg-white text-stone-950 shadow-sm" : "text-stone-600 hover:text-stone-950"
               }`}
             >
-              Login
+              {isKorean ? "로그인" : "Login"}
             </button>
             <button
               type="button"
               onClick={() => onModeChange("signup")}
-              className={`rounded px-3 py-2 text-sm font-medium ${
+              className={`rounded px-3 py-2 text-sm font-semibold transition ${
                 mode === "signup" ? "bg-white text-stone-950 shadow-sm" : "text-stone-600 hover:text-stone-950"
               }`}
             >
-              Sign up
+              {isKorean ? "가입" : "Sign up"}
             </button>
           </div>
+
+          <div className="grid gap-2">
+            <button
+              type="button"
+              disabled
+              className="flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-md border border-[#f2d23b] bg-[#fee500] px-4 text-sm font-bold text-[#191600] opacity-70"
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#191600] text-[10px] font-black text-[#fee500]">
+                K
+              </span>
+              {isKorean ? "카카오로 계속하기 (준비중)" : "Continue with Kakao (Coming soon)"}
+            </button>
+            <a
+              href="/api/auth/google"
+              className="flex h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-800 transition hover:bg-stone-100"
+            >
+              <GoogleLogoIcon />
+              {isKorean ? "Google로 계속하기" : "Continue with Google"}
+            </a>
+          </div>
+
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs font-semibold uppercase text-stone-400">
+            <span className="h-px bg-stone-200" />
+            <span>{isKorean ? "또는 ID로" : "or with ID"}</span>
+            <span className="h-px bg-stone-200" />
+          </div>
+
           <label className="grid gap-1 text-sm font-medium">
-            Login ID
+            {isKorean ? "로그인 ID" : "Login ID"}
             <input
               value={loginId}
               onChange={(event) => onLoginIdChange(event.target.value)}
@@ -6753,20 +6930,34 @@ function LoginScreen({
               autoFocus
               autoCapitalize="none"
               autoComplete="username"
-              className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+              className="rounded-md border border-stone-300 px-3 py-2.5 font-normal outline-none focus:border-emerald-600"
               placeholder="my-id"
             />
           </label>
+          {mode === "signup" && (
+            <label className="grid gap-1 text-sm font-medium">
+              {isKorean ? "닉네임" : "Nickname"}
+              <input
+                value={displayName}
+                onChange={(event) => onDisplayNameChange(event.target.value)}
+                onKeyDown={handleLoginKeyDown}
+                autoComplete="nickname"
+                className="rounded-md border border-stone-300 px-3 py-2.5 font-normal outline-none focus:border-emerald-600"
+                placeholder={isKorean ? "앱에서 표시할 이름" : "Display name"}
+                maxLength={30}
+              />
+            </label>
+          )}
           <label className="grid gap-1 text-sm font-medium">
-            Password
+            {isKorean ? "비밀번호" : "Password"}
             <input
               type="password"
               value={password}
               onChange={(event) => onPasswordChange(event.target.value)}
               onKeyDown={handleLoginKeyDown}
               autoComplete={mode === "login" ? "current-password" : "new-password"}
-              className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-              placeholder="At least 8 characters"
+              className="rounded-md border border-stone-300 px-3 py-2.5 font-normal outline-none focus:border-emerald-600"
+              placeholder={isKorean ? "8자 이상" : "At least 8 characters"}
             />
           </label>
           {error && (
@@ -6778,19 +6969,46 @@ function LoginScreen({
             type="button"
             onClick={primaryAction}
             disabled={isSaving || !loginId.trim() || !password}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+            className="h-11 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
           >
-            {isSaving ? "Working..." : mode === "login" ? "Login" : "Create ID"}
+            {isSaving
+              ? isKorean
+                ? "처리 중..."
+                : "Working..."
+              : mode === "login"
+                ? isKorean
+                  ? "로그인"
+                  : "Login"
+                : isKorean
+                  ? "가입하기"
+                  : "Create account"}
           </button>
-          <a
-            href="/api/auth/google"
-            className="rounded-md border border-stone-300 px-4 py-2 text-center text-sm font-semibold text-stone-800 hover:bg-stone-100"
-          >
-            Continue with Google
-          </a>
         </div>
       </section>
     </main>
+  );
+}
+
+function GoogleLogoIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0">
+      <path
+        fill="#4285f4"
+        d="M21.6 12.23c0-.74-.07-1.45-.19-2.12H12v4.01h5.38a4.6 4.6 0 0 1-1.99 3.02v2.51h3.23c1.89-1.74 2.98-4.3 2.98-7.42Z"
+      />
+      <path
+        fill="#34a853"
+        d="M12 22c2.7 0 4.96-.9 6.62-2.35l-3.23-2.51c-.9.6-2.04.95-3.39.95-2.6 0-4.8-1.76-5.59-4.12H3.08v2.59A10 10 0 0 0 12 22Z"
+      />
+      <path
+        fill="#fbbc05"
+        d="M6.41 13.97A6 6 0 0 1 6.1 12c0-.68.11-1.34.31-1.97V7.44H3.08A10 10 0 0 0 2 12c0 1.61.39 3.13 1.08 4.56l3.33-2.59Z"
+      />
+      <path
+        fill="#ea4335"
+        d="M12 5.91c1.47 0 2.78.5 3.82 1.49l2.87-2.87C16.96 2.91 14.7 2 12 2a10 10 0 0 0-8.92 5.44l3.33 2.59C7.2 7.67 9.4 5.91 12 5.91Z"
+      />
+    </svg>
   );
 }
 

@@ -18,6 +18,7 @@ type HeadProps = {
   isDarkMode: boolean;
   isUserView: boolean;
   onLanguageChange: (language: AppLanguage) => void;
+  onHomeOpen: () => void;
   onThemeToggle: () => void;
   onUserOpen: () => void;
 };
@@ -28,6 +29,7 @@ export default function Head({
   isDarkMode,
   isUserView,
   onLanguageChange,
+  onHomeOpen,
   onThemeToggle,
   onUserOpen,
 }: HeadProps) {
@@ -39,16 +41,21 @@ export default function Head({
   }
 
   return (
-    <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-6 sm:gap-4">
-      <div className="flex min-w-0 items-end gap-2 sm:gap-3">
+    <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-5 sm:gap-4 sm:pb-6">
+      <button
+        type="button"
+        onClick={onHomeOpen}
+        className="flex min-w-0 items-center gap-2.5 rounded-md text-left outline-none transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:gap-3.5"
+        aria-label={language === "ko" ? "목표 리스트로 이동" : "Go to goal list"}
+      >
+        <AppleTreeIcon />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-emerald-700">{text.tagline}</p>
-          <h1 className="mt-2 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-700 via-stone-900 to-amber-500 bg-clip-text text-[clamp(1.65rem,8vw,2.25rem)] font-bold leading-none text-transparent drop-shadow-sm sm:text-5xl lg:text-6xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 sm:text-sm">{text.tagline}</p>
+          <h1 className="plantree-wordmark mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text text-[clamp(1.85rem,8vw,2.65rem)] font-semibold leading-[0.95] text-transparent sm:text-5xl lg:text-6xl">
             {text.appName}
           </h1>
         </div>
-        <AppleTreeIcon />
-      </div>
+      </button>
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <AppInstallButton language={language} />
         <div
@@ -63,7 +70,7 @@ export default function Head({
             aria-haspopup="menu"
             aria-expanded={isLanguageMenuOpen}
             aria-label="Select language"
-            className="flex h-7 min-w-12 items-center justify-center rounded-full border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:px-3"
+            className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-10 sm:px-3"
           >
             Lang
           </button>
@@ -104,7 +111,7 @@ export default function Head({
           onClick={onThemeToggle}
           aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
           title={isDarkMode ? "Light mode" : "Dark mode"}
-          className="flex h-7 w-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-11 sm:w-11"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-10 sm:w-10"
         >
           {isDarkMode ? <SunIcon /> : <MoonIcon />}
         </button>
@@ -112,7 +119,7 @@ export default function Head({
           type="button"
           onClick={onUserOpen}
           aria-label="Open user page"
-          className={`flex h-7 w-7 items-center justify-center rounded-full border shadow-sm transition sm:h-11 sm:w-11 ${
+          className={`flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition sm:h-10 sm:w-10 ${
             isUserView
               ? "border-emerald-700 bg-emerald-700 text-white"
               : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
@@ -127,13 +134,15 @@ export default function Head({
 
 function AppleTreeIcon() {
   return (
-    <Image
-      src={appIcon}
-      alt=""
-      aria-hidden="true"
-      className="h-10 w-10 shrink-0 object-contain drop-shadow-sm sm:h-16 sm:w-16"
-      priority
-    />
+    <span className="block h-14 w-14 shrink-0 overflow-hidden rounded-lg drop-shadow-sm sm:h-20 sm:w-20">
+      <Image
+        src={appIcon}
+        alt=""
+        aria-hidden="true"
+        className="h-full w-full object-cover"
+        priority
+      />
+    </span>
   );
 }
 
