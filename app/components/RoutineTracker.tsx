@@ -2,6 +2,7 @@
 
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
@@ -170,6 +171,16 @@ function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
   textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
+function clearTextSelection() {
+  window.getSelection()?.removeAllRanges();
+}
+
+function preventDoubleClickTextSelection(event: ReactMouseEvent<HTMLElement>) {
+  if (event.detail < 2) return;
+  event.preventDefault();
+  clearTextSelection();
+}
+
 function addDaysToIsoDate(date: string, days: number) {
   return toIsoDate(addDays(parseLocalDate(date), days));
 }
@@ -199,7 +210,7 @@ function getVisibleCalendarDates(startDate: string, endDate: string) {
 }
 
 function getRecentWeekDates() {
-  return Array.from({ length: 7 }, (_, index) => addDaysToIsoDate(todayIso, index - 6));
+  return Array.from({ length: 5 }, (_, index) => addDaysToIsoDate(todayIso, index - 4));
 }
 
 function groupDatesByMonth(dates: string[]) {
@@ -1283,17 +1294,17 @@ function RoutineListItem({
           {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
-      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_2.5rem_auto] items-center gap-2">
+      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1">
         <div className="min-w-0">
           <div className="truncate font-medium text-stone-950">{routine.title}</div>
         </div>
         <span
-          className="text-right text-xs font-semibold text-emerald-700"
+          className="justify-self-end whitespace-nowrap text-right text-xs font-semibold text-emerald-700"
           title={`${ROUTINE_TEXT[language].successRate}: ${stats.rate}%`}
         >
           {stats.rate}%
         </span>
-        <div className="grid shrink-0 grid-cols-7 justify-items-start gap-0.5">
+        <div className="grid shrink-0 grid-cols-5 justify-items-start gap-0.5">
             {recentWeekDates.map((date) => {
               const status = date >= routine.startDate && date <= routine.endDate ? markByDate.get(date) : undefined;
               const isOutOfRange = date < routine.startDate || date > routine.endDate;
@@ -1384,6 +1395,7 @@ function RoutineCard({
     const now = Date.now();
     if (now - memoDoubleTapTime.current < 340) {
       memoDoubleTapTime.current = 0;
+      clearTextSelection();
       action();
       return;
     }
@@ -1453,7 +1465,12 @@ function RoutineCard({
               <textarea
                 ref={memoTextareaRef}
                 value={editValue.memo}
-                onDoubleClick={saveMemoEdit}
+                onMouseDown={preventDoubleClickTextSelection}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  clearTextSelection();
+                  saveMemoEdit();
+                }}
                 onPointerUp={(event) => handleMemoDoubleTap(event, saveMemoEdit)}
                 onChange={(event) => {
                   resizeTextareaToContent(event.currentTarget);
@@ -1470,7 +1487,12 @@ function RoutineCard({
               className={`mt-2 whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
                 routine.memo ? "text-stone-700" : "text-stone-500"
               }`}
-              onDoubleClick={onEdit}
+              onMouseDown={preventDoubleClickTextSelection}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                clearTextSelection();
+                onEdit();
+              }}
               onPointerUp={(event) => handleMemoDoubleTap(event, onEdit)}
             >
               {routine.memo || text.memo}

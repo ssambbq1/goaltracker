@@ -6,6 +6,7 @@ import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -749,6 +750,114 @@ function getGoalProgressValue(goal: Goal, mode: ProgressChartMode = "raw") {
   return clampProgress(current, goal.target, startValue);
 }
 
+function parseDeadlineEnd(deadline: string) {
+  if (!deadline) return null;
+  const timestamp = new Date(`${deadline}T23:59:59.999`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function MiniGoalProgressChart({ goal, mode, label }: { goal: Goal; mode: ProgressChartMode; label: string }) {
+  const [todayTs] = useState(() => Date.now());
+  const chartEntries = getGoalChartEntries(goal.entries, mode);
+  const width = 192;
+  const height = 72;
+  const padding = { top: 1, right: 6, bottom: 1, left: 6 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const deadlineTs = parseDeadlineEnd(goal.deadline);
+  const times = [
+    goal.createdAt,
+    todayTs,
+    ...(deadlineTs === null ? [] : [deadlineTs]),
+    ...chartEntries.map((entry) => entry.createdAt),
+  ];
+  const minTs = Math.min(...times);
+  const maxTs = Math.max(...times);
+  const values = [0, goal.target, ...chartEntries.map((entry) => entry.chartValue)];
+  const rawMinValue = Math.min(...values);
+  const rawMaxValue = Math.max(...values);
+  const rawValueRange = rawMaxValue - rawMinValue || Math.max(Math.abs(rawMaxValue), 1);
+  const yMin = rawMinValue - rawValueRange * 0.08;
+  const yMax = rawMaxValue + rawValueRange * 0.08;
+  const yRange = yMax - yMin || 1;
+
+  function xFor(ts: number) {
+    if (maxTs === minTs) return padding.left + plotWidth / 2;
+    return padding.left + ((ts - minTs) / (maxTs - minTs)) * plotWidth;
+  }
+
+  function yFor(value: number) {
+    return padding.top + plotHeight - ((value - yMin) / yRange) * plotHeight;
+  }
+
+  const linePath = chartEntries
+    .map((entry, index) => `${index === 0 ? "M" : "L"} ${xFor(entry.createdAt)} ${yFor(entry.chartValue)}`)
+    .join(" ");
+  const baselineY = yFor(0);
+  const areaPath = linePath
+    ? `${linePath} L ${xFor(chartEntries.at(-1)?.createdAt ?? minTs)} ${baselineY} L ${xFor(
+        chartEntries[0].createdAt,
+      )} ${baselineY} Z`
+    : "";
+  const targetY = yFor(goal.target);
+  const todayX = xFor(todayTs);
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={label}
+      className="block h-[4.5rem] w-48 shrink-0"
+    >
+      <rect x={0.5} y={0.5} width={width - 1} height={height - 1} rx="6" fill="none" className="stroke-stone-200" strokeWidth="1" />
+      <line
+        x1={padding.left}
+        x2={padding.left + plotWidth}
+        y1={targetY}
+        y2={targetY}
+        className="goal-chart-target-line"
+        stroke="var(--chart-target)"
+        strokeDasharray="4 4"
+        strokeWidth="1.5"
+      />
+      <line
+        x1={todayX}
+        x2={todayX}
+        y1={padding.top}
+        y2={padding.top + plotHeight}
+        className="goal-chart-today-line"
+        stroke="var(--chart-today)"
+        strokeDasharray="3 4"
+        strokeWidth="1.5"
+      />
+      {areaPath && <path d={areaPath} fill="var(--chart-primary-fill-start)" opacity="0.2" />}
+      {linePath ? (
+        <path
+          d={linePath}
+          fill="none"
+          stroke="var(--chart-primary)"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.5"
+        />
+      ) : (
+        <line
+          x1={padding.left}
+          x2={padding.left + plotWidth}
+          y1={baselineY}
+          y2={baselineY}
+          className="stroke-stone-300"
+          strokeDasharray="3 4"
+          strokeWidth="1.5"
+        />
+      )}
+      {chartEntries.map((entry) => (
+        <circle key={entry.id} cx={xFor(entry.createdAt)} cy={yFor(entry.chartValue)} r="2.5" fill="var(--chart-primary)" />
+      ))}
+    </svg>
+  );
+}
+
 function getGoalSortValue(goal: Goal, sortKey: GoalSortKey, progressMode: ProgressChartMode) {
   if (sortKey === "startDate") return goal.createdAt;
   if (sortKey === "deadline") return /^\d{4}-\d{2}-\d{2}$/.test(goal.deadline) ? goal.deadline : null;
@@ -1149,6 +1258,16 @@ function isEditableTarget(target: EventTarget | null) {
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
 }
 
+function clearTextSelection() {
+  window.getSelection()?.removeAllRanges();
+}
+
+function preventDoubleClickTextSelection(event: ReactMouseEvent<HTMLElement>) {
+  if (event.detail < 2) return;
+  event.preventDefault();
+  clearTextSelection();
+}
+
 function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return true;
   if (isEditableTarget(target)) return true;
@@ -1461,7 +1580,7 @@ export default function GoalTracker() {
   const [agentKeyToEdit, setAgentKeyToEdit] = useState<AgentKeySetting | null>(null);
   const [agentKeyToDelete, setAgentKeyToDelete] = useState<AgentKeySetting | null>(null);
   const [agentPrompt, setAgentPrompt] = useState("");
-  const [agentApplyChanges, setAgentApplyChanges] = useState(false);
+  const [agentApplyChanges, setAgentApplyChanges] = useState(true);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
   const [pendingAgentClarification, setPendingAgentClarification] = useState<AgentResponse["clarification"] | null>(null);
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
@@ -2285,13 +2404,13 @@ export default function GoalTracker() {
     setAgentSettingsApiKey("");
   }
 
-  async function selectAgentApiKey(keyId: string) {
+  async function selectAgentApiKey(keyId: string, llmModel?: string) {
     setIsSaving(true);
     setError("");
 
     try {
       const settings = await saveAgentSettings({
-        llmModel: agentSettingsModel.trim() || agentSettings.llmModel,
+        llmModel: llmModel?.trim() || agentSettingsModel.trim() || agentSettings.llmModel,
         activeKeyId: keyId,
       });
       setAgentSettings(settings);
@@ -3503,6 +3622,27 @@ export default function GoalTracker() {
     }
   }
 
+  function handleTodoCardDoubleClick(
+    event: ReactMouseEvent<HTMLElement>,
+    todo: Todo,
+    isEditingTodo: boolean,
+  ) {
+    const target = event.target;
+    if (target instanceof Element && target.closest("button,[data-todo-action-menu]")) return;
+    if (selectedTodoCount > 0 || isSaving) return;
+    event.preventDefault();
+    clearTextSelection();
+
+    if (isEditingTodo) {
+      if (!editingTodoTitle.trim() || !editingTodoTargetDate.trim()) return;
+      void saveTodoTitle(todo);
+      return;
+    }
+
+    if (editingTodoId !== null) return;
+    startEditingTodo(todo);
+  }
+
   function toggleTodoSelection(todoId: string) {
     setSelectedTodoIds((current) =>
       current.includes(todoId) ? current.filter((id) => id !== todoId) : [...current, todoId],
@@ -3776,6 +3916,11 @@ export default function GoalTracker() {
     setIsEditingGoal(false);
   }
 
+  function handleGoalMemoDoubleClick(action: () => void) {
+    clearTextSelection();
+    action();
+  }
+
   function handleGoalMemoDoubleTap(
     event: ReactPointerEvent<HTMLElement>,
     action: () => void,
@@ -3784,6 +3929,7 @@ export default function GoalTracker() {
     const now = Date.now();
     if (now - goalMemoDoubleTapTime.current < 340) {
       goalMemoDoubleTapTime.current = 0;
+      clearTextSelection();
       action();
       return;
     }
@@ -4060,6 +4206,27 @@ export default function GoalTracker() {
     setEditEntryMemo(entry.memo);
     setEditEntryRecordedAt(toDateInputValue(new Date(entry.createdAt)));
     setError("");
+  }
+
+  function handleEntryRecordDoubleClick(
+    event: ReactMouseEvent<HTMLElement>,
+    entry: ProgressEntry,
+    isEditingEntry: boolean,
+  ) {
+    const target = event.target;
+    if (target instanceof Element && target.closest("button")) return;
+    if (isSaving) return;
+    event.preventDefault();
+    clearTextSelection();
+
+    if (isEditingEntry) {
+      if (!isNumberInputValueValid(editEntryValue)) return;
+      void updateEntryRecord(entry.id);
+      return;
+    }
+
+    if (editingEntryId !== null) return;
+    startEditingEntry(entry);
   }
 
   async function updateEntryRecord(entryId: string) {
@@ -4431,23 +4598,49 @@ export default function GoalTracker() {
                   </div>
                 )}
                 <div className="ml-auto flex min-w-0 items-center gap-2">
-                  <span
-                    className={`w-fit truncate whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      isAgentPanelExpanded ? "max-w-[42vw] sm:max-w-none" : "max-w-20 sm:max-w-32 md:max-w-none"
-                    } ${
-                      agentSettings.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                    }`}
-                  >
-                    {agentSettings.hasApiKey
-                      ? `${agentSettings.llmModel} ready`
-                      : agentSettings.schemaMissing
+                  {agentSettings.keys.length > 0 ? (
+                    <select
+                      value={agentSettings.keys.find((key) => key.isActive)?.id ?? ""}
+                      onChange={(event) => {
+                        if (event.target.value === "__agent_settings__") {
+                          setIsAgentPanelExpanded(false);
+                          navigateToView("user");
+                          return;
+                        }
+                        const selectedKey = agentSettings.keys.find((key) => key.id === event.target.value);
+                        if (!selectedKey) return;
+                        void selectAgentApiKey(selectedKey.id, selectedKey.llmModel);
+                      }}
+                      disabled={isSaving}
+                      aria-label={language === "ko" ? "AI Agent LLM 모델 선택" : "Select AI Agent LLM model"}
+                      className={`w-fit truncate rounded-full border-0 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-600 disabled:cursor-wait disabled:opacity-60 ${
+                        isAgentPanelExpanded ? "max-w-[42vw] sm:max-w-none" : "max-w-20 sm:max-w-32 md:max-w-none"
+                      }`}
+                    >
+                      {agentSettings.keys.map((key) => (
+                        <option key={key.id} value={key.id}>
+                          {key.llmModel}
+                        </option>
+                      ))}
+                      <option value="__agent_settings__">
+                        {language === "ko" ? "추가설정.." : "More settings..."}
+                      </option>
+                    </select>
+                  ) : (
+                    <span
+                      className={`w-fit truncate whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ${
+                        isAgentPanelExpanded ? "max-w-[42vw] sm:max-w-none" : "max-w-20 sm:max-w-32 md:max-w-none"
+                      }`}
+                    >
+                      {agentSettings.schemaMissing
                         ? language === "ko"
                           ? "Supabase migration 필요"
                           : "Supabase migration needed"
-                      : language === "ko"
-                        ? "Settings에서 API key 필요"
-                        : "API key needed in Settings"}
-                  </span>
+                        : language === "ko"
+                          ? "Settings에서 API key 필요"
+                          : "API key needed in Settings"}
+                    </span>
+                  )}
                 <button
                   type="button"
                   onClick={() => setIsAgentPanelExpanded((expanded) => !expanded)}
@@ -4759,7 +4952,7 @@ export default function GoalTracker() {
                           <input
                             type="checkbox"
                             checked={key.isActive}
-                            onChange={() => selectAgentApiKey(key.id)}
+                            onChange={() => selectAgentApiKey(key.id, key.llmModel)}
                             disabled={isSaving || key.isActive}
                             className="h-4 w-4 shrink-0 accent-emerald-700"
                           />
@@ -4960,9 +5153,6 @@ export default function GoalTracker() {
                     </p>
                   ) : (
                     visibleGoals.map((goal) => {
-                      const latest = getGoalCurrentValue(goal, progressChartMode);
-                      const percent = Math.min(100, getGoalProgressValue(goal, progressChartMode));
-
                       return (
                         <div
                           key={goal.id}
@@ -5000,7 +5190,7 @@ export default function GoalTracker() {
                               selectGoal(goal);
                             }
                           }}
-                          className={`relative w-full cursor-pointer overflow-hidden rounded-md border p-3 text-left transition-all duration-500 ${
+                          className={`relative min-h-20 w-full cursor-pointer overflow-hidden rounded-md border py-1.5 pl-2.5 pr-1.5 text-left transition-all duration-500 sm:py-2 sm:pl-3 sm:pr-2 ${
                             highlightedGoalId === goal.id
                               ? "border-emerald-500 bg-emerald-100 shadow-sm"
                               : goalDropTargetId === goal.id && draggingGoalId !== goal.id
@@ -5017,14 +5207,13 @@ export default function GoalTracker() {
                           )}
                           <div className="relative min-w-0">
                             <div className="min-w-0">
-                              <div className="flex min-w-0 items-start justify-between gap-2">
-                                <span className="min-w-0 font-medium">{goal.title}</span>
-                                <span className="shrink-0 text-sm text-stone-600">
-                                  {latest} / {goal.target} {goal.unit}
-                                </span>
-                              </div>
-                              <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
-                                <div className="h-full bg-emerald-700" style={{ width: `${percent}%` }} />
+                              <div className="flex min-w-0 items-center justify-between gap-1.5">
+                                <span className="min-w-0 break-words font-medium">{goal.title}</span>
+                                <MiniGoalProgressChart
+                                  goal={goal}
+                                  mode={progressChartMode}
+                                  label={`${goal.title} ${text.progressChart}`}
+                                />
                               </div>
                             </div>
                           </div>
@@ -5184,6 +5373,8 @@ export default function GoalTracker() {
                           if (selectedTodoCount > 0 && !isEditingTodo) toggleTodoSelection(todo.id);
                           if (todoActionMenuId) setTodoActionMenuId(null);
                         }}
+                        onMouseDown={preventDoubleClickTextSelection}
+                        onDoubleClick={(event) => handleTodoCardDoubleClick(event, todo, isEditingTodo)}
                         onPointerDown={(event) =>
                           startListReorderLongPress(
                             event,
@@ -5260,7 +5451,7 @@ export default function GoalTracker() {
                         <div className="relative min-w-0">
                           {isEditingTodo ? (
                             <div className="grid min-w-0 gap-1">
-                              <input
+                              <textarea
                                 value={editingTodoTitle}
                                 onChange={(event) => setEditingTodoTitle(event.target.value)}
                                 onKeyDown={(event) =>
@@ -5271,7 +5462,8 @@ export default function GoalTracker() {
                                   )
                                 }
                                 autoFocus
-                                className="h-7 min-w-0 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
+                                rows={3}
+                                className="min-h-20 min-w-0 resize-y rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
                                 aria-label={`Edit ${todo.title}`}
                               />
                               <div className="grid min-w-0 grid-cols-[minmax(7.5rem,auto)_minmax(0,1fr)] items-center gap-1 text-xs text-stone-500">
@@ -5568,7 +5760,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "bin" && (
-              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto">
+              <div data-screen-swipe-surface className="max-h-[calc(100dvh-11rem)] min-h-[32rem] touch-pan-y space-y-4 overflow-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {deletedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                     {text.deletedEmpty}
@@ -5714,7 +5906,11 @@ export default function GoalTracker() {
                           <textarea
                             ref={goalMemoTextareaRef}
                             value={activeGoalDraft?.memo ?? ""}
-                            onDoubleClick={finishEditingGoalMemo}
+                            onMouseDown={preventDoubleClickTextSelection}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              handleGoalMemoDoubleClick(finishEditingGoalMemo);
+                            }}
                             onPointerUp={(event) => handleGoalMemoDoubleTap(event, finishEditingGoalMemo)}
                             onChange={(event) => {
                               resizeTextareaToContent(event.currentTarget);
@@ -5777,7 +5973,11 @@ export default function GoalTracker() {
                     <div className="mt-5 grid gap-4">
                       <div
                         className="min-h-24 min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-200 bg-white p-3"
-                        onDoubleClick={startEditingGoalMemo}
+                        onMouseDown={preventDoubleClickTextSelection}
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          handleGoalMemoDoubleClick(startEditingGoalMemo);
+                        }}
                         onPointerUp={(event) => handleGoalMemoDoubleTap(event, startEditingGoalMemo)}
                       >
                         <div className="text-xs font-medium text-stone-500">{text.memo}</div>
@@ -5944,10 +6144,14 @@ export default function GoalTracker() {
                             .sort((a, b) => b.createdAt - a.createdAt)
                             .map((entry) =>
                               editingEntryId === entry.id ? (
-                                <div key={entry.id} className="grid gap-3 rounded-md border border-emerald-300 bg-white p-3">
-                                  <div className="grid gap-3 md:grid-cols-[minmax(0,140px)_minmax(0,1fr)]">
-                                    <label className="grid min-w-0 gap-1 text-sm font-medium">
-                                      Value
+                                <div
+                                  key={entry.id}
+                                  onMouseDown={preventDoubleClickTextSelection}
+                                  onDoubleClick={(event) => handleEntryRecordDoubleClick(event, entry, true)}
+                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-left shadow-sm"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                       <input
                                         type="number"
                                         value={editEntryValue}
@@ -5959,39 +6163,40 @@ export default function GoalTracker() {
                                             isSaving || !isNumberInputValueValid(editEntryValue),
                                           )
                                         }
-                                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                                        className="editing-text-field h-7 w-24 min-w-0 rounded border border-stone-300 px-2 text-base font-semibold text-stone-900 outline-none focus:border-emerald-600"
+                                        aria-label="Edit record value"
                                       />
-                                    </label>
-                                    <label className="grid min-w-0 gap-1 text-sm font-medium">
-                                      Date
+                                      <span className="text-sm font-semibold text-stone-700">{activeGoal.unit}</span>
+                                    </div>
+                                    <div className="mt-1">
                                       <input
                                         type="date"
                                         value={editEntryRecordedAt}
                                         onChange={(event) => setEditEntryRecordedAt(event.target.value)}
                                         onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
-                                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                                        className="editing-text-field h-7 w-[8.5rem] min-w-0 rounded border border-stone-300 px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                                        aria-label="Edit record date"
                                       />
-                                    </label>
-                                  </div>
-                                  <label className="grid gap-1 text-sm font-medium">
-                                    {text.memo}
+                                    </div>
                                     <textarea
                                       value={editEntryMemo}
                                       onChange={(event) => setEditEntryMemo(event.target.value)}
                                       onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
-                                      className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                                      className="editing-text-field mt-2 min-h-16 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm font-normal text-stone-700 outline-none focus:border-emerald-600"
+                                      aria-label="Edit record memo"
+                                      placeholder="No memo"
                                     />
-                                  </label>
-                                  <div className="flex flex-wrap gap-2">
+                                  </div>
+                                  <div className="flex shrink-0 flex-col gap-1">
                                     <button
                                       type="button"
                                       aria-label="Save progress record"
                                       title={text.saveTitle}
                                       onClick={() => updateEntryRecord(entry.id)}
                                       disabled={isSaving || !isNumberInputValueValid(editEntryValue)}
-                                      className="flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      {text.save}
+                                      <CheckIcon />
                                     </button>
                                     <button
                                       type="button"
@@ -5999,9 +6204,9 @@ export default function GoalTracker() {
                                       title={text.cancel}
                                       onClick={() => setEditingEntryId(null)}
                                       disabled={isSaving}
-                                      className="flex h-8 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                      className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                                     >
-                                      {text.cancel}
+                                      <CloseIcon />
                                     </button>
                                     <button
                                       type="button"
@@ -6018,6 +6223,8 @@ export default function GoalTracker() {
                               ) : (
                                 <div
                                   key={entry.id}
+                                  onMouseDown={preventDoubleClickTextSelection}
+                                  onDoubleClick={(event) => handleEntryRecordDoubleClick(event, entry, false)}
                                   className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-stone-200 bg-white p-3 text-left"
                                 >
                                   <div className="min-w-0">
