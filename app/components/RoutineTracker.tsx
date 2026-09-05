@@ -238,6 +238,21 @@ function getRoutineStats(routine: Routine) {
   return { total, success, failure, missed, rate };
 }
 
+function getTodayCheckAverage(routines: Routine[]) {
+  const checkedStatuses = routines
+    .filter((routine) => isRoutineScheduledOn(routine, todayIso))
+    .map((routine) => routine.marks.find((mark) => mark.date === todayIso)?.status)
+    .filter((status): status is RoutineMark["status"] => Boolean(status));
+
+  if (checkedStatuses.length === 0) return null;
+
+  const score = checkedStatuses.reduce((total, status) => {
+    return total + (status === "success" ? 100 : 0);
+  }, 0);
+
+  return Math.round(score / checkedStatuses.length);
+}
+
 function isRoutineScheduledOn(routine: Routine, date: string) {
   return date >= routine.startDate && date <= routine.endDate;
 }
@@ -537,6 +552,7 @@ export default function RoutineTracker({
     () => sortRoutines(routines, routineSortKey, routineSortDirection),
     [routineSortDirection, routineSortKey, routines],
   );
+  const todayCheckAverage = useMemo(() => getTodayCheckAverage(visibleRoutines), [visibleRoutines]);
 
   async function addRoutine() {
     const title = form.title.trim();
@@ -1134,6 +1150,38 @@ export default function RoutineTracker({
                     onMark={markDate}
                   />
                 ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50/80 px-4 py-3">
+                <span className="text-lg font-bold text-stone-700">
+                  {language === "ko" ? "\uC624\uB298\uC758 \uC810\uC218" : "Today's score"}
+                </span>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
+                  {todayCheckAverage !== null && todayCheckAverage >= 80 && (
+                    <span className="flex min-w-0 items-center gap-1.5 text-lg font-bold text-emerald-700">
+                      <span className="h-8 w-8 shrink-0">
+                        <ThumbsUpMark />
+                      </span>
+                      <span className="whitespace-nowrap">{language === "ko" ? "\uC798\uD588\uC5B4\uC694" : "Well done"}</span>
+                    </span>
+                  )}
+                  {todayCheckAverage !== null && todayCheckAverage <= 70 && (
+                    <span className="flex min-w-0 items-center gap-1.5 text-lg font-bold text-red-700">
+                      <span className="text-2xl leading-none" aria-hidden="true">
+                        {"\uD83D\uDE1E"}
+                      </span>
+                      <span className="whitespace-nowrap">{language === "ko" ? "\uC880\uB354 \uBD84\uBC1C\uD558\uC138\uC694" : "Keep pushing"}</span>
+                    </span>
+                  )}
+                  <span className="text-3xl font-black text-emerald-700">
+                    {todayCheckAverage === null
+                      ? language === "ko"
+                        ? "-\uC810"
+                        : "- pts"
+                      : language === "ko"
+                        ? `${todayCheckAverage}\uC810`
+                        : `${todayCheckAverage} pts`}
+                  </span>
+                </div>
               </div>
             </section>
           )}

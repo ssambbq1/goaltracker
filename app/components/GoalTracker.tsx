@@ -140,6 +140,7 @@ type AgentChatMessage =
     };
 
 type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
+type AgentSelectedList = "goal" | "todo" | "routine" | "archive" | "bin";
 type AppLanguage = "en" | "ko";
 type SortDirection = "asc" | "desc";
 type GoalSortKey = "manual" | "startDate" | "deadline" | "latestRecord" | "progress";
@@ -255,6 +256,22 @@ type ScreenSwipeState = {
   didSwipe: boolean;
 };
 
+type AgentButtonPosition = {
+  x: number;
+  y: number;
+};
+
+type AgentButtonDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  buttonStartX: number;
+  buttonStartY: number;
+  latestX: number;
+  latestY: number;
+  didMove: boolean;
+};
+
 type ConfettiParticle = {
   id: string;
   left: number;
@@ -280,6 +297,7 @@ const NAV_MENU_ORDER_STORAGE_KEY = "boost-mastery.nav-menu-order";
 const THEME_STORAGE_KEY = "boost-mastery.theme";
 const LANGUAGE_STORAGE_KEY = "boost-mastery.language";
 const AGENT_ENABLED_STORAGE_KEY = "boost-mastery.agent-enabled";
+const AGENT_BUTTON_POSITION_STORAGE_KEY = "boost-mastery.agent-button-position";
 const GOAL_SORT_KEY_STORAGE_KEY = "boost-mastery.goal-sort-key";
 const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
 const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
@@ -289,6 +307,9 @@ const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
+const AGENT_BUTTON_SIZE = 56;
+const AGENT_BUTTON_EDGE_PADDING = 12;
+const AGENT_BUTTON_DRAG_THRESHOLD = 6;
 const NAV_ITEM_LONG_PRESS_MS = 450;
 const NAV_ITEM_DRAG_CANCEL_DISTANCE = 10;
 const LIST_REORDER_LONG_PRESS_MS = 450;
@@ -471,11 +492,16 @@ async function saveAgentSettings(input: {
   return data.settings;
 }
 
-async function runAgentRequest(prompt: string, apply: boolean) {
+function getAgentSelectedList(view: TrackerView): AgentSelectedList {
+  if (view === "todo" || view === "routine" || view === "archive" || view === "bin") return view;
+  return "goal";
+}
+
+async function runAgentRequest(prompt: string, apply: boolean, selectedList: AgentSelectedList) {
   const response = await fetch("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, apply }),
+    body: JSON.stringify({ prompt, apply, selectedList }),
   });
   const data = (await response.json()) as { error?: string } & Partial<AgentResponse>;
   if (!response.ok || !data.message || !data.data || !Array.isArray(data.actions)) {
@@ -497,7 +523,7 @@ async function applyAgentActionRequest(actions: AgentAction[]) {
   return data as AgentResponse;
 }
 
-function isLocalTaskQuery(prompt: string) {
+function isLocalTaskQuery(prompt: string, selectedList?: AgentSelectedList) {
   const text = prompt.toLowerCase();
   const mentionsTasks =
     /\b(tasks?|todos?|to-?dos?)\b|\uD560\s*\uC77C|\uB2E8\uC21C\s*\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5/.test(
@@ -510,7 +536,7 @@ function isLocalTaskQuery(prompt: string) {
       text,
     );
 
-  return mentionsTasks && asksToRead && !mutates;
+  return (selectedList === "todo" || mentionsTasks) && asksToRead && !mutates;
 }
 
 function normalizeAgentSpeechTranscript(transcript: string) {
@@ -1115,6 +1141,37 @@ function writeStoredAgentEnabled(isEnabled: boolean) {
   }
 }
 
+function clampAgentButtonPosition(position: AgentButtonPosition) {
+  if (typeof window === "undefined") return position;
+  const maxX = Math.max(AGENT_BUTTON_EDGE_PADDING, window.innerWidth - AGENT_BUTTON_SIZE - AGENT_BUTTON_EDGE_PADDING);
+  const maxY = Math.max(AGENT_BUTTON_EDGE_PADDING, window.innerHeight - AGENT_BUTTON_SIZE - AGENT_BUTTON_EDGE_PADDING);
+  return {
+    x: Math.min(maxX, Math.max(AGENT_BUTTON_EDGE_PADDING, position.x)),
+    y: Math.min(maxY, Math.max(AGENT_BUTTON_EDGE_PADDING, position.y)),
+  };
+}
+
+function readStoredAgentButtonPosition(): AgentButtonPosition | null {
+  try {
+    const stored = window.localStorage.getItem(AGENT_BUTTON_POSITION_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<AgentButtonPosition>;
+    if (typeof parsed.x !== "number" || typeof parsed.y !== "number") return null;
+    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+    return clampAgentButtonPosition({ x: parsed.x, y: parsed.y });
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAgentButtonPosition(position: AgentButtonPosition) {
+  try {
+    window.localStorage.setItem(AGENT_BUTTON_POSITION_STORAGE_KEY, JSON.stringify(clampAgentButtonPosition(position)));
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
 function readStoredGoalSortKey(): GoalSortKey {
   try {
     const stored = window.localStorage.getItem(GOAL_SORT_KEY_STORAGE_KEY);
@@ -1586,6 +1643,9 @@ export default function GoalTracker() {
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListening, setIsAgentListening] = useState(false);
+  const [agentButtonPosition, setAgentButtonPosition] = useState<AgentButtonPosition | null>(() =>
+    typeof window === "undefined" ? null : readStoredAgentButtonPosition(),
+  );
   const [isSpeechRecognitionAvailable, setIsSpeechRecognitionAvailable] = useState(() => {
     if (typeof window === "undefined") return false;
     const speechWindow = window as SpeechRecognitionWindow;
@@ -1680,6 +1740,8 @@ export default function GoalTracker() {
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
+  const agentButtonDragState = useRef<AgentButtonDragState | null>(null);
+  const suppressNextAgentButtonClick = useRef(false);
   const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const goalMemoDoubleTapTime = useRef(0);
   const suppressGoalClickAfterDrag = useRef(false);
@@ -1722,7 +1784,9 @@ export default function GoalTracker() {
   const isAcceptingAgentVoiceResults = useRef(false);
   const agentSpeechGeneration = useRef(0);
   const text = UI_TEXT[language];
-  const canRunAgentRequest = agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt));
+  const currentAgentSelectedList = getAgentSelectedList(currentView);
+  const canRunAgentRequest =
+    agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt, currentAgentSelectedList));
   const agentVoiceButtonTitle = isSpeechRecognitionAvailable
     ? isAgentListening
       ? language === "ko"
@@ -1906,6 +1970,21 @@ export default function GoalTracker() {
   useEffect(() => {
     latestNavMenuOrder.current = normalizeNavMenuOrder(navMenuOrder);
   }, [navMenuOrder]);
+
+  useEffect(() => {
+    function clampStoredAgentButtonOnResize() {
+      setAgentButtonPosition((position) => {
+        if (!position) return position;
+        const nextPosition = clampAgentButtonPosition(position);
+        if (nextPosition.x === position.x && nextPosition.y === position.y) return position;
+        writeStoredAgentButtonPosition(nextPosition);
+        return nextPosition;
+      });
+    }
+
+    window.addEventListener("resize", clampStoredAgentButtonOnResize);
+    return () => window.removeEventListener("resize", clampStoredAgentButtonOnResize);
+  }, []);
 
   useEffect(() => {
     if (!todoActionMenuId) return;
@@ -2490,7 +2569,7 @@ export default function GoalTracker() {
     const agentRequest = clarification
       ? buildClarifiedAgentPrompt(clarification.originalPrompt, clarification.question, request)
       : request;
-    if (!agentSettings.hasApiKey && !isLocalTaskQuery(agentRequest)) {
+    if (!agentSettings.hasApiKey && !isLocalTaskQuery(agentRequest, currentAgentSelectedList)) {
       setError(
         language === "ko"
           ? "Agent를 실행하려면 Settings에서 API key를 저장해야 합니다."
@@ -2504,7 +2583,7 @@ export default function GoalTracker() {
     setError("");
 
     try {
-      const result = await runAgentRequest(agentRequest, agentApplyChanges);
+      const result = await runAgentRequest(agentRequest, agentApplyChanges, currentAgentSelectedList);
       setAgentPrompt("");
       setAgentChatMessages((messages) => [
         ...messages,
@@ -2710,6 +2789,65 @@ export default function GoalTracker() {
 
   async function submitAgentRequest() {
     await executeAgentPrompt(agentPrompt);
+  }
+
+  function startAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.stopPropagation();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const startPosition = agentButtonPosition ?? { x: rect.left, y: rect.top };
+    agentButtonDragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      buttonStartX: startPosition.x,
+      buttonStartY: startPosition.y,
+      latestX: startPosition.x,
+      latestY: startPosition.y,
+      didMove: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = agentButtonDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+    if (!dragState.didMove && Math.hypot(deltaX, deltaY) < AGENT_BUTTON_DRAG_THRESHOLD) return;
+
+    dragState.didMove = true;
+    suppressNextAgentButtonClick.current = true;
+    event.preventDefault();
+
+    const nextPosition = clampAgentButtonPosition({
+      x: dragState.buttonStartX + deltaX,
+      y: dragState.buttonStartY + deltaY,
+    });
+    dragState.latestX = nextPosition.x;
+    dragState.latestY = nextPosition.y;
+    setAgentButtonPosition(nextPosition);
+  }
+
+  function endAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = agentButtonDragState.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    agentButtonDragState.current = null;
+    if (dragState.didMove) {
+      writeStoredAgentButtonPosition({ x: dragState.latestX, y: dragState.latestY });
+      window.setTimeout(() => {
+        suppressNextAgentButtonClick.current = false;
+      }, 0);
+    }
   }
 
   function handleAgentPromptKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
@@ -4522,9 +4660,23 @@ export default function GoalTracker() {
           <button
             type="button"
             data-swipe-ignore
-            onClick={() => setIsAgentPanelExpanded(true)}
+            onPointerDown={startAgentButtonDrag}
+            onPointerMove={moveAgentButtonDrag}
+            onPointerUp={endAgentButtonDrag}
+            onPointerCancel={endAgentButtonDrag}
+            onClick={(event) => {
+              if (suppressNextAgentButtonClick.current) {
+                event.preventDefault();
+                return;
+              }
+              setIsAgentPanelExpanded(true);
+            }}
             aria-label={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
-            className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 z-[95] grid h-14 w-14 place-items-center rounded-full border border-emerald-500/40 bg-emerald-700 text-white shadow-xl shadow-emerald-950/20 transition hover:-translate-y-0.5 hover:bg-emerald-800 sm:bottom-5 [&_svg]:h-9 [&_svg]:w-9"
+            title={language === "ko" ? "드래그해서 위치 이동" : "Drag to move"}
+            style={agentButtonPosition ? { left: agentButtonPosition.x, top: agentButtonPosition.y } : undefined}
+            className={`fixed z-[95] grid h-14 w-14 touch-none place-items-center rounded-full border border-emerald-500/40 bg-emerald-700 text-white shadow-xl shadow-emerald-950/20 transition hover:bg-emerald-800 active:cursor-grabbing [&_svg]:h-9 [&_svg]:w-9 ${
+              agentButtonPosition ? "cursor-grab" : "bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 cursor-grab hover:-translate-y-0.5 sm:bottom-5"
+            }`}
           >
             <span className={isAgentRunning ? "animate-pulse" : ""}>
               <RobotIcon />

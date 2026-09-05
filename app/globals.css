@@ -647,14 +647,21 @@ body.dark-mode .todo-action-menu-panel,
 html.dark-mode .routine-clap-burst,
 body.dark-mode .routine-clap-burst,
 .app-dark .routine-clap-burst {
+  color: rgb(248 250 252 / 0.82);
   filter: drop-shadow(0 18px 34px rgb(0 0 0 / 0.42));
+}
+
+html.dark-mode .routine-clap-burst::before,
+body.dark-mode .routine-clap-burst::before,
+.app-dark .routine-clap-burst::before {
+  border-color: rgb(52 211 153 / 0.36);
 }
 
 html.dark-mode .routine-celebration-image,
 body.dark-mode .routine-celebration-image,
 .app-dark .routine-celebration-image {
-  filter: brightness(0.9) contrast(1.08);
-  opacity: 0.82;
+  filter: invert(1) brightness(1.35) contrast(1.08) drop-shadow(0 2px 10px rgb(0 0 0 / 0.42));
+  opacity: 0.9;
 }
 
 .routine-celebration-icon-you {
