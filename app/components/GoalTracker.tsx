@@ -20,6 +20,7 @@ import AppInstallButton from "./AppInstallButton";
 import Head from "./head";
 import ProgressChart, { type ProgressChartMode } from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
+import parseKoreanDatePhrase, { removeParsedDatePhrase, type ParsedDatePhrase } from "../../lib/parseDatePhrase";
 
 type ProgressEntry = {
   id: string;
@@ -1674,7 +1675,9 @@ export default function GoalTracker() {
   const [goalDropTargetId, setGoalDropTargetId] = useState<string | null>(null);
   const [todoDropTargetId, setTodoDropTargetId] = useState<string | null>(null);
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
+  const [detectedGoalDate, setDetectedGoalDate] = useState<ParsedDatePhrase | null>(null);
   const [todoTitle, setTodoTitle] = useState("");
+  const [detectedTodoDate, setDetectedTodoDate] = useState<ParsedDatePhrase | null>(null);
   const [todoTargetDate, setTodoTargetDate] = useState(() => toDateInputValue());
   const [todoCategory, setTodoCategory] = useState("");
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>(() =>
@@ -2950,8 +2953,15 @@ export default function GoalTracker() {
     return itemTitle ? `${action.type} · ${itemTitle}` : action.type;
   }
 
+  function updateGoalTitleInput(title: string) {
+    const parsed = parseKoreanDatePhrase(title);
+    setDetectedGoalDate(parsed);
+    setGoalForm((form) => ({ ...form, title, deadline: parsed?.iso ?? form.deadline }));
+  }
+
   async function addGoal() {
-    const title = goalForm.title.trim();
+    const parsedDate = parseKoreanDatePhrase(goalForm.title) ?? detectedGoalDate;
+    const title = removeParsedDatePhrase(goalForm.title, parsedDate).trim() || goalForm.title.trim();
     const target = Number(goalForm.target);
     if (!title || !Number.isFinite(target)) return;
 
@@ -2965,7 +2975,7 @@ export default function GoalTracker() {
         target,
         unit: goalForm.unit.trim() || "units",
         createdAt: parseDateInputValue(goalForm.startDate),
-        deadline: goalForm.deadline,
+        deadline: parsedDate?.iso ?? goalForm.deadline,
       });
       setGoals(result.goals);
       setDeletedGoals((current) => current.filter((goal) => goal.id !== result.goal.id));
@@ -2978,6 +2988,7 @@ export default function GoalTracker() {
       setEntryRecordedAt(toDateInputValue());
       setEditingEntryId(null);
       setGoalForm({ ...emptyGoalForm, startDate: toDateInputValue() });
+      setDetectedGoalDate(null);
       setIsGoalModalOpen(false);
       setCurrentView("detail");
     } catch (addError) {
@@ -3564,9 +3575,17 @@ export default function GoalTracker() {
     window.addEventListener("pointercancel", handlePointerUp);
   }
 
+  function updateTodoTitleInput(title: string) {
+    const parsed = parseKoreanDatePhrase(title);
+    setDetectedTodoDate(parsed);
+    setTodoTitle(title);
+    if (parsed) setTodoTargetDate(parsed.iso);
+  }
+
   async function addTodoItem() {
-    const title = todoTitle.trim();
-    const targetDate = todoTargetDate.trim();
+    const parsedDate = parseKoreanDatePhrase(todoTitle) ?? detectedTodoDate;
+    const title = removeParsedDatePhrase(todoTitle, parsedDate).trim() || todoTitle.trim();
+    const targetDate = (parsedDate?.iso ?? todoTargetDate).trim();
     const category = todoCategory.trim();
     if (!title || !targetDate || !loginId) return;
 
@@ -3577,6 +3596,7 @@ export default function GoalTracker() {
       const result = await createTodo(title, targetDate, category);
       setTodos(result.todos);
       setTodoTitle("");
+      setDetectedTodoDate(null);
       setTodoTargetDate(toDateInputValue());
       setTodoCategory("");
       setIsTodoModalOpen(false);
@@ -3613,8 +3633,9 @@ export default function GoalTracker() {
   async function saveTodoTitle(todo: Todo) {
     if (!loginId) return;
 
-    const title = editingTodoTitle.trim();
-    const targetDate = editingTodoTargetDate.trim();
+    const parsedDate = parseKoreanDatePhrase(editingTodoTitle);
+    const title = removeParsedDatePhrase(editingTodoTitle, parsedDate).trim() || editingTodoTitle.trim();
+    const targetDate = (parsedDate?.iso ?? editingTodoTargetDate).trim();
     const category = editingTodoCategory.trim();
     if (!title) {
       setError("Todo title is required");
@@ -3982,12 +4003,14 @@ export default function GoalTracker() {
     const draft = goalDraft?.goalId === activeGoal.id ? goalDraft : toGoalDraft(activeGoal);
 
     if (field === "title") {
-      const title = (rawValue ?? draft.title).trim();
+      const parsedDate = parseKoreanDatePhrase(rawValue ?? draft.title);
+      const title = removeParsedDatePhrase(rawValue ?? draft.title, parsedDate).trim() || (rawValue ?? draft.title).trim();
       if (!title) {
         setGoalDraft((draft) => (draft ? { ...draft, title: activeGoal.title } : draft));
         return;
       }
       if (title !== activeGoal.title) updateActiveGoal({ title });
+      if (parsedDate?.iso && parsedDate.iso !== activeGoal.deadline) updateActiveGoal({ deadline: parsedDate.iso });
       setGoalDraft((draft) => (draft ? { ...draft, title } : draft));
       return;
     }
@@ -5605,7 +5628,11 @@ export default function GoalTracker() {
                             <div className="grid min-w-0 gap-1">
                               <textarea
                                 value={editingTodoTitle}
-                                onChange={(event) => setEditingTodoTitle(event.target.value)}
+                                onChange={(event) => {
+                                  const parsed = parseKoreanDatePhrase(event.target.value);
+                                  setEditingTodoTitle(event.target.value);
+                                  if (parsed) setEditingTodoTargetDate(parsed.iso);
+                                }}
                                 onKeyDown={(event) =>
                                   handleInputSaveKeyDown(
                                     event,
@@ -5990,13 +6017,14 @@ export default function GoalTracker() {
                       {isEditingGoal ? (
                         <input
                           value={activeGoalDraft?.title ?? ""}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const parsed = parseKoreanDatePhrase(event.target.value);
                             setGoalDraft((draft) =>
                               draft
-                                ? { ...draft, title: event.target.value }
-                                : { ...toGoalDraft(activeGoal), title: event.target.value },
-                            )
-                          }
+                                ? { ...draft, title: event.target.value, deadline: parsed?.iso ?? draft.deadline }
+                                : { ...toGoalDraft(activeGoal), title: event.target.value, deadline: parsed?.iso ?? activeGoal.deadline },
+                            );
+                          }}
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
                           className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-2xl font-semibold outline-none focus:border-emerald-600"
                         />
@@ -6625,12 +6653,23 @@ export default function GoalTracker() {
                 {text.goalName}
                 <input
                   value={goalForm.title}
-                  onChange={(event) => setGoalForm((form) => ({ ...form, title: event.target.value }))}
+                  onChange={(event) => updateGoalTitleInput(event.target.value)}
                   onKeyDown={(event) => handleInputSaveKeyDown(event, addGoal, isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target))}
                   autoFocus
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Example: TOEIC 900"
                 />
+                {detectedGoalDate && (
+                  <DatePhraseSticker
+                    phrase={detectedGoalDate.phrase}
+                    date={detectedGoalDate.iso}
+                    label={text.deadline}
+                    onClear={() => {
+                      setDetectedGoalDate(null);
+                      setGoalForm((form) => ({ ...form, title: removeParsedDatePhrase(form.title, detectedGoalDate), deadline: "" }));
+                    }}
+                  />
+                )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 {text.goalMemo}
@@ -6727,12 +6766,24 @@ export default function GoalTracker() {
                 {text.todo}
                 <input
                   value={todoTitle}
-                  onChange={(event) => setTodoTitle(event.target.value)}
+                  onChange={(event) => updateTodoTitleInput(event.target.value)}
                   onKeyDown={(event) => handleInputSaveKeyDown(event, addTodoItem, isSaving || !todoTitle.trim() || !todoTargetDate.trim())}
                   autoFocus
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                   placeholder="Write a task"
                 />
+                {detectedTodoDate && (
+                  <DatePhraseSticker
+                    phrase={detectedTodoDate.phrase}
+                    date={detectedTodoDate.iso}
+                    label={text.targetDate}
+                    onClear={() => {
+                      setDetectedTodoDate(null);
+                      setTodoTitle((title) => removeParsedDatePhrase(title, detectedTodoDate));
+                      setTodoTargetDate(toDateInputValue());
+                    }}
+                  />
+                )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 {text.targetDate}
@@ -7015,6 +7066,36 @@ function StoredItemCard({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function DatePhraseSticker({
+  phrase,
+  date,
+  label,
+  onClear,
+}: {
+  phrase: string;
+  date: string;
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <span className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-900">
+        <span className="max-w-[9rem] truncate">{phrase}</span>
+        <span className="text-emerald-700">{label}: {date}</span>
+      </span>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Clear ${phrase}`}
+        title="Clear detected date"
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-xs font-bold text-stone-700 hover:bg-stone-100"
+      >
+        x
+      </button>
     </div>
   );
 }

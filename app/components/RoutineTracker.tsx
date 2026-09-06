@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import parseKoreanDatePhrase, { removeParsedDatePhrase, type ParsedDatePhrase } from "../../lib/parseDatePhrase";
 
 type RoutineMarkStatus = "success" | "failure";
 type AppLanguage = "en" | "ko";
@@ -473,6 +474,8 @@ export default function RoutineTracker({
   const text = ROUTINE_TEXT[language];
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [form, setForm] = useState(emptyRoutineForm);
+  const [detectedPhrase, setDetectedPhrase] = useState<ParsedDatePhrase | null>(null);
+  const [detectedConfirmed, setDetectedConfirmed] = useState(false);
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
   const [activeRoutineResetSignal, setActiveRoutineResetSignal] = useState(resetSignal);
   const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
@@ -555,18 +558,21 @@ export default function RoutineTracker({
   const todayCheckAverage = useMemo(() => getTodayCheckAverage(visibleRoutines), [visibleRoutines]);
 
   async function addRoutine() {
-    const title = form.title.trim();
+    const parsedDate = parseKoreanDatePhrase(form.title) ?? detectedPhrase;
+    const title = removeParsedDatePhrase(form.title, parsedDate).trim() || form.title.trim();
     if (!title || schemaMissing) return;
 
     onSavingChange(true);
     onError("");
     try {
-      const result = await createRoutine(form);
+      const result = await createRoutine({ ...form, title, endDate: parsedDate?.iso ?? form.endDate });
       setRoutines(result.routines);
       setActiveRoutineId(result.routine.id);
       setActiveRoutineResetSignal(resetSignal);
       setIsRoutineModalOpen(false);
       setForm({ ...emptyRoutineForm, startDate: todayIso, endDate: todayIso });
+      setDetectedPhrase(null);
+      setDetectedConfirmed(false);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Failed to add habit");
     } finally {
@@ -592,13 +598,14 @@ export default function RoutineTracker({
   }
 
   async function saveEdit(routineId: string) {
-    const title = editForm.title.trim();
+    const parsedDate = parseKoreanDatePhrase(editForm.title);
+    const title = removeParsedDatePhrase(editForm.title, parsedDate).trim() || editForm.title.trim();
     if (!title) return;
 
     onSavingChange(true);
     onError("");
     try {
-      setRoutines(await patchRoutine(routineId, { ...editForm, title }));
+      setRoutines(await patchRoutine(routineId, { ...editForm, title, endDate: parsedDate?.iso ?? editForm.endDate }));
       setEditingRoutineId(null);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Failed to update habit");
@@ -1207,13 +1214,56 @@ export default function RoutineTracker({
                 {text.routine}
                 <input
                   value={form.title}
-                  onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+                  onChange={(event) => {
+                    const v = event.target.value;
+                    setForm((current) => ({ ...current, title: v }));
+                    const parsed = parseKoreanDatePhrase(v);
+                    if (parsed) {
+                      setForm((current) => ({ ...current, endDate: parsed.iso }));
+                      setDetectedPhrase(parsed);
+                      setDetectedConfirmed(false);
+                    } else {
+                      setDetectedPhrase(null);
+                      setDetectedConfirmed(false);
+                    }
+                  }}
                   onKeyDown={handleRoutineFormKeyDown}
                   autoFocus
                   disabled={schemaMissing}
                   className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600 disabled:bg-stone-100"
                   placeholder="Example: Morning workout"
                 />
+                {detectedPhrase && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-2 rounded-full px-2 py-0.5 text-sm border ${
+                      detectedConfirmed ? "bg-emerald-200 text-emerald-900 border-emerald-300" : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                    }`}>
+                      {detectedPhrase.phrase} · {detectedPhrase.iso}
+                    </span>
+                    {!detectedConfirmed && (
+                      <button
+                        type="button"
+                        onClick={() => setDetectedConfirmed(true)}
+                        className="h-6 w-6 rounded-md bg-emerald-700 text-white text-xs flex items-center justify-center"
+                        title="Confirm detected date"
+                      >
+                        OK
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDetectedPhrase(null);
+                        setForm((f) => ({ ...f, title: removeParsedDatePhrase(f.title, detectedPhrase), endDate: todayIso }));
+                        setDetectedConfirmed(false);
+                      }}
+                      className="h-6 w-6 rounded-md border border-stone-300 text-stone-700 flex items-center justify-center"
+                      title="Clear detected date"
+                    >
+                      x
+                    </button>
+                  </div>
+                )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 {text.memo}
@@ -1467,7 +1517,12 @@ function RoutineCard({
           {editValue ? (
             <input
               value={editValue.title}
-              onChange={(event) => onEditChange({ ...editValue, title: event.target.value })}
+              onChange={(event) => {
+                const v = event.target.value;
+                onEditChange({ ...editValue, title: v });
+                const parsed = parseKoreanDatePhrase(v);
+                if (parsed) onEditChange({ ...editValue, title: v, endDate: parsed.iso });
+              }}
               onKeyDown={handleEditKeyDown}
               className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
               aria-label="Edit routine title"
@@ -1924,4 +1979,3 @@ function CloseIcon() {
     </svg>
   );
 }
-
