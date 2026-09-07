@@ -354,6 +354,8 @@ const UI_TEXT = {
     current: "Current",
     unit: "Unit",
     memo: "Memo",
+    expandMemo: "Expand",
+    collapseMemo: "Collapse",
     editing: "Editing",
     start: "Start",
     deadline: "Deadline",
@@ -424,6 +426,8 @@ const UI_TEXT = {
     current: "현재",
     unit: "단위",
     memo: "메모",
+    expandMemo: "펼치기",
+    collapseMemo: "접기",
     editing: "수정중",
     start: "시작",
     deadline: "마감",
@@ -1005,11 +1009,6 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
-function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
-  textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
-}
-
 function pseudoRandom(seed: number) {
   const value = Math.sin(seed * 12.9898) * 43758.5453;
   return value - Math.floor(value);
@@ -1324,6 +1323,15 @@ function preventDoubleClickTextSelection(event: ReactMouseEvent<HTMLElement>) {
   if (event.detail < 2) return;
   event.preventDefault();
   clearTextSelection();
+}
+
+function safeReleasePointerCapture(element: Element, pointerId: number) {
+  if (!(element instanceof HTMLElement) || !element.hasPointerCapture(pointerId)) return;
+  try {
+    element.releasePointerCapture(pointerId);
+  } catch {
+    // The browser may cancel pointer capture before React's pointer-up handler runs.
+  }
 }
 
 function isSwipeNavigationBlockedTarget(target: EventTarget | null) {
@@ -1657,6 +1665,7 @@ export default function GoalTracker() {
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<TrackerView>("list");
   const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [expandedGoalMemoId, setExpandedGoalMemoId] = useState<string | null>(null);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
@@ -1745,7 +1754,6 @@ export default function GoalTracker() {
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
   const agentButtonDragState = useRef<AgentButtonDragState | null>(null);
   const suppressNextAgentButtonClick = useRef(false);
-  const goalMemoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const goalMemoDoubleTapTime = useRef(0);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
@@ -2134,13 +2142,9 @@ export default function GoalTracker() {
   const entryRangeMin = activeGoal ? Math.min(activeGoal.target, numericEntryValue, 0) : 0;
   const entryRangeMax = activeGoal ? Math.max(activeGoal.target, numericEntryValue, 0) : 1;
   const activeGoalDraft = goalDraft?.goalId === activeGoal?.id ? goalDraft : activeGoal ? toGoalDraft(activeGoal) : null;
+  const isGoalMemoExpanded = activeGoal ? expandedGoalMemoId === activeGoal.id : false;
   const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
   const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
-
-  useEffect(() => {
-    if (!isEditingGoal || !goalMemoTextareaRef.current) return;
-    resizeTextareaToContent(goalMemoTextareaRef.current);
-  }, [activeGoalDraft?.memo, isEditingGoal]);
 
   const visibleGoals = useMemo(
     () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
@@ -2840,9 +2844,7 @@ export default function GoalTracker() {
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     event.stopPropagation();
 
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(event.currentTarget, event.pointerId);
 
     agentButtonDragState.current = null;
     if (dragState.didMove) {
@@ -3202,9 +3204,7 @@ export default function GoalTracker() {
     const pressState = stateRef.current;
     if (!pressState || pressState.pointerId !== event.pointerId) return;
     clearListReorderLongPressTimer(timerRef);
-    if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
-      pressState.captureTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(pressState.captureTarget, event.pointerId);
     stateRef.current = null;
   }
 
@@ -3278,9 +3278,7 @@ export default function GoalTracker() {
     if (!dragState || dragState.pointerId !== event.pointerId) return;
 
     clearNavItemLongPressTimer();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(event.currentTarget, event.pointerId);
     navItemDragState.current = null;
 
     if (dragState.didLongPress) {
@@ -3360,9 +3358,7 @@ export default function GoalTracker() {
     if (!dragState || dragState.pointerId !== event.pointerId) return;
 
     clearTodoCategoryLongPressTimer();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(event.currentTarget, event.pointerId);
     todoCategoryDragState.current = null;
 
     if (dragState.didLongPress) {
@@ -3409,9 +3405,7 @@ export default function GoalTracker() {
     const nav = navRef.current;
     if (!dragState || !nav || dragState.pointerId !== event.pointerId) return;
 
-    if (nav.hasPointerCapture(event.pointerId)) {
-      nav.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(nav, event.pointerId);
     navDragState.current = null;
     if (dragState.didMove) {
       window.setTimeout(() => {
@@ -3455,9 +3449,7 @@ export default function GoalTracker() {
     const swipeState = screenSwipeState.current;
     if (!swipeState || swipeState.pointerId !== event.pointerId) return;
 
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(event.currentTarget, event.pointerId);
     screenSwipeState.current = null;
 
     const deltaX = event.clientX - swipeState.startX;
@@ -3507,9 +3499,7 @@ export default function GoalTracker() {
     const swipeState = screenSwipeState.current;
     if (!swipeState || swipeState.pointerId !== event.pointerId) return;
 
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(event.currentTarget, event.pointerId);
     screenSwipeState.current = null;
     settleScreenSwipe(0);
   }
@@ -6084,7 +6074,6 @@ export default function GoalTracker() {
                       <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
                           <textarea
-                            ref={goalMemoTextareaRef}
                             value={activeGoalDraft?.memo ?? ""}
                             onMouseDown={preventDoubleClickTextSelection}
                             onDoubleClick={(event) => {
@@ -6093,7 +6082,6 @@ export default function GoalTracker() {
                             }}
                             onPointerUp={(event) => handleGoalMemoDoubleTap(event, finishEditingGoalMemo)}
                             onChange={(event) => {
-                              resizeTextareaToContent(event.currentTarget);
                               setGoalDraft((draft) =>
                               draft
                                 ? { ...draft, memo: event.target.value }
@@ -6101,7 +6089,7 @@ export default function GoalTracker() {
                               );
                             }}
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="editing-text-field min-h-24 w-full min-w-0 max-w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="editing-text-field h-24 w-full min-w-0 max-w-full resize-none overflow-auto rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -6152,7 +6140,7 @@ export default function GoalTracker() {
                   ) : (
                     <div className="mt-5 grid gap-4">
                       <div
-                        className="min-h-24 min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-200 bg-white p-3"
+                        className="min-w-0 max-w-full rounded-md border border-stone-200 bg-white p-3"
                         onMouseDown={preventDoubleClickTextSelection}
                         onDoubleClick={(event) => {
                           event.preventDefault();
@@ -6160,8 +6148,30 @@ export default function GoalTracker() {
                         }}
                         onPointerUp={(event) => handleGoalMemoDoubleTap(event, startEditingGoalMemo)}
                       >
-                        <div className="text-xs font-medium text-stone-500">{text.memo}</div>
-                        <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words text-sm text-stone-800">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-medium text-stone-500">{text.memo}</div>
+                          {activeGoal.memo && (
+                            <button
+                              type="button"
+                              aria-expanded={isGoalMemoExpanded}
+                              onMouseDown={(event) => event.stopPropagation()}
+                              onDoubleClick={(event) => event.stopPropagation()}
+                              onPointerUp={(event) => event.stopPropagation()}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setExpandedGoalMemoId((expandedId) => (expandedId === activeGoal.id ? null : activeGoal.id));
+                              }}
+                              className="rounded px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                            >
+                              {isGoalMemoExpanded ? text.collapseMemo : text.expandMemo}
+                            </button>
+                          )}
+                        </div>
+                        <p
+                          className={`mt-1 min-w-0 max-w-full break-words text-sm text-stone-800 ${
+                            isGoalMemoExpanded ? "whitespace-pre-wrap" : "truncate"
+                          }`}
+                        >
                           {activeGoal.memo || text.noMemo}
                         </p>
                       </div>
@@ -6263,20 +6273,13 @@ export default function GoalTracker() {
                     )}
                   </div>
 
-                  <div className="mt-5 h-3 overflow-hidden rounded-full bg-stone-200">
-                    <div
-                      className="h-full bg-emerald-700 transition-all"
-                      style={{ width: `${Math.min(100, progressPercent)}%` }}
-                    />
-                  </div>
                 </div>
 
-                <div className="grid min-w-0 gap-0">
+                <div className="mt-3 grid min-w-0 gap-0 border-t border-stone-200 pt-3">
                     <div className="min-w-0 border border-transparent bg-transparent p-0">
                       <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
                           <h2 className="text-base font-semibold">{text.progressChart}</h2>
-                          <p className="text-sm text-stone-600">{text.progressChartHint}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
                           <select

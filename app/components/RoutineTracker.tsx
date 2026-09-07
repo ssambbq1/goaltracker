@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import youIcon from "../YOU-transparent.png";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -77,6 +79,8 @@ const ROUTINE_TEXT = {
     start: "Start",
     end: "End",
     memo: "Memo",
+    expandMemo: "Expand",
+    collapseMemo: "Collapse",
     editing: "Editing",
     success: "Success",
     failure: "Failure",
@@ -105,6 +109,8 @@ const ROUTINE_TEXT = {
     start: "시작",
     end: "종료",
     memo: "메모",
+    expandMemo: "펼치기",
+    collapseMemo: "접기",
     editing: "수정중",
     success: "성공",
     failure: "실패",
@@ -167,11 +173,6 @@ function toIsoDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
-  textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
-}
-
 function clearTextSelection() {
   window.getSelection()?.removeAllRanges();
 }
@@ -180,6 +181,15 @@ function preventDoubleClickTextSelection(event: ReactMouseEvent<HTMLElement>) {
   if (event.detail < 2) return;
   event.preventDefault();
   clearTextSelection();
+}
+
+function safeReleasePointerCapture(element: Element, pointerId: number) {
+  if (!(element instanceof HTMLElement) || !element.hasPointerCapture(pointerId)) return;
+  try {
+    element.releasePointerCapture(pointerId);
+  } catch {
+    // The browser may cancel pointer capture before React's pointer-up handler runs.
+  }
 }
 
 function addDaysToIsoDate(date: string, days: number) {
@@ -239,10 +249,10 @@ function getRoutineStats(routine: Routine) {
   return { total, success, failure, missed, rate };
 }
 
-function getTodayCheckAverage(routines: Routine[]) {
+function getCheckAverageForDate(routines: Routine[], date: string) {
   const checkedStatuses = routines
-    .filter((routine) => isRoutineScheduledOn(routine, todayIso))
-    .map((routine) => routine.marks.find((mark) => mark.date === todayIso)?.status)
+    .filter((routine) => isRoutineScheduledOn(routine, date))
+    .map((routine) => routine.marks.find((mark) => mark.date === date)?.status)
     .filter((status): status is RoutineMark["status"] => Boolean(status));
 
   if (checkedStatuses.length === 0) return null;
@@ -252,6 +262,47 @@ function getTodayCheckAverage(routines: Routine[]) {
   }, 0);
 
   return Math.round(score / checkedStatuses.length);
+}
+
+function getDisplayedCheckScore(routines: Routine[]) {
+  const todayScore = getCheckAverageForDate(routines, todayIso);
+  if (todayScore !== null) {
+    return {
+      dateKind: "today" as const,
+      score: todayScore,
+    };
+  }
+
+  return {
+    dateKind: "yesterday" as const,
+    score: getCheckAverageForDate(routines, addDaysToIsoDate(todayIso, -1)),
+  };
+}
+
+function getTodayScoreFeedback(score: number | null, language: AppLanguage) {
+  if (score === null) return null;
+  if (score >= 90) {
+    return {
+      tone: "best" as const,
+      message: language === "ko" ? "최고에요" : "Excellent",
+    };
+  }
+  if (score >= 80) {
+    return {
+      tone: "good" as const,
+      message: language === "ko" ? "잘했어요" : "Well done",
+    };
+  }
+  if (score >= 50) {
+    return {
+      tone: "try" as const,
+      message: language === "ko" ? "좀더 힘내세요" : "Keep pushing",
+    };
+  }
+  return {
+    tone: "wake" as const,
+    message: language === "ko" ? "정신차렷!!" : "Wake up!!",
+  };
 }
 
 function isRoutineScheduledOn(routine: Routine, date: string) {
@@ -555,7 +606,8 @@ export default function RoutineTracker({
     () => sortRoutines(routines, routineSortKey, routineSortDirection),
     [routineSortDirection, routineSortKey, routines],
   );
-  const todayCheckAverage = useMemo(() => getTodayCheckAverage(visibleRoutines), [visibleRoutines]);
+  const displayedCheckScore = useMemo(() => getDisplayedCheckScore(visibleRoutines), [visibleRoutines]);
+  const displayedScoreFeedback = getTodayScoreFeedback(displayedCheckScore.score, language);
 
   async function addRoutine() {
     const parsedDate = parseKoreanDatePhrase(form.title) ?? detectedPhrase;
@@ -824,9 +876,7 @@ export default function RoutineTracker({
     const pressState = routineReorderLongPressState.current;
     if (!pressState || pressState.pointerId !== event.pointerId) return;
     clearRoutineReorderLongPressTimer();
-    if (pressState.captureTarget.hasPointerCapture(event.pointerId)) {
-      pressState.captureTarget.releasePointerCapture(event.pointerId);
-    }
+    safeReleasePointerCapture(pressState.captureTarget, event.pointerId);
     routineReorderLongPressState.current = null;
   }
 
@@ -1158,35 +1208,62 @@ export default function RoutineTracker({
                   />
                 ))}
               </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50/80 px-4 py-3">
-                <span className="text-lg font-bold text-stone-700">
-                  {language === "ko" ? "\uC624\uB298\uC758 \uC810\uC218" : "Today's score"}
+              <div className="mt-3 flex flex-col gap-2 rounded-md border border-emerald-200 bg-emerald-50/80 px-4 py-3">
+                <span className="text-sm font-bold text-stone-700">
+                  {displayedCheckScore.dateKind === "today"
+                    ? language === "ko"
+                      ? "\uC624\uB298\uC758 \uC810\uC218"
+                      : "Today's score"
+                    : language === "ko"
+                      ? "\uC5B4\uC81C\uC758 \uC810\uC218"
+                      : "Yesterday's score"}
                 </span>
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
-                  {todayCheckAverage !== null && todayCheckAverage >= 80 && (
-                    <span className="flex min-w-0 items-center gap-1.5 text-lg font-bold text-emerald-700">
-                      <span className="h-8 w-8 shrink-0">
-                        <ThumbsUpMark />
-                      </span>
-                      <span className="whitespace-nowrap">{language === "ko" ? "\uC798\uD588\uC5B4\uC694" : "Well done"}</span>
+                <div className="flex min-w-0 flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center">
+                  {displayedScoreFeedback && (
+                    <span
+                      className={`flex min-w-0 items-center gap-2 text-2xl font-bold ${
+                        displayedScoreFeedback.tone === "wake"
+                          ? "text-red-700"
+                          : displayedScoreFeedback.tone === "try"
+                            ? "text-amber-700"
+                            : "text-emerald-700"
+                      }`}
+                    >
+                      {displayedScoreFeedback.tone === "best" && (
+                        <Image
+                          src={youIcon}
+                          alt=""
+                          width={72}
+                          height={72}
+                          className="routine-score-best-image h-16 w-16 shrink-0 object-contain"
+                        />
+                      )}
+                      {displayedScoreFeedback.tone === "good" && (
+                        <span className="h-8 w-8 shrink-0">
+                          <ThumbsUpMark />
+                        </span>
+                      )}
+                      {displayedScoreFeedback.tone === "try" && (
+                        <span className="text-3xl leading-none" aria-hidden="true">
+                          {"\uD83D\uDE1E"}
+                        </span>
+                      )}
+                      {displayedScoreFeedback.tone === "wake" && (
+                        <span className="text-3xl leading-none" aria-hidden="true">
+                          {"\uD83D\uDE21"}
+                        </span>
+                      )}
+                      <span className="whitespace-nowrap">{displayedScoreFeedback.message}</span>
                     </span>
                   )}
-                  {todayCheckAverage !== null && todayCheckAverage <= 70 && (
-                    <span className="flex min-w-0 items-center gap-1.5 text-lg font-bold text-red-700">
-                      <span className="text-2xl leading-none" aria-hidden="true">
-                        {"\uD83D\uDE1E"}
-                      </span>
-                      <span className="whitespace-nowrap">{language === "ko" ? "\uC880\uB354 \uBD84\uBC1C\uD558\uC138\uC694" : "Keep pushing"}</span>
-                    </span>
-                  )}
-                  <span className="text-3xl font-black text-emerald-700">
-                    {todayCheckAverage === null
+                  <span className="text-4xl font-black text-emerald-700">
+                    {displayedCheckScore.score === null
                       ? language === "ko"
                         ? "-\uC810"
                         : "- pts"
                       : language === "ko"
-                        ? `${todayCheckAverage}\uC810`
-                        : `${todayCheckAverage} pts`}
+                        ? `${displayedCheckScore.score}\uC810`
+                        : `${displayedCheckScore.score} pts`}
                   </span>
                 </div>
               </div>
@@ -1473,7 +1550,8 @@ function RoutineCard({
   const stats = getRoutineStats(routine);
   const dates = getVisibleCalendarDates(routine.startDate, routine.endDate);
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
-  const memoTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [expandedMemoRoutineId, setExpandedMemoRoutineId] = useState<string | null>(null);
+  const isMemoExpanded = expandedMemoRoutineId === routine.id;
   const memoDoubleTapTime = useRef(0);
   const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
@@ -1499,11 +1577,6 @@ function RoutineCard({
     }
     memoDoubleTapTime.current = now;
   };
-
-  useEffect(() => {
-    if (!editValue || !memoTextareaRef.current) return;
-    resizeTextareaToContent(memoTextareaRef.current);
-  }, [editValue]);
 
   return (
     <div className="grid gap-0">
@@ -1566,7 +1639,6 @@ function RoutineCard({
           {editValue ? (
             <>
               <textarea
-                ref={memoTextareaRef}
                 value={editValue.memo}
                 onMouseDown={preventDoubleClickTextSelection}
                 onDoubleClick={(event) => {
@@ -1576,18 +1648,17 @@ function RoutineCard({
                 }}
                 onPointerUp={(event) => handleMemoDoubleTap(event, saveMemoEdit)}
                 onChange={(event) => {
-                  resizeTextareaToContent(event.currentTarget);
                   onEditChange({ ...editValue, memo: event.target.value });
                 }}
                 onKeyDown={handleEditKeyDown}
-                className="editing-text-field mt-2 min-h-24 w-full resize-y overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                className="editing-text-field mt-2 h-24 w-full resize-none overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}
               />
             </>
           ) : (
-            <p
-              className={`mt-2 whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
+            <div
+              className={`mt-2 break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
                 routine.memo ? "text-stone-700" : "text-stone-500"
               }`}
               onMouseDown={preventDoubleClickTextSelection}
@@ -1598,8 +1669,29 @@ function RoutineCard({
               }}
               onPointerUp={(event) => handleMemoDoubleTap(event, onEdit)}
             >
-              {routine.memo || text.memo}
-            </p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-stone-500">{text.memo}</div>
+                {routine.memo && (
+                  <button
+                    type="button"
+                    aria-expanded={isMemoExpanded}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    onPointerUp={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setExpandedMemoRoutineId((expandedId) => (expandedId === routine.id ? null : routine.id));
+                    }}
+                    className="rounded px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                  >
+                    {isMemoExpanded ? text.collapseMemo : text.expandMemo}
+                  </button>
+                )}
+              </div>
+              <p className={`mt-1 min-w-0 max-w-full break-words ${isMemoExpanded ? "whitespace-pre-wrap" : "truncate"}`}>
+                {routine.memo || text.memo}
+              </p>
+            </div>
           )}
         </div>
         <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">
@@ -1673,8 +1765,15 @@ function RoutineCard({
         </div>
       </div>
 
-      <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
-        <ChainCalendar dates={dates} markByDate={markByDate} isSaving={isSaving} onMark={(date) => onMark(routine, date, markByDate.get(date))} text={text} />
+      <div className="mt-3 grid gap-0 border-t border-stone-200 pt-3 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
+        <ChainCalendar
+          key={routine.id}
+          dates={dates}
+          markByDate={markByDate}
+          isSaving={isSaving}
+          onMark={(date) => onMark(routine, date, markByDate.get(date))}
+          text={text}
+        />
         <RoutineSuccessGraph routine={routine} text={text} />
       </div>
     </div>
@@ -1695,6 +1794,8 @@ function ChainCalendar({
   text: RoutineText;
 }) {
   const monthGroups = groupDatesByMonth(dates);
+  const currentMonthKey = todayIso.slice(0, 7);
+  const [expandedPastMonthKeys, setExpandedPastMonthKeys] = useState<Set<string>>(() => new Set());
 
   return (
     <div className="min-w-0">
@@ -1703,53 +1804,82 @@ function ChainCalendar({
           {text.calendarPending}
         </div>
       ) : (
-        <div className="space-y-4">
-          {monthGroups.map((group) => (
-          <section key={group.key} className="rounded-md border border-stone-200 bg-white p-2">
-            <h4 className="mb-2 border-b border-stone-200 pb-2 text-sm font-semibold text-stone-900">
-              {group.label}
-            </h4>
-            <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-semibold text-stone-500">
-              {text.weekdays.map((day) => (
-                <div key={`${group.key}-${day}`}>{day}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: parseLocalDate(group.dates[0]).getDay() }).map((_, index) => (
-                <div key={`${group.key}-blank-${index}`} aria-hidden="true" />
-              ))}
-              {group.dates.map((date) => {
-                const status = markByDate.get(date);
-                const isFuture = date > todayIso;
-                return (
-                  <button
-                    key={date}
-                    type="button"
-                    onClick={() => onMark(date)}
-                    disabled={isSaving || isFuture}
-                    title={`${date}: ${status ? (status === "success" ? text.success : text.failure) : text.unmarked}`}
-                    className={`relative aspect-square min-h-10 overflow-hidden rounded-md border p-1 text-left text-[11px] font-semibold transition ${
-                      status === "success"
-                        ? "border-emerald-600 bg-emerald-600 text-white"
-                        : status === "failure"
-                          ? "border-red-500 bg-red-500 text-white"
-                          : isFuture
-                            ? "border-stone-200 bg-white text-stone-400"
-                            : "border-stone-300 bg-white text-stone-700 hover:border-emerald-500"
-                    } disabled:cursor-not-allowed`}
-                  >
-                    {(status === "success" || status === "failure") && (
-                      <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[clamp(2rem,9vw,4.5rem)] font-black leading-none text-white/35">
-                        {status === "success" ? <ThumbsUpMark /> : "X"}
-                      </span>
-                    )}
-                    <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
-                  </button>
-                );
-              })}
-            </div>
+        <div className="rounded-md border border-stone-200 bg-white p-2">
+          {monthGroups.map((group, index) => {
+            const isPastMonth = group.key < currentMonthKey;
+            const isExpanded = !isPastMonth || expandedPastMonthKeys.has(group.key);
+
+            return (
+              <section key={group.key} className={index === 0 ? "" : "mt-2 border-t border-stone-200 pt-2"}>
+                <div className={`${isExpanded ? "mb-2" : ""} flex items-center justify-between gap-2 border-b border-stone-200 pb-2`}>
+                  <h4 className="text-sm font-semibold text-stone-900">{group.label}</h4>
+                  {isPastMonth && (
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      onClick={() =>
+                        setExpandedPastMonthKeys((current) => {
+                          const next = new Set(current);
+                          if (next.has(group.key)) {
+                            next.delete(group.key);
+                          } else {
+                            next.add(group.key);
+                          }
+                          return next;
+                        })
+                      }
+                      className="rounded px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                    >
+                      {isExpanded ? text.collapseMemo : text.expandMemo}
+                    </button>
+                  )}
+                </div>
+                {isExpanded && (
+                  <>
+                    <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-semibold text-stone-500">
+                      {text.weekdays.map((day) => (
+                        <div key={`${group.key}-${day}`}>{day}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                      {Array.from({ length: parseLocalDate(group.dates[0]).getDay() }).map((_, index) => (
+                        <div key={`${group.key}-blank-${index}`} aria-hidden="true" />
+                      ))}
+                      {group.dates.map((date) => {
+                        const status = markByDate.get(date);
+                        const isFuture = date > todayIso;
+                        return (
+                          <button
+                            key={date}
+                            type="button"
+                            onClick={() => onMark(date)}
+                            disabled={isSaving || isFuture}
+                            title={`${date}: ${status ? (status === "success" ? text.success : text.failure) : text.unmarked}`}
+                            className={`relative aspect-square min-h-10 overflow-hidden rounded-md border p-1 text-left text-[11px] font-semibold transition ${
+                              status === "success"
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : status === "failure"
+                                  ? "border-red-500 bg-red-500 text-white"
+                                  : isFuture
+                                    ? "border-stone-200 bg-white text-stone-400"
+                                    : "border-stone-300 bg-white text-stone-700 hover:border-emerald-500"
+                            } disabled:cursor-not-allowed`}
+                          >
+                            {(status === "success" || status === "failure") && (
+                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[clamp(2rem,9vw,4.5rem)] font-black leading-none text-white/35">
+                                {status === "success" ? <ThumbsUpMark /> : "X"}
+                              </span>
+                            )}
+                            <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
             </section>
-          ))}
+            );
+          })}
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
