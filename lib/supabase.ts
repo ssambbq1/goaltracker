@@ -201,6 +201,68 @@ export type Database = {
           },
         ];
       };
+      friendships: {
+        Row: {
+          id: string;
+          requester_id: string;
+          addressee_id: string;
+          status: "pending" | "accepted" | "declined";
+          created_at_ms: number;
+          responded_at_ms: number | null;
+        };
+        Insert: {
+          id: string;
+          requester_id: string;
+          addressee_id: string;
+          status: "pending" | "accepted" | "declined";
+          created_at_ms: number;
+          responded_at_ms?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["friendships"]["Insert"]>;
+        Relationships: [];
+      };
+      item_assignments: {
+        Row: {
+          id: string;
+          assigner_id: string;
+          assignee_id: string;
+          kind: "goal" | "todo" | "routine";
+          title: string;
+          memo: string;
+          target: number | null;
+          unit: string | null;
+          deadline: string | null;
+          start_date: string | null;
+          end_date: string | null;
+          target_date: string | null;
+          category: string;
+          status: "pending" | "accepted" | "declined";
+          applied_item_id: string | null;
+          created_at_ms: number;
+          responded_at_ms: number | null;
+        };
+        Insert: {
+          id: string;
+          assigner_id: string;
+          assignee_id: string;
+          kind: "goal" | "todo" | "routine";
+          title: string;
+          memo?: string;
+          target?: number | null;
+          unit?: string | null;
+          deadline?: string | null;
+          start_date?: string | null;
+          end_date?: string | null;
+          target_date?: string | null;
+          category?: string;
+          status: "pending" | "accepted" | "declined";
+          applied_item_id?: string | null;
+          created_at_ms: number;
+          responded_at_ms?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["item_assignments"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

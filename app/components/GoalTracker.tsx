@@ -76,6 +76,54 @@ type RoutineSummary = {
   archivedAt?: number;
 };
 
+type FriendProfile = {
+  loginId: string;
+  displayName: string | null;
+};
+
+type Friendship = {
+  id: string;
+  requesterId: string;
+  addresseeId: string;
+  status: "pending" | "accepted" | "declined";
+  createdAt: number;
+  respondedAt?: number;
+  friend: FriendProfile;
+  direction: "sent" | "received";
+};
+
+type AssignmentKind = "goal" | "todo" | "routine";
+
+type Assignment = {
+  id: string;
+  assignerId: string;
+  assigneeId: string;
+  kind: AssignmentKind;
+  title: string;
+  memo: string;
+  target?: number;
+  unit?: string;
+  deadline?: string;
+  startDate?: string;
+  endDate?: string;
+  targetDate?: string;
+  category: string;
+  status: "pending" | "accepted" | "declined";
+  appliedItemId?: string;
+  createdAt: number;
+  respondedAt?: number;
+  assigner?: FriendProfile;
+  assignee?: FriendProfile;
+  observed?: {
+    kind: AssignmentKind;
+    id: string;
+    title: string;
+    statusText: string;
+    progressText: string;
+    updatedAt?: number;
+  } | null;
+};
+
 type AgentSettings = {
   llmModel: string;
   hasApiKey: boolean;
@@ -1617,6 +1665,71 @@ async function removeEntry(goalId: string, entryId: string) {
   return Array.isArray(data.goals) ? data.goals : [];
 }
 
+async function fetchFriendships() {
+  const response = await fetch("/api/friends", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; friendships?: Friendship[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load friends");
+  return Array.isArray(data.friendships) ? data.friendships : [];
+}
+
+async function searchFriends(query: string) {
+  const response = await fetch(`/api/friends?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; users?: FriendProfile[] };
+  if (!response.ok) throw new Error(data.error || "Failed to search users");
+  return Array.isArray(data.users) ? data.users : [];
+}
+
+async function requestFriendship(addresseeId: string) {
+  const response = await fetch("/api/friends", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ addresseeId }),
+  });
+  const data = (await response.json()) as { error?: string; friendships?: Friendship[] };
+  if (!response.ok) throw new Error(data.error || "Failed to request friend");
+  return Array.isArray(data.friendships) ? data.friendships : [];
+}
+
+async function updateFriendship(friendshipId: string, status: "accepted" | "declined") {
+  const response = await fetch(`/api/friends/${friendshipId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  const data = (await response.json()) as { error?: string; friendships?: Friendship[] };
+  if (!response.ok) throw new Error(data.error || "Failed to update friend request");
+  return Array.isArray(data.friendships) ? data.friendships : [];
+}
+
+async function fetchAssignments() {
+  const response = await fetch("/api/assignments", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; assignments?: Assignment[] };
+  if (!response.ok) throw new Error(data.error || "Failed to load assignments");
+  return Array.isArray(data.assignments) ? data.assignments : [];
+}
+
+async function createFriendAssignment(payload: Record<string, unknown>) {
+  const response = await fetch("/api/assignments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json()) as { error?: string; assignments?: Assignment[] };
+  if (!response.ok) throw new Error(data.error || "Failed to assign item");
+  return Array.isArray(data.assignments) ? data.assignments : [];
+}
+
+async function updateAssignment(assignmentId: string, status: "accepted" | "declined") {
+  const response = await fetch(`/api/assignments/${assignmentId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  const data = (await response.json()) as { error?: string; assignments?: Assignment[] };
+  if (!response.ok) throw new Error(data.error || "Failed to update assignment");
+  return Array.isArray(data.assignments) ? data.assignments : [];
+}
+
 export default function GoalTracker() {
   const [loginId, setLoginId] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState("");
@@ -1636,6 +1749,21 @@ export default function GoalTracker() {
   const [routines, setRoutines] = useState<RoutineSummary[]>([]);
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
+  const [friendships, setFriendships] = useState<Friendship[]>([]);
+  const [friendSearchQuery, setFriendSearchQuery] = useState("");
+  const [friendSearchResults, setFriendSearchResults] = useState<FriendProfile[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [assignmentKind, setAssignmentKind] = useState<AssignmentKind>("todo");
+  const [assignmentAssigneeId, setAssignmentAssigneeId] = useState("");
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [assignmentMemo, setAssignmentMemo] = useState("");
+  const [assignmentTarget, setAssignmentTarget] = useState("1");
+  const [assignmentUnit, setAssignmentUnit] = useState("units");
+  const [assignmentDeadline, setAssignmentDeadline] = useState(toDateInputValue());
+  const [assignmentStartDate, setAssignmentStartDate] = useState(toDateInputValue());
+  const [assignmentEndDate, setAssignmentEndDate] = useState(toDateInputValue());
+  const [assignmentTargetDate, setAssignmentTargetDate] = useState(toDateInputValue());
+  const [assignmentCategory, setAssignmentCategory] = useState("");
   const [agentSettings, setAgentSettings] = useState<AgentSettings>({
     llmModel: "gpt-4o-mini",
     hasApiKey: false,
@@ -1890,6 +2018,8 @@ export default function GoalTracker() {
           loadedRoutines,
           loadedDeletedRoutines,
           loadedArchivedRoutines,
+          loadedFriendships,
+          loadedAssignments,
         ] = await Promise.all([
           fetchGoals(),
           fetchDeletedGoals(),
@@ -1899,6 +2029,8 @@ export default function GoalTracker() {
           fetchRoutines(),
           fetchDeletedRoutines(),
           fetchArchivedRoutines(),
+          fetchFriendships(),
+          fetchAssignments(),
         ]);
         const firstGoal = loadedGoals[0] ?? null;
         const storedNavigation = readStoredNavigationState();
@@ -1921,6 +2053,8 @@ export default function GoalTracker() {
         setRoutines(loadedRoutines);
         setDeletedRoutines(loadedDeletedRoutines);
         setArchivedRoutines(loadedArchivedRoutines);
+        setFriendships(loadedFriendships);
+        setAssignments(loadedAssignments);
         setActiveGoalId(nextGoal?.id ?? null);
         setCurrentView(nextView);
         previousView.current = nextView;
@@ -2145,6 +2279,22 @@ export default function GoalTracker() {
   const isGoalMemoExpanded = activeGoal ? expandedGoalMemoId === activeGoal.id : false;
   const archivedItemCount = archivedGoals.length + archivedTodos.length + archivedRoutines.length;
   const deletedItemCount = deletedGoals.length + deletedTodos.length + deletedRoutines.length;
+  const acceptedFriends = useMemo(
+    () => friendships.filter((friendship) => friendship.status === "accepted"),
+    [friendships],
+  );
+  const pendingReceivedFriendships = useMemo(
+    () => friendships.filter((friendship) => friendship.status === "pending" && friendship.direction === "received"),
+    [friendships],
+  );
+  const receivedAssignments = useMemo(
+    () => assignments.filter((assignment) => assignment.assigneeId === loginId && assignment.status === "pending"),
+    [assignments, loginId],
+  );
+  const sentAssignments = useMemo(
+    () => assignments.filter((assignment) => assignment.assignerId === loginId),
+    [assignments, loginId],
+  );
 
   const visibleGoals = useMemo(
     () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
@@ -2251,6 +2401,21 @@ export default function GoalTracker() {
     setRoutines([]);
     setDeletedRoutines([]);
     setArchivedRoutines([]);
+    setFriendships([]);
+    setFriendSearchQuery("");
+    setFriendSearchResults([]);
+    setAssignments([]);
+    setAssignmentKind("todo");
+    setAssignmentAssigneeId("");
+    setAssignmentTitle("");
+    setAssignmentMemo("");
+    setAssignmentTarget("1");
+    setAssignmentUnit("units");
+    setAssignmentDeadline(toDateInputValue());
+    setAssignmentStartDate(toDateInputValue());
+    setAssignmentEndDate(toDateInputValue());
+    setAssignmentTargetDate(toDateInputValue());
+    setAssignmentCategory("");
     setAgentSettings({ llmModel: "gpt-4o-mini", hasApiKey: false, keys: [] });
     setAgentSettingsModel("gpt-4o-mini");
     setAgentSettingsApiKey("");
@@ -2307,6 +2472,8 @@ export default function GoalTracker() {
       loadedRoutines,
       loadedDeletedRoutines,
       loadedArchivedRoutines,
+      loadedFriendships,
+      loadedAssignments,
     ] = await Promise.all([
       fetchGoals(),
       fetchDeletedGoals(),
@@ -2316,6 +2483,8 @@ export default function GoalTracker() {
       fetchRoutines(),
       fetchDeletedRoutines(),
       fetchArchivedRoutines(),
+      fetchFriendships(),
+      fetchAssignments(),
     ]);
     applyLoadedGoals(loadedGoals, loadedDeletedGoals, loadedArchivedGoals);
     setDeletedTodos(loadedDeletedTodos);
@@ -2323,6 +2492,8 @@ export default function GoalTracker() {
     setRoutines(loadedRoutines);
     setDeletedRoutines(loadedDeletedRoutines);
     setArchivedRoutines(loadedArchivedRoutines);
+    setFriendships(loadedFriendships);
+    setAssignments(loadedAssignments);
 
     try {
       setTodos(await fetchTodos());
@@ -2653,6 +2824,112 @@ export default function GoalTracker() {
       setDisplayNameDraft(nextDisplayName);
     } catch (displayNameError) {
       setError(displayNameError instanceof Error ? displayNameError.message : "Failed to update nickname");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitFriendSearch() {
+    if (friendSearchQuery.trim().length < 2) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setFriendSearchResults(await searchFriends(friendSearchQuery));
+    } catch (friendError) {
+      setError(friendError instanceof Error ? friendError.message : "Failed to search users");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function sendFriendRequest(addresseeId: string) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setFriendships(await requestFriendship(addresseeId));
+      setFriendSearchResults((users) => users.filter((user) => user.loginId !== addresseeId));
+    } catch (friendError) {
+      setError(friendError instanceof Error ? friendError.message : "Failed to request friend");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function respondFriendRequest(friendshipId: string, status: "accepted" | "declined") {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setFriendships(await updateFriendship(friendshipId, status));
+    } catch (friendError) {
+      setError(friendError instanceof Error ? friendError.message : "Failed to update friend request");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function submitAssignment() {
+    if (!assignmentAssigneeId || !assignmentTitle.trim()) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const base = {
+        kind: assignmentKind,
+        assigneeId: assignmentAssigneeId,
+        title: assignmentTitle.trim(),
+        memo: assignmentMemo,
+      };
+      const payload =
+        assignmentKind === "goal"
+          ? {
+              ...base,
+              target: Number(assignmentTarget),
+              unit: assignmentUnit,
+              deadline: assignmentDeadline,
+            }
+          : assignmentKind === "todo"
+            ? {
+                ...base,
+                targetDate: assignmentTargetDate,
+                category: assignmentCategory,
+              }
+            : {
+                ...base,
+                startDate: assignmentStartDate,
+                endDate: assignmentEndDate,
+              };
+
+      setAssignments(await createFriendAssignment(payload));
+      setAssignmentTitle("");
+      setAssignmentMemo("");
+      setAssignmentCategory("");
+    } catch (assignmentError) {
+      setError(assignmentError instanceof Error ? assignmentError.message : "Failed to assign item");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function respondAssignmentRequest(assignmentId: string, status: "accepted" | "declined") {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setAssignments(await updateAssignment(assignmentId, status));
+      if (status === "accepted") {
+        const [loadedGoals, loadedTodos, loadedRoutines] = await Promise.all([fetchGoals(), fetchTodos(), fetchRoutines()]);
+        setGoals(loadedGoals);
+        setTodos(loadedTodos);
+        setRoutines(loadedRoutines);
+        setRoutineReloadKey((key) => key + 1);
+      }
+    } catch (assignmentError) {
+      setError(assignmentError instanceof Error ? assignmentError.message : "Failed to update assignment");
     } finally {
       setIsSaving(false);
     }
@@ -5054,6 +5331,272 @@ export default function GoalTracker() {
                     </div>
                   ))}
                 </dl>
+            </section>
+
+            <section className="grid gap-2">
+              <div className="flex items-center gap-2 px-1 pb-1 pt-1">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <UserIcon />
+                  {language === "ko" ? "친구와 부여" : "Friends and Assignments"}
+                </h2>
+              </div>
+
+              <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <input
+                    value={friendSearchQuery}
+                    onChange={(event) => setFriendSearchQuery(event.target.value)}
+                    onKeyDown={(event) => handleInputSaveKeyDown(event, submitFriendSearch, isSaving || friendSearchQuery.trim().length < 2)}
+                    className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                    placeholder={language === "ko" ? "닉네임 또는 ID로 검색" : "Search nickname or ID"}
+                  />
+                  <button
+                    type="button"
+                    onClick={submitFriendSearch}
+                    disabled={isSaving || friendSearchQuery.trim().length < 2}
+                    className="h-9 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {language === "ko" ? "검색" : "Search"}
+                  </button>
+                </div>
+                {friendSearchResults.length > 0 && (
+                  <div className="grid gap-1.5">
+                    {friendSearchResults.map((user) => (
+                      <div key={user.loginId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 px-2 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-stone-900">{user.displayName || user.loginId}</div>
+                          <div className="truncate text-xs text-stone-500">{user.loginId}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => sendFriendRequest(user.loginId)}
+                          disabled={isSaving}
+                          className="h-8 rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {language === "ko" ? "친구 요청" : "Add friend"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {pendingReceivedFriendships.length > 0 && (
+                <div className="grid gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm">
+                  <div className="font-semibold text-amber-900">{language === "ko" ? "받은 친구 요청" : "Friend requests"}</div>
+                  {pendingReceivedFriendships.map((friendship) => (
+                    <div key={friendship.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                      <span className="truncate text-stone-800">{friendship.friend.displayName || friendship.friend.loginId}</span>
+                      <span className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => respondFriendRequest(friendship.id, "accepted")}
+                          disabled={isSaving}
+                          className="h-8 rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {language === "ko" ? "수락" : "Accept"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => respondFriendRequest(friendship.id, "declined")}
+                          disabled={isSaving}
+                          className="h-8 rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {language === "ko" ? "거절" : "Decline"}
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                <div className="font-semibold text-stone-900">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</div>
+                {acceptedFriends.length === 0 ? (
+                  <div className="text-sm text-stone-600">{language === "ko" ? "수락된 친구가 아직 없습니다." : "No accepted friends yet."}</div>
+                ) : (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <select
+                        value={assignmentAssigneeId}
+                        onChange={(event) => setAssignmentAssigneeId(event.target.value)}
+                        className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
+                        aria-label={language === "ko" ? "친구 선택" : "Select friend"}
+                      >
+                        <option value="">{language === "ko" ? "친구 선택" : "Select friend"}</option>
+                        {acceptedFriends.map((friendship) => (
+                          <option key={friendship.friend.loginId} value={friendship.friend.loginId}>
+                            {friendship.friend.displayName || friendship.friend.loginId}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={assignmentKind}
+                        onChange={(event) => setAssignmentKind(event.target.value as AssignmentKind)}
+                        className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
+                        aria-label={language === "ko" ? "부여 종류" : "Assignment type"}
+                      >
+                        <option value="goal">{text.goalShort}</option>
+                        <option value="routine">{text.routineShort}</option>
+                        <option value="todo">{text.todoShort}</option>
+                      </select>
+                      <input
+                        value={assignmentTitle}
+                        onChange={(event) => setAssignmentTitle(event.target.value)}
+                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                        placeholder={language === "ko" ? "제목" : "Title"}
+                      />
+                    </div>
+                    {assignmentKind === "goal" && (
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,120px)_minmax(0,160px)]">
+                        <input
+                          type="number"
+                          value={assignmentTarget}
+                          onChange={(event) => setAssignmentTarget(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={text.target}
+                        />
+                        <input
+                          value={assignmentUnit}
+                          onChange={(event) => setAssignmentUnit(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={text.unit}
+                        />
+                        <input
+                          type="date"
+                          value={assignmentDeadline}
+                          onChange={(event) => setAssignmentDeadline(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={text.deadline}
+                        />
+                      </div>
+                    )}
+                    {assignmentKind === "routine" && (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <input
+                          type="date"
+                          value={assignmentStartDate}
+                          onChange={(event) => setAssignmentStartDate(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={text.start}
+                        />
+                        <input
+                          type="date"
+                          value={assignmentEndDate}
+                          onChange={(event) => setAssignmentEndDate(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={language === "ko" ? "종료일" : "End date"}
+                        />
+                      </div>
+                    )}
+                    {assignmentKind === "todo" && (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <input
+                          type="date"
+                          value={assignmentTargetDate}
+                          onChange={(event) => setAssignmentTargetDate(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          aria-label={text.targetDate}
+                        />
+                        <input
+                          value={assignmentCategory}
+                          onChange={(event) => setAssignmentCategory(event.target.value)}
+                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                          placeholder={text.category}
+                        />
+                      </div>
+                    )}
+                    <textarea
+                      value={assignmentMemo}
+                      onChange={(event) => setAssignmentMemo(event.target.value)}
+                      className="min-h-16 resize-y rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                      placeholder={text.memo}
+                    />
+                    <button
+                      type="button"
+                      onClick={submitAssignment}
+                      disabled={isSaving || !assignmentAssigneeId || !assignmentTitle.trim()}
+                      className="h-9 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {language === "ko" ? "부여하기" : "Assign"}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid content-start gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                  <div className="font-semibold text-stone-900">{language === "ko" ? "받은 부여 요청" : "Received assignments"}</div>
+                  {receivedAssignments.length === 0 ? (
+                    <div className="text-stone-600">{language === "ko" ? "대기 중인 요청이 없습니다." : "No pending assignments."}</div>
+                  ) : (
+                    receivedAssignments.map((assignment) => (
+                      <div key={assignment.id} className="grid gap-2 rounded-md border border-stone-200 px-2 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold">{assignment.title}</div>
+                          <div className="truncate text-xs text-stone-500">
+                            {assignment.assigner?.displayName || assignment.assignerId} · {assignment.kind}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => respondAssignmentRequest(assignment.id, "accepted")}
+                            disabled={isSaving}
+                            className="h-8 rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {language === "ko" ? "수락" : "Accept"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => respondAssignmentRequest(assignment.id, "declined")}
+                            disabled={isSaving}
+                            className="h-8 rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {language === "ko" ? "거절" : "Decline"}
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="grid content-start gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                  <div className="font-semibold text-stone-900">{language === "ko" ? "내가 부여한 항목 관찰" : "Assigned by me"}</div>
+                  {sentAssignments.length === 0 ? (
+                    <div className="text-stone-600">{language === "ko" ? "아직 부여한 항목이 없습니다." : "No sent assignments."}</div>
+                  ) : (
+                    sentAssignments.map((assignment) => (
+                      <div key={assignment.id} className="grid gap-1 rounded-md border border-stone-200 px-2 py-2">
+                        <div className="flex min-w-0 items-center justify-between gap-2">
+                          <span className="truncate font-semibold">{assignment.title}</span>
+                          <span className="shrink-0 rounded border border-stone-200 px-1.5 py-0.5 text-[11px] font-semibold text-stone-600">
+                            {assignment.status}
+                          </span>
+                        </div>
+                        <div className="truncate text-xs text-stone-500">
+                          {assignment.assignee?.displayName || assignment.assigneeId} · {assignment.kind}
+                        </div>
+                        {assignment.observed ? (
+                          <div className="text-xs text-stone-700">
+                            <span className="font-semibold">{assignment.observed.statusText}</span> · {assignment.observed.progressText}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-stone-500">
+                            {assignment.status === "pending"
+                              ? language === "ko"
+                                ? "상대가 아직 수락하지 않았습니다."
+                                : "Waiting for acceptance."
+                              : language === "ko"
+                                ? "관찰 가능한 적용 항목이 없습니다."
+                                : "No applied item to observe."}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </section>
 
             <section className="grid gap-2">
