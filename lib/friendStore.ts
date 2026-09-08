@@ -54,13 +54,71 @@ export type AssignedObservation = {
   updatedAt?: number;
 };
 
+export type AssignmentDetail =
+  | (Assignment & {
+      detail: {
+        kind: "goal";
+        item: {
+          id: string;
+          title: string;
+          memo: string;
+          target: number;
+          unit: string;
+          deadline: string;
+          createdAt: number;
+          entries: Array<{ id: string; createdAt: number; value: number; memo: string }>;
+        };
+      };
+    })
+  | (Assignment & {
+      detail: {
+        kind: "todo";
+        item: {
+          id: string;
+          title: string;
+          completed: boolean;
+          createdAt: number;
+          targetDate?: string;
+          category: string;
+        };
+      };
+    })
+  | (Assignment & {
+      detail: {
+        kind: "routine";
+        item: {
+          id: string;
+          title: string;
+          memo: string;
+          startDate: string;
+          endDate: string;
+          createdAt: number;
+          marks: Array<{ id: string; routineId: string; date: string; status: "success" | "failure"; createdAt: number }>;
+        };
+      };
+    });
+
 export type AssignmentInput =
   | ({ kind: "goal" } & NewGoalInput & { assigneeId: string })
   | ({ kind: "todo"; assigneeId: string; title: string; targetDate: string; category?: string; memo?: string })
   | ({ kind: "routine" } & NewRoutineInput & { assigneeId: string });
 
+const TODO_GOAL_MEMO = "__boostmaster_todo__";
+const TODO_GOAL_MEMO_PREFIX = `${TODO_GOAL_MEMO}:`;
+const TODO_GOAL_UNIT = "__todo__";
+const TODO_COMPLETED_DEADLINE = "completed";
+const TODO_COMPLETED_TARGET = 2;
+const ROUTINE_GOAL_UNIT = "__routine__";
+const ROUTINE_MARK_MEMO_PREFIX = "__boostmaster_routine_mark__:";
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isMissingTableError(error: unknown, tableName: string) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  return record.code === "PGRST205" && String(record.message ?? "").includes(`public.${tableName}`);
 }
 
 function normalizeDate(value: string | undefined) {
@@ -72,6 +130,62 @@ function assertTitle(title: string) {
   const normalized = title.trim();
   if (!normalized) throw new Error("Title is required.");
   return normalized;
+}
+
+function toDateFromTimestamp(timestamp: number) {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function decodeRoutineMarkMemo(value: string, createdAt: number, entryValue: number) {
+  if (value.startsWith(ROUTINE_MARK_MEMO_PREFIX)) {
+    try {
+      const parsed = JSON.parse(value.slice(ROUTINE_MARK_MEMO_PREFIX.length)) as {
+        date?: unknown;
+        status?: unknown;
+      };
+      return {
+        date: typeof parsed.date === "string" ? parsed.date : toDateFromTimestamp(createdAt),
+        status: parsed.status === "failure" ? "failure" : "success",
+      };
+    } catch {
+      return { date: toDateFromTimestamp(createdAt), status: entryValue >= 1 ? "success" : "failure" };
+    }
+  }
+
+  return { date: toDateFromTimestamp(createdAt), status: entryValue >= 1 ? "success" : "failure" };
+}
+
+function decodeRoutineMemo(value: string) {
+  const prefix = "__boostmaster_routine__:";
+  if (!value.startsWith(prefix)) return { memo: value, startDate: "" };
+
+  try {
+    const parsed = JSON.parse(value.slice(prefix.length)) as {
+      memo?: unknown;
+      startDate?: unknown;
+    };
+    return {
+      memo: typeof parsed.memo === "string" ? parsed.memo : "",
+      startDate: typeof parsed.startDate === "string" ? parsed.startDate : "",
+    };
+  } catch {
+    return { memo: "", startDate: "" };
+  }
+}
+
+function decodeTodoCategory(memo: string) {
+  if (!memo.startsWith(TODO_GOAL_MEMO_PREFIX)) return "";
+
+  try {
+    const parsed = JSON.parse(memo.slice(TODO_GOAL_MEMO_PREFIX.length)) as { category?: unknown };
+    return typeof parsed.category === "string" ? parsed.category.trim().slice(0, 64) : "";
+  } catch {
+    return "";
+  }
 }
 
 async function getProfiles(loginIds: string[]) {
@@ -296,6 +410,67 @@ export async function readAssignments() {
   }));
 }
 
+async function readTodoObservationFromGoalRows(assignment: Assignment) {
+  if (!assignment.appliedItemId) return null;
+
+  const { data: todo, error } = await getSupabaseServerClient()
+    .from("goals")
+    .select("id,title,target,deadline,created_at_ms")
+    .eq("id", assignment.appliedItemId)
+    .eq("user_id", assignment.assigneeId)
+    .eq("unit", TODO_GOAL_UNIT)
+    .or(`memo.eq.${TODO_GOAL_MEMO},memo.like.${TODO_GOAL_MEMO_PREFIX}%`)
+    .maybeSingle();
+  if (error) throw error;
+  if (!todo) return null;
+
+  const completed = todo.deadline === TODO_COMPLETED_DEADLINE || todo.target === TODO_COMPLETED_TARGET;
+  return {
+    kind: "todo" as const,
+    id: todo.id,
+    title: todo.title,
+    statusText: completed ? "Completed" : "Not completed",
+    progressText: /^\d{4}-\d{2}-\d{2}$/.test(todo.deadline) ? `Target ${todo.deadline}` : "No target date",
+    updatedAt: todo.created_at_ms,
+  };
+}
+
+async function readRoutineObservationFromGoalRows(assignment: Assignment) {
+  if (!assignment.appliedItemId) return null;
+
+  const supabase = getSupabaseServerClient();
+  const { data: routine, error } = await supabase
+    .from("goals")
+    .select("id,title,created_at_ms")
+    .eq("id", assignment.appliedItemId)
+    .eq("user_id", assignment.assigneeId)
+    .eq("unit", ROUTINE_GOAL_UNIT)
+    .maybeSingle();
+  if (error) throw error;
+  if (!routine) return null;
+
+  const { data: entries, error: entriesError } = await supabase
+    .from("progress_entries")
+    .select("created_at_ms,value,memo")
+    .eq("goal_id", routine.id)
+    .order("created_at_ms", { ascending: false });
+  if (entriesError) throw entriesError;
+
+  const successCount = (entries ?? []).filter((entry) => {
+    const decoded = decodeRoutineMarkMemo(entry.memo, entry.created_at_ms, entry.value);
+    return decoded.status === "success";
+  }).length;
+
+  return {
+    kind: "routine" as const,
+    id: routine.id,
+    title: routine.title,
+    statusText: "Accepted",
+    progressText: `${successCount} success marks`,
+    updatedAt: entries?.[0]?.created_at_ms ?? routine.created_at_ms,
+  };
+}
+
 async function readObservations(assignments: Assignment[]) {
   const result = new Map<string, AssignedObservation>();
   const supabase = getSupabaseServerClient();
@@ -337,7 +512,14 @@ async function readObservations(assignments: Assignment[]) {
         .eq("id", assignment.appliedItemId)
         .eq("user_id", assignment.assigneeId)
         .maybeSingle();
-      if (error) throw error;
+      if (error) {
+        if (isMissingTableError(error, "todos")) {
+          const observation = await readTodoObservationFromGoalRows(assignment);
+          if (observation) result.set(assignment.id, observation);
+          continue;
+        }
+        throw error;
+      }
       if (!todo) continue;
       result.set(assignment.id, {
         kind: "todo",
@@ -356,14 +538,28 @@ async function readObservations(assignments: Assignment[]) {
         .eq("id", assignment.appliedItemId)
         .eq("user_id", assignment.assigneeId)
         .maybeSingle();
-      if (error) throw error;
+      if (error) {
+        if (isMissingTableError(error, "routines")) {
+          const observation = await readRoutineObservationFromGoalRows(assignment);
+          if (observation) result.set(assignment.id, observation);
+          continue;
+        }
+        throw error;
+      }
       if (!routine) continue;
       const { count, error: countError } = await supabase
         .from("routine_marks")
         .select("id", { count: "exact", head: true })
         .eq("routine_id", routine.id)
         .eq("status", "success");
-      if (countError) throw countError;
+      if (countError) {
+        if (isMissingTableError(countError, "routine_marks")) {
+          const observation = await readRoutineObservationFromGoalRows(assignment);
+          if (observation) result.set(assignment.id, observation);
+          continue;
+        }
+        throw countError;
+      }
       result.set(assignment.id, {
         kind: "routine",
         id: routine.id,
@@ -423,4 +619,200 @@ export async function respondToAssignment(assignmentId: string, status: "accepte
     .eq("assignee_id", loginId);
   if (error) throw error;
   return readAssignments();
+}
+
+export async function readAssignmentDetail(assignmentId: string) {
+  const loginId = await requireLoginId();
+  const supabase = getSupabaseServerClient();
+  const { data: row, error } = await supabase
+    .from("item_assignments")
+    .select("*")
+    .eq("id", assignmentId)
+    .eq("assigner_id", loginId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!row) throw new Error("Assignment not found.");
+  if (row.status !== "accepted" || !row.applied_item_id) throw new Error("This assignment has not been accepted yet.");
+
+  const profiles = await getProfiles([row.assigner_id, row.assignee_id]);
+  const assignment = mapAssignment(row, profiles);
+
+  if (row.kind === "goal") {
+    const { data: goal, error: goalError } = await supabase
+      .from("goals")
+      .select("id,title,memo,target,unit,deadline,created_at_ms")
+      .eq("id", row.applied_item_id)
+      .eq("user_id", row.assignee_id)
+      .maybeSingle();
+    if (goalError) throw goalError;
+    if (!goal) throw new Error("Applied goal was not found.");
+
+    const { data: entries, error: entriesError } = await supabase
+      .from("progress_entries")
+      .select("id,created_at_ms,value,memo")
+      .eq("goal_id", goal.id)
+      .order("created_at_ms", { ascending: true });
+    if (entriesError) throw entriesError;
+
+    return {
+      ...assignment,
+      detail: {
+        kind: "goal" as const,
+        item: {
+          id: goal.id,
+          title: goal.title,
+          memo: goal.memo,
+          target: goal.target,
+          unit: goal.unit,
+          deadline: goal.deadline,
+          createdAt: goal.created_at_ms,
+          entries: (entries ?? []).map((entry) => ({
+            id: entry.id,
+            createdAt: entry.created_at_ms,
+            value: entry.value,
+            memo: entry.memo,
+          })),
+        },
+      },
+    };
+  }
+
+  if (row.kind === "todo") {
+    const { data: todo, error: todoError } = await supabase
+      .from("todos")
+      .select("id,title,completed,created_at_ms,target_date,category")
+      .eq("id", row.applied_item_id)
+      .eq("user_id", row.assignee_id)
+      .maybeSingle();
+
+    if (todoError && !isMissingTableError(todoError, "todos")) throw todoError;
+
+    if (todoError && isMissingTableError(todoError, "todos")) {
+      const { data: fallbackTodo, error: fallbackError } = await supabase
+        .from("goals")
+        .select("id,title,memo,target,deadline,created_at_ms")
+        .eq("id", row.applied_item_id)
+        .eq("user_id", row.assignee_id)
+        .eq("unit", TODO_GOAL_UNIT)
+        .or(`memo.eq.${TODO_GOAL_MEMO},memo.like.${TODO_GOAL_MEMO_PREFIX}%`)
+        .maybeSingle();
+      if (fallbackError) throw fallbackError;
+      if (!fallbackTodo) throw new Error("Applied task was not found.");
+
+      return {
+        ...assignment,
+        detail: {
+          kind: "todo" as const,
+          item: {
+            id: fallbackTodo.id,
+            title: fallbackTodo.title,
+            completed: fallbackTodo.deadline === TODO_COMPLETED_DEADLINE || fallbackTodo.target === TODO_COMPLETED_TARGET,
+            createdAt: fallbackTodo.created_at_ms,
+            targetDate: /^\d{4}-\d{2}-\d{2}$/.test(fallbackTodo.deadline) ? fallbackTodo.deadline : undefined,
+            category: decodeTodoCategory(fallbackTodo.memo),
+          },
+        },
+      };
+    }
+
+    if (!todo) throw new Error("Applied task was not found.");
+    return {
+      ...assignment,
+      detail: {
+        kind: "todo" as const,
+        item: {
+          id: todo.id,
+          title: todo.title,
+          completed: todo.completed,
+          createdAt: todo.created_at_ms,
+          targetDate: todo.target_date ?? undefined,
+          category: todo.category ?? "",
+        },
+      },
+    };
+  }
+
+  const { data: routine, error: routineError } = await supabase
+    .from("routines")
+    .select("id,title,memo,start_date,end_date,created_at_ms")
+    .eq("id", row.applied_item_id)
+    .eq("user_id", row.assignee_id)
+    .maybeSingle();
+
+  if (routineError && !isMissingTableError(routineError, "routines")) throw routineError;
+
+  if (routineError && isMissingTableError(routineError, "routines")) {
+    const { data: fallbackRoutine, error: fallbackError } = await supabase
+      .from("goals")
+      .select("id,title,memo,deadline,created_at_ms")
+      .eq("id", row.applied_item_id)
+      .eq("user_id", row.assignee_id)
+      .eq("unit", ROUTINE_GOAL_UNIT)
+      .maybeSingle();
+    if (fallbackError) throw fallbackError;
+    if (!fallbackRoutine) throw new Error("Applied habit was not found.");
+
+    const { data: entries, error: entriesError } = await supabase
+      .from("progress_entries")
+      .select("id,goal_id,created_at_ms,value,memo")
+      .eq("goal_id", fallbackRoutine.id)
+      .order("created_at_ms", { ascending: true });
+    if (entriesError) throw entriesError;
+
+    const decoded = decodeRoutineMemo(fallbackRoutine.memo);
+    return {
+      ...assignment,
+      detail: {
+        kind: "routine" as const,
+        item: {
+          id: fallbackRoutine.id,
+          title: fallbackRoutine.title,
+          memo: decoded.memo,
+          startDate: decoded.startDate || fallbackRoutine.deadline,
+          endDate: fallbackRoutine.deadline,
+          createdAt: fallbackRoutine.created_at_ms,
+          marks: (entries ?? []).map((entry) => {
+            const mark = decodeRoutineMarkMemo(entry.memo, entry.created_at_ms, entry.value);
+            return {
+              id: entry.id,
+              routineId: entry.goal_id,
+              date: mark.date,
+              status: mark.status,
+              createdAt: entry.created_at_ms,
+            };
+          }),
+        },
+      },
+    };
+  }
+
+  if (!routine) throw new Error("Applied habit was not found.");
+  const { data: marks, error: marksError } = await supabase
+    .from("routine_marks")
+    .select("id,routine_id,date,status,created_at_ms")
+    .eq("routine_id", routine.id)
+    .order("date", { ascending: true });
+  if (marksError) throw marksError;
+
+  return {
+    ...assignment,
+    detail: {
+      kind: "routine" as const,
+      item: {
+        id: routine.id,
+        title: routine.title,
+        memo: routine.memo,
+        startDate: routine.start_date,
+        endDate: routine.end_date,
+        createdAt: routine.created_at_ms,
+        marks: (marks ?? []).map((mark) => ({
+          id: mark.id,
+          routineId: mark.routine_id,
+          date: mark.date,
+          status: mark.status,
+          createdAt: mark.created_at_ms,
+        })),
+      },
+    },
+  };
 }

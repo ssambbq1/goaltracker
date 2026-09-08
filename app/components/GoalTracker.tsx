@@ -124,6 +124,13 @@ type Assignment = {
   } | null;
 };
 
+type AssignmentDetail = Assignment & {
+  detail:
+    | { kind: "goal"; item: Goal }
+    | { kind: "todo"; item: Todo }
+    | { kind: "routine"; item: RoutineSummary & { marks: Array<{ id: string; routineId: string; date: string; status: "success" | "failure"; createdAt: number }> } };
+};
+
 type AgentSettings = {
   llmModel: string;
   hasApiKey: boolean;
@@ -1730,12 +1737,20 @@ async function updateAssignment(assignmentId: string, status: "accepted" | "decl
   return Array.isArray(data.assignments) ? data.assignments : [];
 }
 
+async function fetchAssignmentDetail(assignmentId: string) {
+  const response = await fetch(`/api/assignments/${assignmentId}/detail`, { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; assignment?: AssignmentDetail };
+  if (!response.ok || !data.assignment) throw new Error(data.error || "Failed to load assignment detail");
+  return data.assignment;
+}
+
 export default function GoalTracker() {
   const [loginId, setLoginId] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState("");
   const [passwordForm, setPasswordForm] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [isEditingDisplayName, setIsEditingDisplayName] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [isAccountDeleteOpen, setIsAccountDeleteOpen] = useState(false);
   const [accountDeletePassword, setAccountDeletePassword] = useState("");
@@ -1746,13 +1761,14 @@ export default function GoalTracker() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [deletedTodos, setDeletedTodos] = useState<Todo[]>([]);
   const [archivedTodos, setArchivedTodos] = useState<Todo[]>([]);
-  const [routines, setRoutines] = useState<RoutineSummary[]>([]);
+  const [, setRoutines] = useState<RoutineSummary[]>([]);
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
   const [friendSearchQuery, setFriendSearchQuery] = useState("");
   const [friendSearchResults, setFriendSearchResults] = useState<FriendProfile[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [assignmentDetail, setAssignmentDetail] = useState<AssignmentDetail | null>(null);
   const [assignmentKind, setAssignmentKind] = useState<AssignmentKind>("todo");
   const [assignmentAssigneeId, setAssignmentAssigneeId] = useState("");
   const [assignmentTitle, setAssignmentTitle] = useState("");
@@ -1797,6 +1813,7 @@ export default function GoalTracker() {
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
+  const [isAssignmentModalOpen, setIsAssignmentModalOpen] = useState(false);
   const [isAgentSettingsModalOpen, setIsAgentSettingsModalOpen] = useState(false);
   const [isEmptyBinModalOpen, setIsEmptyBinModalOpen] = useState(false);
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
@@ -2371,6 +2388,7 @@ export default function GoalTracker() {
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
+    setIsAssignmentModalOpen(false);
     setIsAgentSettingsModalOpen(false);
     setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
@@ -2399,12 +2417,14 @@ export default function GoalTracker() {
     setDeletedTodos([]);
     setArchivedTodos([]);
     setRoutines([]);
+    setIsEditingDisplayName(false);
     setDeletedRoutines([]);
     setArchivedRoutines([]);
     setFriendships([]);
     setFriendSearchQuery("");
     setFriendSearchResults([]);
     setAssignments([]);
+    setAssignmentDetail(null);
     setAssignmentKind("todo");
     setAssignmentAssigneeId("");
     setAssignmentTitle("");
@@ -2431,6 +2451,7 @@ export default function GoalTracker() {
     setIsGoalModalOpen(false);
     setIsTodoModalOpen(false);
     setIsEntryModalOpen(false);
+    setIsAssignmentModalOpen(false);
     setIsAgentSettingsModalOpen(false);
     setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
@@ -2521,6 +2542,7 @@ export default function GoalTracker() {
       setLoginForm(loggedInId);
       setDisplayName(session.displayName ?? "");
       setDisplayNameDraft(session.displayName ?? "");
+      setIsEditingDisplayName(false);
       setPasswordForm("");
       await loadGoalData();
     } catch (loginError) {
@@ -2547,6 +2569,7 @@ export default function GoalTracker() {
       setLoginForm(signedUpId);
       setDisplayName(displayNameDraft.trim());
       setDisplayNameDraft(displayNameDraft.trim());
+      setIsEditingDisplayName(false);
       setPasswordForm("");
       await loadGoalData();
     } catch (signupError) {
@@ -2565,6 +2588,7 @@ export default function GoalTracker() {
       setLoginId(null);
       setDisplayName("");
       setDisplayNameDraft("");
+      setIsEditingDisplayName(false);
       setPasswordForm("");
       resetGoalState();
     } catch (logoutError) {
@@ -2589,6 +2613,7 @@ export default function GoalTracker() {
       setLoginForm("");
       setDisplayName("");
       setDisplayNameDraft("");
+      setIsEditingDisplayName(false);
       setPasswordForm("");
       setAccountDeletePassword("");
       setAccountDeleteConfirm("");
@@ -2822,11 +2847,18 @@ export default function GoalTracker() {
       const nextDisplayName = await updateAccountDisplayName(displayNameDraft);
       setDisplayName(nextDisplayName);
       setDisplayNameDraft(nextDisplayName);
+      setIsEditingDisplayName(false);
     } catch (displayNameError) {
       setError(displayNameError instanceof Error ? displayNameError.message : "Failed to update nickname");
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function cancelDisplayNameEdit() {
+    setDisplayNameDraft(displayName);
+    setIsEditingDisplayName(false);
+    setError("");
   }
 
   async function submitFriendSearch() {
@@ -2908,6 +2940,7 @@ export default function GoalTracker() {
       setAssignmentTitle("");
       setAssignmentMemo("");
       setAssignmentCategory("");
+      setIsAssignmentModalOpen(false);
     } catch (assignmentError) {
       setError(assignmentError instanceof Error ? assignmentError.message : "Failed to assign item");
     } finally {
@@ -2930,6 +2963,21 @@ export default function GoalTracker() {
       }
     } catch (assignmentError) {
       setError(assignmentError instanceof Error ? assignmentError.message : "Failed to update assignment");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function openAssignmentDetail(assignment: Assignment) {
+    if (assignment.status !== "accepted" || !assignment.appliedItemId) return;
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setAssignmentDetail(await fetchAssignmentDetail(assignment.id));
+    } catch (assignmentError) {
+      setError(assignmentError instanceof Error ? assignmentError.message : "Failed to load assignment detail");
     } finally {
       setIsSaving(false);
     }
@@ -4779,6 +4827,329 @@ export default function GoalTracker() {
     </div>
   ) : null;
 
+  const assignmentDetailModal = assignmentDetail ? (
+    <div className="fixed inset-0 z-50 bg-stone-950/40 px-4 py-6">
+      <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-3xl gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-[0.08em] text-emerald-700">
+              {language === "ko" ? "부여 항목 상세" : "Assignment detail"}
+            </div>
+            <h2 className="mt-1 break-words text-xl font-bold text-stone-950">{assignmentDetail.title}</h2>
+            <div className="mt-1 text-sm text-stone-500">
+              {assignmentDetail.assignee?.displayName || assignmentDetail.assigneeId} · {assignmentDetail.kind}
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label={text.close}
+            onClick={() => setAssignmentDetail(null)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        {assignmentDetail.detail.kind === "goal" && (
+          <div className="grid gap-4">
+            <div className="grid gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-3 text-sm sm:grid-cols-4">
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.current}</div>
+                <div className="font-semibold text-stone-950">
+                  {getGoalCurrentValue(assignmentDetail.detail.item, progressChartMode)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.target}</div>
+                <div className="font-semibold text-stone-950">
+                  {assignmentDetail.detail.item.target} {assignmentDetail.detail.item.unit}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.deadline}</div>
+                <div className="font-semibold text-stone-950">{assignmentDetail.detail.item.deadline || text.notSet}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.progress}</div>
+                <div className="font-semibold text-emerald-700">
+                  {getGoalProgressValue(assignmentDetail.detail.item, progressChartMode)}%
+                </div>
+              </div>
+            </div>
+            <div className="rounded-md border border-stone-200 bg-white p-3">
+              <div className="text-xs font-medium text-stone-500">{text.memo}</div>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm text-stone-800">
+                {assignmentDetail.detail.item.memo || text.noMemo}
+              </p>
+            </div>
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-semibold">{text.progressChart}</h3>
+                <select
+                  value={progressChartMode}
+                  onChange={(event) => setProgressChartMode(event.target.value as ProgressChartMode)}
+                  aria-label={text.chartValueMode}
+                  className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-semibold text-stone-700 outline-none focus:border-emerald-600"
+                >
+                  <option value="raw">{text.chartRawValue}</option>
+                  <option value="cumulative">{text.chartCumulativeValue}</option>
+                </select>
+              </div>
+              <ProgressChart
+                entries={assignmentDetail.detail.item.entries}
+                target={assignmentDetail.detail.item.target}
+                unit={assignmentDetail.detail.item.unit}
+                deadline={assignmentDetail.detail.item.deadline}
+                mode={progressChartMode}
+              />
+            </div>
+            <div className="grid gap-2">
+              <h3 className="text-base font-semibold">{text.recordHistory}</h3>
+              {assignmentDetail.detail.item.entries.length === 0 ? (
+                <p className="rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
+                  {text.noRecords}
+                </p>
+              ) : (
+                assignmentDetail.detail.item.entries
+                  .slice()
+                  .sort((left, right) => right.createdAt - left.createdAt)
+                  .map((entry) => (
+                    <div key={entry.id} className="rounded-md border border-stone-200 bg-white p-3 text-sm">
+                      <div className="font-semibold">
+                        {entry.value} {assignmentDetail.detail.kind === "goal" ? assignmentDetail.detail.item.unit : ""}
+                      </div>
+                      <div className="text-xs text-stone-500">{formatDate(entry.createdAt)}</div>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-stone-700">{entry.memo || "No memo"}</p>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {assignmentDetail.detail.kind === "todo" && (
+          <div className="grid gap-3">
+            <div className="grid gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-3 text-sm sm:grid-cols-3">
+              <div>
+                <div className="text-xs font-medium text-stone-500">{language === "ko" ? "상태" : "Status"}</div>
+                <div className={`font-semibold ${assignmentDetail.detail.item.completed ? "text-emerald-700" : "text-stone-950"}`}>
+                  {assignmentDetail.detail.item.completed ? text.completed : text.notCompleted}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.targetDate}</div>
+                <div className="font-semibold text-stone-950">
+                  {assignmentDetail.detail.item.targetDate || text.notSet}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.category}</div>
+                <div className="font-semibold text-stone-950">
+                  {assignmentDetail.detail.item.category || text.noCategory}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-md border border-stone-200 bg-white p-3 text-sm">
+              <div className="text-xs font-medium text-stone-500">{language === "ko" ? "생성일" : "Created"}</div>
+              <div className="mt-1 font-semibold text-stone-950">{formatDate(assignmentDetail.detail.item.createdAt)}</div>
+            </div>
+          </div>
+        )}
+
+        {assignmentDetail.detail.kind === "routine" && (
+          <div className="grid gap-3">
+            <div className="grid gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-3 text-sm sm:grid-cols-4">
+              <div>
+                <div className="text-xs font-medium text-stone-500">{text.start}</div>
+                <div className="font-semibold text-stone-950">{assignmentDetail.detail.item.startDate}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{language === "ko" ? "종료일" : "End date"}</div>
+                <div className="font-semibold text-stone-950">{assignmentDetail.detail.item.endDate}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{language === "ko" ? "성공" : "Success"}</div>
+                <div className="font-semibold text-emerald-700">
+                  {assignmentDetail.detail.item.marks.filter((mark) => mark.status === "success").length}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium text-stone-500">{language === "ko" ? "실패" : "Failure"}</div>
+                <div className="font-semibold text-red-700">
+                  {assignmentDetail.detail.item.marks.filter((mark) => mark.status === "failure").length}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-md border border-stone-200 bg-white p-3">
+              <div className="text-xs font-medium text-stone-500">{text.memo}</div>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm text-stone-800">
+                {assignmentDetail.detail.item.memo || text.noMemo}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <h3 className="text-base font-semibold">{language === "ko" ? "체크 기록" : "Check history"}</h3>
+              {assignmentDetail.detail.item.marks.length === 0 ? (
+                <p className="rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
+                  {language === "ko" ? "아직 체크 기록이 없습니다." : "No habit marks yet."}
+                </p>
+              ) : (
+                <div className="grid max-h-72 gap-2 overflow-auto">
+                  {assignmentDetail.detail.item.marks
+                    .slice()
+                    .sort((left, right) => right.date.localeCompare(left.date))
+                    .map((mark) => (
+                      <div key={mark.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
+                        <span className="font-semibold text-stone-900">{mark.date}</span>
+                        <span className={mark.status === "success" ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+                          {mark.status === "success" ? (language === "ko" ? "성공" : "Success") : language === "ko" ? "실패" : "Failure"}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  ) : null;
+
+  const assignmentFormModal = isAssignmentModalOpen ? (
+    <div className="fixed inset-0 z-50 bg-stone-950/40 px-4 py-6">
+      <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-lg gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</h2>
+          <button
+            type="button"
+            aria-label={text.close}
+            onClick={() => setIsAssignmentModalOpen(false)}
+            disabled={isSaving}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+        <div className="grid gap-3 text-sm">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <select
+              value={assignmentAssigneeId}
+              onChange={(event) => setAssignmentAssigneeId(event.target.value)}
+              className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
+              aria-label={language === "ko" ? "친구 선택" : "Select friend"}
+            >
+              <option value="">{language === "ko" ? "친구 선택" : "Select friend"}</option>
+              {acceptedFriends.map((friendship) => (
+                <option key={friendship.friend.loginId} value={friendship.friend.loginId}>
+                  {friendship.friend.displayName || friendship.friend.loginId}
+                </option>
+              ))}
+            </select>
+            <select
+              value={assignmentKind}
+              onChange={(event) => setAssignmentKind(event.target.value as AssignmentKind)}
+              className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
+              aria-label={language === "ko" ? "부여 종류" : "Assignment type"}
+            >
+              <option value="goal">{text.goalShort}</option>
+              <option value="routine">{text.routineShort}</option>
+              <option value="todo">{text.todoShort}</option>
+            </select>
+            <input
+              value={assignmentTitle}
+              onChange={(event) => setAssignmentTitle(event.target.value)}
+              className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+              placeholder={language === "ko" ? "제목" : "Title"}
+              autoFocus
+            />
+          </div>
+          {assignmentKind === "goal" && (
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,120px)_minmax(0,160px)]">
+              <input
+                type="number"
+                value={assignmentTarget}
+                onChange={(event) => setAssignmentTarget(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={text.target}
+              />
+              <input
+                value={assignmentUnit}
+                onChange={(event) => setAssignmentUnit(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={text.unit}
+              />
+              <input
+                type="date"
+                value={assignmentDeadline}
+                onChange={(event) => setAssignmentDeadline(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={text.deadline}
+              />
+            </div>
+          )}
+          {assignmentKind === "routine" && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                type="date"
+                value={assignmentStartDate}
+                onChange={(event) => setAssignmentStartDate(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={text.start}
+              />
+              <input
+                type="date"
+                value={assignmentEndDate}
+                onChange={(event) => setAssignmentEndDate(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={language === "ko" ? "종료일" : "End date"}
+              />
+            </div>
+          )}
+          {assignmentKind === "todo" && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                type="date"
+                value={assignmentTargetDate}
+                onChange={(event) => setAssignmentTargetDate(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                aria-label={text.targetDate}
+              />
+              <input
+                value={assignmentCategory}
+                onChange={(event) => setAssignmentCategory(event.target.value)}
+                className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+                placeholder={text.category}
+              />
+            </div>
+          )}
+          <textarea
+            value={assignmentMemo}
+            onChange={(event) => setAssignmentMemo(event.target.value)}
+            className="min-h-20 resize-y rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
+            placeholder={text.memo}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setIsAssignmentModalOpen(false)}
+              disabled={isSaving}
+              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+            >
+              {text.close}
+            </button>
+            <button
+              type="button"
+              onClick={submitAssignment}
+              disabled={isSaving || !assignmentAssigneeId || !assignmentTitle.trim()}
+              className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              {language === "ko" ? "부여하기" : "Assign"}
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  ) : null;
+
   return (
     <main
       onPointerDown={startScreenSwipe}
@@ -5292,57 +5663,73 @@ export default function GoalTracker() {
             </div>
 
             <section className="grid gap-2">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
-                <span className="text-xs font-medium text-stone-500">Login ID</span>
-                <span className="truncate font-semibold text-stone-900">{loginId}</span>
+              <div className="grid min-w-0 gap-1 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
+                <span className="text-xs font-medium leading-none text-stone-500">Login ID</span>
+                <span className="min-w-0 overflow-x-auto whitespace-nowrap font-mono text-sm font-semibold text-stone-900 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {loginId}
+                </span>
               </div>
-              <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <label className="grid gap-1 font-medium">
-                  <span className="text-xs text-stone-500">{language === "ko" ? "닉네임" : "Nickname"}</span>
-                  <input
-                    value={displayNameDraft}
-                    onChange={(event) => setDisplayNameDraft(event.target.value)}
-                    onKeyDown={(event) => handleInputSaveKeyDown(event, submitDisplayName, isSaving)}
-                    className="rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
-                    placeholder={language === "ko" ? "표시할 이름" : "Display name"}
-                    maxLength={30}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={submitDisplayName}
-                  disabled={isSaving || displayNameDraft.trim() === displayName}
-                  className="h-9 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                >
-                  {text.save}
-                </button>
+              <div className="grid gap-2 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                <span className="text-xs font-medium text-stone-500">{language === "ko" ? "닉네임" : "Nickname"}</span>
+                {isEditingDisplayName ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={displayNameDraft}
+                      onChange={(event) => setDisplayNameDraft(event.target.value)}
+                      onKeyDown={(event) => handleInputSaveKeyDown(event, submitDisplayName, isSaving)}
+                      className="h-9 w-full max-w-56 rounded-md border border-stone-300 px-3 font-normal outline-none focus:border-emerald-600"
+                      placeholder={language === "ko" ? "표시할 이름" : "Display name"}
+                      maxLength={30}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={submitDisplayName}
+                      disabled={isSaving || displayNameDraft.trim() === displayName}
+                      className="h-9 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {text.save}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelDisplayNameEdit}
+                      disabled={isSaving}
+                      className="h-9 rounded-md border border-stone-300 px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {text.cancel}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                    <span className="min-w-0 truncate font-semibold text-stone-900">
+                      {displayName || (language === "ko" ? "닉네임 없음" : "No nickname")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDisplayNameDraft(displayName);
+                        setIsEditingDisplayName(true);
+                      }}
+                      disabled={isSaving}
+                      className="h-8 rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {text.edit}
+                    </button>
+                  </div>
+                )}
               </div>
-              <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
-                  {[
-                    { label: text.goalShort, value: goals.length },
-                    { label: text.todoShort, value: todos.length },
-                    { label: text.routineShort, value: routines.length },
-                    { label: text.archived, value: archivedItemCount },
-                    { label: text.bin, value: deletedItemCount },
-                  ].map((item) => (
-                    <div key={item.label} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2">
-                      <dt className="truncate text-xs font-medium text-stone-500">{item.label}</dt>
-                      <dd className="text-sm font-semibold text-stone-950">{item.value}</dd>
-                    </div>
-                  ))}
-                </dl>
             </section>
 
             <section className="grid gap-2">
               <div className="flex items-center gap-2 px-1 pb-1 pt-1">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <UserIcon />
+                  <UsersIcon />
                   {language === "ko" ? "친구와 부여" : "Friends and Assignments"}
                 </h2>
               </div>
 
               <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] gap-2">
                   <input
                     value={friendSearchQuery}
                     onChange={(event) => setFriendSearchQuery(event.target.value)}
@@ -5354,7 +5741,7 @@ export default function GoalTracker() {
                     type="button"
                     onClick={submitFriendSearch}
                     disabled={isSaving || friendSearchQuery.trim().length < 2}
-                    className="h-9 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                    className="h-9 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                   >
                     {language === "ko" ? "검색" : "Search"}
                   </button>
@@ -5411,116 +5798,23 @@ export default function GoalTracker() {
               )}
 
               <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
-                <div className="font-semibold text-stone-900">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold text-stone-900">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAssignmentModalOpen(true)}
+                    disabled={isSaving || acceptedFriends.length === 0}
+                    className="h-8 rounded-md bg-stone-950 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {language === "ko" ? "부여하기" : "Assign"}
+                  </button>
+                </div>
                 {acceptedFriends.length === 0 ? (
                   <div className="text-sm text-stone-600">{language === "ko" ? "수락된 친구가 아직 없습니다." : "No accepted friends yet."}</div>
                 ) : (
-                  <>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <select
-                        value={assignmentAssigneeId}
-                        onChange={(event) => setAssignmentAssigneeId(event.target.value)}
-                        className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
-                        aria-label={language === "ko" ? "친구 선택" : "Select friend"}
-                      >
-                        <option value="">{language === "ko" ? "친구 선택" : "Select friend"}</option>
-                        {acceptedFriends.map((friendship) => (
-                          <option key={friendship.friend.loginId} value={friendship.friend.loginId}>
-                            {friendship.friend.displayName || friendship.friend.loginId}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={assignmentKind}
-                        onChange={(event) => setAssignmentKind(event.target.value as AssignmentKind)}
-                        className="min-w-0 rounded-md border border-stone-300 bg-white px-3 py-2 outline-none focus:border-emerald-600"
-                        aria-label={language === "ko" ? "부여 종류" : "Assignment type"}
-                      >
-                        <option value="goal">{text.goalShort}</option>
-                        <option value="routine">{text.routineShort}</option>
-                        <option value="todo">{text.todoShort}</option>
-                      </select>
-                      <input
-                        value={assignmentTitle}
-                        onChange={(event) => setAssignmentTitle(event.target.value)}
-                        className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                        placeholder={language === "ko" ? "제목" : "Title"}
-                      />
-                    </div>
-                    {assignmentKind === "goal" && (
-                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,120px)_minmax(0,160px)]">
-                        <input
-                          type="number"
-                          value={assignmentTarget}
-                          onChange={(event) => setAssignmentTarget(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={text.target}
-                        />
-                        <input
-                          value={assignmentUnit}
-                          onChange={(event) => setAssignmentUnit(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={text.unit}
-                        />
-                        <input
-                          type="date"
-                          value={assignmentDeadline}
-                          onChange={(event) => setAssignmentDeadline(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={text.deadline}
-                        />
-                      </div>
-                    )}
-                    {assignmentKind === "routine" && (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <input
-                          type="date"
-                          value={assignmentStartDate}
-                          onChange={(event) => setAssignmentStartDate(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={text.start}
-                        />
-                        <input
-                          type="date"
-                          value={assignmentEndDate}
-                          onChange={(event) => setAssignmentEndDate(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={language === "ko" ? "종료일" : "End date"}
-                        />
-                      </div>
-                    )}
-                    {assignmentKind === "todo" && (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <input
-                          type="date"
-                          value={assignmentTargetDate}
-                          onChange={(event) => setAssignmentTargetDate(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          aria-label={text.targetDate}
-                        />
-                        <input
-                          value={assignmentCategory}
-                          onChange={(event) => setAssignmentCategory(event.target.value)}
-                          className="min-w-0 rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                          placeholder={text.category}
-                        />
-                      </div>
-                    )}
-                    <textarea
-                      value={assignmentMemo}
-                      onChange={(event) => setAssignmentMemo(event.target.value)}
-                      className="min-h-16 resize-y rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-emerald-600"
-                      placeholder={text.memo}
-                    />
-                    <button
-                      type="button"
-                      onClick={submitAssignment}
-                      disabled={isSaving || !assignmentAssigneeId || !assignmentTitle.trim()}
-                      className="h-9 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {language === "ko" ? "부여하기" : "Assign"}
-                    </button>
-                  </>
+                  <div className="text-sm text-stone-600">
+                    {language === "ko" ? "버튼을 눌러 친구에게 새 항목을 부여하세요." : "Open the form to assign a new item to a friend."}
+                  </div>
                 )}
               </div>
 
@@ -5567,7 +5861,13 @@ export default function GoalTracker() {
                     <div className="text-stone-600">{language === "ko" ? "아직 부여한 항목이 없습니다." : "No sent assignments."}</div>
                   ) : (
                     sentAssignments.map((assignment) => (
-                      <div key={assignment.id} className="grid gap-1 rounded-md border border-stone-200 px-2 py-2">
+                      <button
+                        key={assignment.id}
+                        type="button"
+                        onClick={() => openAssignmentDetail(assignment)}
+                        disabled={isSaving || assignment.status !== "accepted" || !assignment.appliedItemId}
+                        className="grid gap-1 rounded-md border border-stone-200 px-2 py-2 text-left transition hover:border-emerald-300 hover:bg-emerald-50/40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:bg-transparent"
+                      >
                         <div className="flex min-w-0 items-center justify-between gap-2">
                           <span className="truncate font-semibold">{assignment.title}</span>
                           <span className="shrink-0 rounded border border-stone-200 px-1.5 py-0.5 text-[11px] font-semibold text-stone-600">
@@ -5589,10 +5889,10 @@ export default function GoalTracker() {
                                 : "Waiting for acceptance."
                               : language === "ko"
                                 ? "관찰 가능한 적용 항목이 없습니다."
-                                : "No applied item to observe."}
+                            : "No applied item to observe."}
                           </div>
                         )}
-                      </div>
+                      </button>
                     ))
                   )}
                 </div>
@@ -5813,29 +6113,16 @@ export default function GoalTracker() {
                   </select>
                   <button
                     type="button"
-                    aria-label={language === "ko" ? "목표 오름차순 정렬" : "Sort goals ascending"}
-                    aria-pressed={goalSortDirection === "asc"}
-                    onClick={() => setGoalSortDirection("asc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      goalSortDirection === "asc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
+                    aria-label={
+                      language === "ko"
+                        ? `목표 정렬 방향: ${goalSortDirection === "asc" ? "오름" : "내림"}`
+                        : `Goal sort direction: ${goalSortDirection === "asc" ? "Asc" : "Desc"}`
+                    }
+                    onClick={() => setGoalSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
+                    disabled={goalSortKey === "manual"}
+                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={language === "ko" ? "목표 내림차순 정렬" : "Sort goals descending"}
-                    aria-pressed={goalSortDirection === "desc"}
-                    onClick={() => setGoalSortDirection("desc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      goalSortDirection === "desc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
-                  >
-                    ↓
+                    {language === "ko" ? (goalSortDirection === "asc" ? "오름" : "내림") : goalSortDirection === "asc" ? "Asc" : "Desc"}
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -5956,29 +6243,16 @@ export default function GoalTracker() {
                   </select>
                   <button
                     type="button"
-                    aria-label={language === "ko" ? "할일 오름차순 정렬" : "Sort tasks ascending"}
-                    aria-pressed={todoSortDirection === "asc"}
-                    onClick={() => setTodoSortDirection("asc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      todoSortDirection === "asc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
+                    aria-label={
+                      language === "ko"
+                        ? `할일 정렬 방향: ${todoSortDirection === "asc" ? "오름" : "내림"}`
+                        : `Task sort direction: ${todoSortDirection === "asc" ? "Asc" : "Desc"}`
+                    }
+                    onClick={() => setTodoSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
+                    disabled={todoSortKey === "manual"}
+                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={language === "ko" ? "할일 내림차순 정렬" : "Sort tasks descending"}
-                    aria-pressed={todoSortDirection === "desc"}
-                    onClick={() => setTodoSortDirection("desc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      todoSortDirection === "desc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
-                  >
-                    ↓
+                    {language === "ko" ? (todoSortDirection === "asc" ? "오름" : "내림") : todoSortDirection === "asc" ? "Asc" : "Desc"}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -7091,6 +7365,14 @@ export default function GoalTracker() {
         selectedTodoActionBar,
         document.body,
       )}
+      {typeof document !== "undefined" && assignmentDetailModal && createPortal(
+        assignmentDetailModal,
+        document.body,
+      )}
+      {typeof document !== "undefined" && assignmentFormModal && createPortal(
+        assignmentFormModal,
+        document.body,
+      )}
       {typeof document !== "undefined" && isAgentSettingsModalOpen && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -7803,6 +8085,26 @@ function UserIcon() {
     >
       <path d="M20 21a8 8 0 0 0-16 0" />
       <circle cx="12" cy="8" r="4" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M16 21a6 6 0 0 0-12 0" />
+      <circle cx="10" cy="8" r="4" />
+      <path d="M22 21a5 5 0 0 0-6-4.9" />
+      <path d="M16 4.2a4 4 0 0 1 0 7.6" />
     </svg>
   );
 }

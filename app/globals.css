@@ -664,12 +664,6 @@ body.dark-mode .routine-celebration-image,
   opacity: 0.9;
 }
 
-html.dark-mode .routine-score-best-image,
-body.dark-mode .routine-score-best-image,
-.app-dark .routine-score-best-image {
-  filter: invert(1) brightness(1.35) contrast(1.08) !important;
-}
-
 .routine-celebration-icon-you {
   animation: routine-celebration-you 2.4s ease-out forwards;
 }

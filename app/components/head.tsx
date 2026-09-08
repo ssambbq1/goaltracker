@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import appIcon from "../icon3.png";
 import AppInstallButton from "./AppInstallButton";
 
@@ -34,24 +34,79 @@ export default function Head({
   onUserOpen,
 }: HeadProps) {
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
+  const brandTextRef = useRef<HTMLDivElement | null>(null);
+  const wordmarkRef = useRef<HTMLHeadingElement | null>(null);
+  const taglineRef = useRef<HTMLParagraphElement | null>(null);
+  const [wordmarkFontSize, setWordmarkFontSize] = useState<number | null>(null);
+  const [taglineFontSize, setTaglineFontSize] = useState<number | null>(null);
 
   function chooseLanguage(nextLanguage: AppLanguage) {
     onLanguageChange(nextLanguage);
     setIsLanguageMenuOpen(false);
   }
 
+  useEffect(() => {
+    const container = brandTextRef.current;
+    const wordmark = wordmarkRef.current;
+    const tagline = taglineRef.current;
+    if (!container || !wordmark || !tagline) return;
+
+    function fitText() {
+      if (!container || !wordmark || !tagline) return;
+      const width = container.clientWidth;
+      if (width <= 0) return;
+
+      const wordmarkBase = window.innerWidth >= 1024 ? 60 : window.innerWidth >= 640 ? 48 : 42;
+      const taglineBase = window.innerWidth >= 640 ? 14 : 12;
+
+      wordmark.style.fontSize = `${wordmarkBase}px`;
+      tagline.style.fontSize = `${taglineBase}px`;
+
+      const wordmarkScale = Math.min(1, width / Math.max(wordmark.scrollWidth, 1));
+      const nextWordmarkFontSize = Math.max(22, Math.floor(wordmarkBase * wordmarkScale));
+      const taglineScale = Math.min(1, width / Math.max(tagline.scrollWidth, 1));
+      const nextTaglineFontSize = Math.min(
+        Math.max(9, Math.floor(taglineBase * taglineScale)),
+        Math.floor(nextWordmarkFontSize * 0.42),
+      );
+
+      setWordmarkFontSize(nextWordmarkFontSize);
+      setTaglineFontSize(nextTaglineFontSize);
+    }
+
+    fitText();
+    const observer = new ResizeObserver(fitText);
+    observer.observe(container);
+    window.addEventListener("resize", fitText);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", fitText);
+    };
+  }, [text.appName, text.tagline]);
+
   return (
     <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-5 sm:gap-4 sm:pb-6">
       <button
         type="button"
         onClick={onHomeOpen}
-        className="flex min-w-0 items-center gap-2.5 rounded-md text-left outline-none transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:gap-3.5"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left outline-none transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:gap-3.5"
         aria-label={language === "ko" ? "목표 리스트로 이동" : "Go to goal list"}
       >
         <AppleTreeIcon />
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 sm:text-sm">{text.tagline}</p>
-          <h1 className="plantree-wordmark mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text text-[clamp(1.85rem,8vw,2.65rem)] font-semibold leading-[0.95] text-transparent sm:text-5xl lg:text-6xl">
+        <div ref={brandTextRef} className="min-w-0 flex-1 overflow-hidden">
+          <p
+            ref={taglineRef}
+            className="whitespace-nowrap font-semibold uppercase tracking-[0.14em] text-emerald-700"
+            style={{ fontSize: taglineFontSize ? `${taglineFontSize}px` : undefined }}
+          >
+            {text.tagline}
+          </p>
+          <h1
+            ref={wordmarkRef}
+            className="plantree-wordmark mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text font-semibold leading-[0.95] text-transparent"
+            style={{ fontSize: wordmarkFontSize ? `${wordmarkFontSize}px` : undefined }}
+          >
             {text.appName}
           </h1>
         </div>
@@ -134,7 +189,7 @@ export default function Head({
 
 function AppleTreeIcon() {
   return (
-    <span className="block h-14 w-14 shrink-0 overflow-hidden rounded-lg drop-shadow-sm sm:h-20 sm:w-20">
+    <span className="block h-12 w-12 shrink-0 overflow-hidden rounded-lg drop-shadow-sm min-[390px]:h-14 min-[390px]:w-14 sm:h-20 sm:w-20">
       <Image
         src={appIcon}
         alt=""

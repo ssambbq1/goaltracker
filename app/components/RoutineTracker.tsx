@@ -1,7 +1,5 @@
 "use client";
 
-import Image from "next/image";
-import youIcon from "../YOU-transparent.png";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -1083,29 +1081,16 @@ export default function RoutineTracker({
                   </select>
                   <button
                     type="button"
-                    aria-label={language === "ko" ? "습관 오름차순 정렬" : "Sort habits ascending"}
-                    aria-pressed={routineSortDirection === "asc"}
-                    onClick={() => setRoutineSortDirection("asc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      routineSortDirection === "asc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
+                    aria-label={
+                      language === "ko"
+                        ? `?? ?? ??: ${routineSortDirection === "asc" ? "??" : "??"}`
+                        : `Habit sort direction: ${routineSortDirection === "asc" ? "Asc" : "Desc"}`
+                    }
+                    onClick={() => setRoutineSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
+                    disabled={routineSortKey === "manual"}
+                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={language === "ko" ? "습관 내림차순 정렬" : "Sort habits descending"}
-                    aria-pressed={routineSortDirection === "desc"}
-                    onClick={() => setRoutineSortDirection("desc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      routineSortDirection === "desc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
-                  >
-                    ↓
+                    {language === "ko" ? (routineSortDirection === "asc" ? "??" : "??") : routineSortDirection === "asc" ? "Asc" : "Desc"}
                   </button>
                 </div>
                 <button
@@ -1144,29 +1129,16 @@ export default function RoutineTracker({
                   </select>
                   <button
                     type="button"
-                    aria-label={language === "ko" ? "습관 오름차순 정렬" : "Sort habits ascending"}
-                    aria-pressed={routineSortDirection === "asc"}
-                    onClick={() => setRoutineSortDirection("asc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      routineSortDirection === "asc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
+                    aria-label={
+                      language === "ko"
+                        ? `?? ?? ??: ${routineSortDirection === "asc" ? "??" : "??"}`
+                        : `Habit sort direction: ${routineSortDirection === "asc" ? "Asc" : "Desc"}`
+                    }
+                    onClick={() => setRoutineSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
+                    disabled={routineSortKey === "manual"}
+                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={language === "ko" ? "습관 내림차순 정렬" : "Sort habits descending"}
-                    aria-pressed={routineSortDirection === "desc"}
-                    onClick={() => setRoutineSortDirection("desc")}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-bold ${
-                      routineSortDirection === "desc"
-                        ? "border-emerald-700 bg-emerald-700 text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
-                    }`}
-                  >
-                    ↓
+                    {language === "ko" ? (routineSortDirection === "asc" ? "??" : "??") : routineSortDirection === "asc" ? "Asc" : "Desc"}
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -1230,13 +1202,14 @@ export default function RoutineTracker({
                       }`}
                     >
                       {displayedScoreFeedback.tone === "best" && (
-                        <Image
-                          src={youIcon}
-                          alt=""
-                          width={72}
-                          height={72}
-                          className="routine-score-best-image h-16 w-16 shrink-0 object-contain"
-                        />
+                        <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
+                          <span className="h-8 w-8">
+                            <ThumbsUpMark />
+                          </span>
+                          <span className="h-8 w-8">
+                            <ThumbsUpMark />
+                          </span>
+                        </span>
                       )}
                       {displayedScoreFeedback.tone === "good" && (
                         <span className="h-8 w-8 shrink-0">
