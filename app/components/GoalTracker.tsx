@@ -255,6 +255,30 @@ const AGENT_VOICE_ERROR_RESTART_DELAY_MS = 700;
 type Session = {
   loginId: string | null;
   displayName: string | null;
+  isAdmin?: boolean;
+  aiEnabled?: boolean;
+  aiAccessSchemaMissing?: boolean;
+};
+
+type AdminUser = {
+  loginId: string;
+  displayName: string | null;
+  googleEmail: string | null;
+  isAdmin: boolean;
+  aiEnabled: boolean;
+  hasApiKey: boolean;
+  apiKeyCount: number;
+  activeModel: string;
+  createdAt: number;
+  lastLoginAt: number;
+};
+
+type Announcement = {
+  id: string;
+  senderId: string;
+  message: string;
+  targetUserIds: string[] | null;
+  createdAt: number;
 };
 
 type NavigationState = {
@@ -360,6 +384,7 @@ const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
 const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
 const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
+const DISMISSED_ANNOUNCEMENTS_STORAGE_KEY = "boost-mastery.dismissed-announcements";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
@@ -376,8 +401,8 @@ const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
 
 const UI_TEXT = {
   en: {
-    appName: "PlanTree",
-    tagline: "Design your life",
+    appName: "BoostMaster",
+    tagline: "Daily growth habits",
     goalList: "Goals",
     goalShort: "Goals",
     todoList: "Tasks",
@@ -448,8 +473,8 @@ const UI_TEXT = {
     emptyBinConfirm: (count: number) => `Delete ${count} item${count === 1 ? "" : "s"} forever. This cannot be undone.`,
   },
   ko: {
-    appName: "플랜트리",
-    tagline: "삶을 설계하세요",
+    appName: "부스트마스터",
+    tagline: "매일 성장하는 습관",
     goalList: "목표",
     goalShort: "목표",
     todoList: "단순 할일",
@@ -474,7 +499,7 @@ const UI_TEXT = {
     deleteForever: "영구 삭제",
     all: "전체",
     category: "카테고리",
-    noCategory: "카테고리 없음",
+    noCategory: "무제",
     target: "목표",
     targetDate: "목표일",
     progress: "진행률",
@@ -550,6 +575,51 @@ async function saveAgentSettings(input: {
   const data = (await response.json()) as { error?: string; settings?: AgentSettings };
   if (!response.ok || !data.settings) throw new Error(data.error || "Failed to save agent settings");
   return data.settings;
+}
+
+async function fetchAdminUsers() {
+  const response = await fetch("/api/admin/users", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; users?: AdminUser[]; aiAccessSchemaMissing?: boolean };
+  if (!response.ok || !data.users) throw new Error(data.error || "Failed to load admin users");
+  return {
+    users: data.users,
+    aiAccessSchemaMissing: Boolean(data.aiAccessSchemaMissing),
+  };
+}
+
+async function saveAdminUserAiAccess(loginId: string, aiEnabled: boolean) {
+  const response = await fetch("/api/admin/users", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ loginId, aiEnabled }),
+  });
+  const data = (await response.json()) as { error?: string; users?: AdminUser[]; aiAccessSchemaMissing?: boolean };
+  if (!response.ok || !data.users) throw new Error(data.error || "Failed to update AI access");
+  return {
+    users: data.users,
+    aiAccessSchemaMissing: Boolean(data.aiAccessSchemaMissing),
+  };
+}
+
+async function fetchAnnouncements() {
+  const response = await fetch("/api/announcements", { cache: "no-store" });
+  const data = (await response.json()) as { error?: string; announcements?: Announcement[]; schemaMissing?: boolean };
+  if (!response.ok || !data.announcements) throw new Error(data.error || "Failed to load announcements");
+  return {
+    announcements: data.announcements,
+    schemaMissing: Boolean(data.schemaMissing),
+  };
+}
+
+async function sendAnnouncement(input: { message: string; targetUserIds: string[] | null }) {
+  const response = await fetch("/api/announcements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = (await response.json()) as { error?: string; announcement?: Announcement };
+  if (!response.ok || !data.announcement) throw new Error(data.error || "Failed to send announcement");
+  return data.announcement;
 }
 
 function getAgentSelectedList(view: TrackerView): AgentSelectedList {
@@ -1118,6 +1188,25 @@ function clearStoredNavigationState() {
   }
 }
 
+function readDismissedAnnouncementIds() {
+  try {
+    const stored = window.localStorage.getItem(DISMISSED_ANNOUNCEMENTS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissedAnnouncementIds(ids: string[]) {
+  try {
+    window.localStorage.setItem(DISMISSED_ANNOUNCEMENTS_STORAGE_KEY, JSON.stringify(Array.from(new Set(ids))));
+  } catch {
+    // Ignore unavailable storage. The notice can still be closed for this session.
+  }
+}
+
 function normalizeNavMenuOrder(value: unknown): TrackerView[] {
   const storedOrder = Array.isArray(value) ? value : [];
   const validStoredItems = storedOrder.filter(
@@ -1372,6 +1461,12 @@ function isEditableTarget(target: EventTarget | null) {
 
 function clearTextSelection() {
   window.getSelection()?.removeAllRanges();
+}
+
+function resizeTextareaToFitContent(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight + 2}px`;
 }
 
 function preventDoubleClickTextSelection(event: ReactMouseEvent<HTMLElement>) {
@@ -1750,6 +1845,19 @@ export default function GoalTracker() {
   const [passwordForm, setPasswordForm] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [hasAiAccess, setHasAiAccess] = useState(false);
+  const [aiAccessSchemaMissing, setAiAccessSchemaMissing] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [isAdminUserListExpanded, setIsAdminUserListExpanded] = useState(true);
+  const [announcementQueue, setAnnouncementQueue] = useState<Announcement[]>([]);
+  const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
+  const [shouldDismissActiveAnnouncement, setShouldDismissActiveAnnouncement] = useState(false);
+  const [announcementsSchemaMissing, setAnnouncementsSchemaMissing] = useState(false);
+  const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
+  const [announcementMessage, setAnnouncementMessage] = useState("");
+  const [announcementTargetMode, setAnnouncementTargetMode] = useState<"all" | "selected">("all");
+  const [selectedAnnouncementUserIds, setSelectedAnnouncementUserIds] = useState<string[]>([]);
   const [isEditingDisplayName, setIsEditingDisplayName] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [isAccountDeleteOpen, setIsAccountDeleteOpen] = useState(false);
@@ -1942,7 +2050,8 @@ export default function GoalTracker() {
   const text = UI_TEXT[language];
   const currentAgentSelectedList = getAgentSelectedList(currentView);
   const canRunAgentRequest =
-    agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt, currentAgentSelectedList));
+    hasAiAccess &&
+    (agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt, currentAgentSelectedList)));
   const agentVoiceButtonTitle = isSpeechRecognitionAvailable
     ? isAgentListening
       ? language === "ko"
@@ -2007,6 +2116,14 @@ export default function GoalTracker() {
           setLoginId(null);
           setDisplayName("");
           setDisplayNameDraft("");
+          setIsAdmin(false);
+          setHasAiAccess(false);
+          setAiAccessSchemaMissing(false);
+          setAdminUsers([]);
+          setIsAdminUserListExpanded(true);
+          setAnnouncementQueue([]);
+          setActiveAnnouncement(null);
+          setAnnouncementsSchemaMissing(false);
           resetGoalState();
           setIsLoading(false);
           return;
@@ -2016,6 +2133,22 @@ export default function GoalTracker() {
         setLoginForm(session.loginId);
         setDisplayName(session.displayName ?? "");
         setDisplayNameDraft(session.displayName ?? "");
+        setIsAdmin(Boolean(session.isAdmin));
+        setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+        setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
+        void loadAnnouncements();
+        if (session.isAdmin) {
+          fetchAdminUsers()
+            .then((result) => {
+              if (!isActive) return;
+              setAdminUsers(result.users);
+              setAiAccessSchemaMissing(result.aiAccessSchemaMissing);
+            })
+            .catch((adminError) => {
+              if (!isActive) return;
+              setError(adminError instanceof Error ? adminError.message : "Failed to load admin users");
+            });
+        }
         fetchAgentSettings()
           .then((settings) => {
             if (!isActive) return;
@@ -2418,6 +2551,18 @@ export default function GoalTracker() {
     setArchivedTodos([]);
     setRoutines([]);
     setIsEditingDisplayName(false);
+    setIsAdmin(false);
+    setHasAiAccess(false);
+    setAiAccessSchemaMissing(false);
+    setAdminUsers([]);
+    setIsAdminUserListExpanded(true);
+    setAnnouncementQueue([]);
+    setActiveAnnouncement(null);
+    setAnnouncementsSchemaMissing(false);
+    setIsAnnouncementModalOpen(false);
+    setAnnouncementMessage("");
+    setAnnouncementTargetMode("all");
+    setSelectedAnnouncementUserIds([]);
     setDeletedRoutines([]);
     setArchivedRoutines([]);
     setFriendships([]);
@@ -2542,6 +2687,17 @@ export default function GoalTracker() {
       setLoginForm(loggedInId);
       setDisplayName(session.displayName ?? "");
       setDisplayNameDraft(session.displayName ?? "");
+      setIsAdmin(Boolean(session.isAdmin));
+      setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+      setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
+      if (session.isAdmin) {
+        const adminResult = await fetchAdminUsers();
+        setAdminUsers(adminResult.users);
+        setAiAccessSchemaMissing(adminResult.aiAccessSchemaMissing);
+      } else {
+        setAdminUsers([]);
+      }
+      void loadAnnouncements();
       setIsEditingDisplayName(false);
       setPasswordForm("");
       await loadGoalData();
@@ -2565,10 +2721,16 @@ export default function GoalTracker() {
 
     try {
       const signedUpId = await signup(nextLoginId, passwordForm, displayNameDraft);
+      const session = await fetchSession();
       setLoginId(signedUpId);
       setLoginForm(signedUpId);
       setDisplayName(displayNameDraft.trim());
       setDisplayNameDraft(displayNameDraft.trim());
+      setIsAdmin(Boolean(session.isAdmin));
+      setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+      setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
+      setAdminUsers([]);
+      void loadAnnouncements();
       setIsEditingDisplayName(false);
       setPasswordForm("");
       await loadGoalData();
@@ -2588,6 +2750,14 @@ export default function GoalTracker() {
       setLoginId(null);
       setDisplayName("");
       setDisplayNameDraft("");
+      setIsAdmin(false);
+      setHasAiAccess(false);
+      setAiAccessSchemaMissing(false);
+      setAdminUsers([]);
+      setIsAdminUserListExpanded(true);
+      setAnnouncementQueue([]);
+      setActiveAnnouncement(null);
+      setAnnouncementsSchemaMissing(false);
       setIsEditingDisplayName(false);
       setPasswordForm("");
       resetGoalState();
@@ -2613,6 +2783,14 @@ export default function GoalTracker() {
       setLoginForm("");
       setDisplayName("");
       setDisplayNameDraft("");
+      setIsAdmin(false);
+      setHasAiAccess(false);
+      setAiAccessSchemaMissing(false);
+      setAdminUsers([]);
+      setIsAdminUserListExpanded(true);
+      setAnnouncementQueue([]);
+      setActiveAnnouncement(null);
+      setAnnouncementsSchemaMissing(false);
       setIsEditingDisplayName(false);
       setPasswordForm("");
       setAccountDeletePassword("");
@@ -2727,6 +2905,102 @@ export default function GoalTracker() {
     }
   }
 
+  async function reloadAdminUsers() {
+    if (!isAdmin) return;
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await fetchAdminUsers();
+      setAdminUsers(result.users);
+      setAiAccessSchemaMissing(result.aiAccessSchemaMissing);
+    } catch (adminError) {
+      setError(adminError instanceof Error ? adminError.message : "Failed to load admin users");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function updateAdminUserAiAccess(loginIdToUpdate: string, aiEnabled: boolean) {
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await saveAdminUserAiAccess(loginIdToUpdate, aiEnabled);
+      setAdminUsers(result.users);
+      setAiAccessSchemaMissing(result.aiAccessSchemaMissing);
+      if (loginIdToUpdate === loginId) setHasAiAccess(aiEnabled);
+    } catch (adminError) {
+      setError(adminError instanceof Error ? adminError.message : "Failed to update AI access");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function loadAnnouncements() {
+    try {
+      const result = await fetchAnnouncements();
+      const dismissedIds = readDismissedAnnouncementIds();
+      const visibleAnnouncements = result.announcements.filter((announcement) => !dismissedIds.includes(announcement.id));
+      setAnnouncementsSchemaMissing(result.schemaMissing);
+      setAnnouncementQueue(visibleAnnouncements);
+      setActiveAnnouncement(visibleAnnouncements[0] ?? null);
+      setShouldDismissActiveAnnouncement(false);
+    } catch {
+      setAnnouncementsSchemaMissing(true);
+    }
+  }
+
+  function closeActiveAnnouncement() {
+    if (!activeAnnouncement) return;
+    const nextQueue = announcementQueue.filter((announcement) => announcement.id !== activeAnnouncement.id);
+    if (shouldDismissActiveAnnouncement) {
+      writeDismissedAnnouncementIds([...readDismissedAnnouncementIds(), activeAnnouncement.id]);
+    }
+    setAnnouncementQueue(nextQueue);
+    setActiveAnnouncement(nextQueue[0] ?? null);
+    setShouldDismissActiveAnnouncement(false);
+  }
+
+  function toggleAnnouncementRecipient(loginIdToToggle: string) {
+    setSelectedAnnouncementUserIds((current) =>
+      current.includes(loginIdToToggle)
+        ? current.filter((item) => item !== loginIdToToggle)
+        : [...current, loginIdToToggle],
+    );
+  }
+
+  async function submitAnnouncement() {
+    const message = announcementMessage.trim();
+    if (!message) {
+      setError(language === "ko" ? "공지 내용을 입력하세요." : "Enter an announcement message.");
+      return;
+    }
+    if (announcementTargetMode === "selected" && selectedAnnouncementUserIds.length === 0) {
+      setError(language === "ko" ? "공지 받을 회원을 선택하세요." : "Select at least one recipient.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      await sendAnnouncement({
+        message,
+        targetUserIds: announcementTargetMode === "all" ? null : selectedAnnouncementUserIds,
+      });
+      setAnnouncementMessage("");
+      setAnnouncementTargetMode("all");
+      setSelectedAnnouncementUserIds([]);
+      setIsAnnouncementModalOpen(false);
+      setAnnouncementsSchemaMissing(false);
+    } catch (announcementError) {
+      setError(announcementError instanceof Error ? announcementError.message : "Failed to send announcement");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function speakAgentResponse(message: string) {
     if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
 
@@ -2772,6 +3046,14 @@ export default function GoalTracker() {
     const agentRequest = clarification
       ? buildClarifiedAgentPrompt(clarification.originalPrompt, clarification.question, request)
       : request;
+    if (!hasAiAccess) {
+      setError(
+        language === "ko"
+          ? "AI 사용 권한이 없습니다. 관리자에게 권한을 요청하세요."
+          : "AI access is not enabled for this account. Ask an admin for access.",
+      );
+      return;
+    }
     if (!agentSettings.hasApiKey && !isLocalTaskQuery(agentRequest, currentAgentSelectedList)) {
       setError(
         language === "ko"
@@ -5317,7 +5599,7 @@ export default function GoalTracker() {
           ))}
         </nav>
 
-        {isAgentEnabled && currentView !== "user" && currentView !== "detail" && !isAgentPanelExpanded && (
+        {isAgentEnabled && hasAiAccess && currentView !== "user" && currentView !== "detail" && !isAgentPanelExpanded && (
           <button
             type="button"
             data-swipe-ignore
@@ -5348,7 +5630,7 @@ export default function GoalTracker() {
           </button>
         )}
 
-        {isAgentEnabled && currentView !== "user" && currentView !== "detail" && isAgentPanelExpanded && (
+        {isAgentEnabled && hasAiAccess && currentView !== "user" && currentView !== "detail" && isAgentPanelExpanded && (
           <>
             <button
               type="button"
@@ -5720,6 +6002,140 @@ export default function GoalTracker() {
               </div>
             </section>
 
+            {isAdmin && (
+              <section className="grid gap-2">
+                <div className="flex items-center gap-2 px-1 pb-1 pt-1">
+                  <h2 className="flex items-center gap-2 text-base font-semibold">
+                    <ShieldIcon />
+                    {language === "ko" ? "관리자" : "Admin"}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={reloadAdminUsers}
+                    disabled={isSaving}
+                    className="ml-auto h-8 rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {language === "ko" ? "새로고침" : "Refresh"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAnnouncementModalOpen(true)}
+                    disabled={isSaving || announcementsSchemaMissing}
+                    className="h-8 rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {language === "ko" ? "공지 작성" : "Notice"}
+                  </button>
+                </div>
+                <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <AdminStat
+                      label={language === "ko" ? "회원" : "Users"}
+                      value={String(adminUsers.length)}
+                    />
+                    <AdminStat
+                      label={language === "ko" ? "AI 허용" : "AI enabled"}
+                      value={String(adminUsers.filter((user) => user.aiEnabled).length)}
+                    />
+                    <AdminStat
+                      label={language === "ko" ? "키 보유" : "With keys"}
+                      value={String(adminUsers.filter((user) => user.hasApiKey).length)}
+                    />
+                  </div>
+                  {aiAccessSchemaMissing && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+                      {language === "ko"
+                        ? "AI 권한 DB migration을 적용해야 권한 변경을 저장할 수 있습니다."
+                        : "Apply the AI access DB migration before saving permission changes."}
+                    </div>
+                  )}
+                  {announcementsSchemaMissing && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+                      {language === "ko"
+                        ? "공지사항 DB migration을 적용해야 팝업 공지를 보낼 수 있습니다."
+                        : "Apply the announcements DB migration before sending popup notices."}
+                    </div>
+                  )}
+                  <div className="grid gap-2">
+                    <button
+                      type="button"
+                      aria-expanded={isAdminUserListExpanded}
+                      onClick={() => setIsAdminUserListExpanded((expanded) => !expanded)}
+                      className="flex w-full items-center justify-between gap-2 rounded-md border border-stone-200 px-3 py-2 text-left text-sm font-semibold text-stone-900 hover:bg-stone-50"
+                    >
+                      <span>
+                        {language === "ko" ? "회원 목록" : "User list"} ({adminUsers.length})
+                      </span>
+                      {isAdminUserListExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
+                    </button>
+                    {isAdminUserListExpanded && (
+                      <div className="grid gap-1.5">
+                        {adminUsers.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-stone-300 px-3 py-3 text-stone-600">
+                            {language === "ko" ? "회원 목록이 없습니다." : "No users found."}
+                          </div>
+                        ) : (
+                          adminUsers.map((user) => (
+                        <div
+                          key={user.loginId}
+                          className="grid gap-2 rounded-md border border-stone-200 px-2 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              <span className="truncate font-semibold text-stone-900">
+                                {user.displayName || (language === "ko" ? "닉네임 없음" : "No nickname")}
+                              </span>
+                              {user.isAdmin && (
+                                <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                                  ADMIN
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 grid gap-0.5 text-xs">
+                              <AdminUserField
+                                label={language === "ko" ? "닉네임" : "Nickname"}
+                                value={user.displayName || (language === "ko" ? "없음" : "None")}
+                              />
+                              <AdminUserField label="ID" value={user.loginId} mono />
+                              <AdminUserField
+                                label="EMAIL"
+                                value={user.googleEmail || (language === "ko" ? "연결 없음" : "Not connected")}
+                              />
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-600">
+                              <span>
+                                {language === "ko" ? "최근 로그인" : "Last login"}: {formatSavedAt(user.lastLoginAt, language)}
+                              </span>
+                              <span>
+                                {language === "ko" ? "가입" : "Joined"}: {formatSavedAt(user.createdAt, language)}
+                              </span>
+                              <span>
+                                {language === "ko" ? "AI 키" : "AI keys"}: {user.hasApiKey ? user.apiKeyCount || 1 : 0}
+                              </span>
+                              {user.activeModel && <span>{user.activeModel}</span>}
+                            </div>
+                          </div>
+                          <label className="flex items-center justify-between gap-3 rounded-md border border-stone-200 px-2 py-2 sm:min-w-36">
+                            <span className="text-xs font-semibold text-stone-700">
+                              {language === "ko" ? "AI 사용" : "AI access"}
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={user.aiEnabled}
+                              disabled={isSaving || user.isAdmin || aiAccessSchemaMissing}
+                              onChange={(event) => updateAdminUserAiAccess(user.loginId, event.target.checked)}
+                              className="h-5 w-5 accent-emerald-700 disabled:cursor-not-allowed"
+                            />
+                          </label>
+                        </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
+
             <section className="grid gap-2">
               <div className="flex items-center gap-2 px-1 pb-1 pt-1">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
@@ -5912,15 +6328,20 @@ export default function GoalTracker() {
                     {language === "ko" ? "AI Agent 활성화" : "Enable AI Agent"}
                   </span>
                   <span className="block text-xs text-stone-500">
-                    {language === "ko"
-                      ? "켜면 목록 화면에 AI Agent 입력 항목이 표시됩니다."
-                      : "Show the AI Agent input on list pages when enabled."}
+                    {!hasAiAccess
+                      ? language === "ko"
+                        ? "관리자가 AI 사용 권한을 부여해야 사용할 수 있습니다."
+                        : "An admin must grant AI access before you can use this."
+                      : language === "ko"
+                        ? "켜면 목록 화면에 AI Agent 입력 항목이 표시됩니다."
+                        : "Show the AI Agent input on list pages when enabled."}
                   </span>
                 </span>
                 <input
                   type="checkbox"
-                  checked={isAgentEnabled}
+                  checked={isAgentEnabled && hasAiAccess}
                   onChange={(event) => toggleAgentEnabled(event.target.checked)}
+                  disabled={!hasAiAccess}
                   className="h-5 w-5 accent-emerald-700"
                 />
               </label>
@@ -5937,7 +6358,7 @@ export default function GoalTracker() {
                   <button
                     type="button"
                     onClick={openAgentSettingsModal}
-                    disabled={isSaving}
+                    disabled={isSaving || !hasAiAccess}
                     className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
                   >
                     {text.add}
@@ -6002,7 +6423,11 @@ export default function GoalTracker() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-sm text-stone-600">
                   {agentSettings.hasApiKey
-                    ? language === "ko"
+                    ? !hasAiAccess
+                      ? language === "ko"
+                        ? "AI 사용 권한이 필요합니다."
+                        : "AI access is required."
+                      : language === "ko"
                       ? "체크된 key가 AI Agent에서 사용됩니다."
                       : "The checked key is used by AI Agent."
                     : agentSettings.schemaMissing
@@ -6120,9 +6545,9 @@ export default function GoalTracker() {
                     }
                     onClick={() => setGoalSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
                     disabled={goalSortKey === "manual"}
-                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {language === "ko" ? (goalSortDirection === "asc" ? "오름" : "내림") : goalSortDirection === "asc" ? "Asc" : "Desc"}
+                    {goalSortDirection === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -6250,9 +6675,9 @@ export default function GoalTracker() {
                     }
                     onClick={() => setTodoSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
                     disabled={todoSortKey === "manual"}
-                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {language === "ko" ? (todoSortDirection === "asc" ? "오름" : "내림") : todoSortDirection === "asc" ? "Asc" : "Desc"}
+                    {todoSortDirection === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -6891,6 +7316,7 @@ export default function GoalTracker() {
                       <label className="grid min-w-0 gap-1 text-sm font-medium">
                         {text.memo}
                           <textarea
+                            ref={resizeTextareaToFitContent}
                             value={activeGoalDraft?.memo ?? ""}
                             onMouseDown={preventDoubleClickTextSelection}
                             onDoubleClick={(event) => {
@@ -6899,6 +7325,7 @@ export default function GoalTracker() {
                             }}
                             onPointerUp={(event) => handleGoalMemoDoubleTap(event, finishEditingGoalMemo)}
                             onChange={(event) => {
+                              resizeTextareaToFitContent(event.currentTarget);
                               setGoalDraft((draft) =>
                               draft
                                 ? { ...draft, memo: event.target.value }
@@ -6906,7 +7333,7 @@ export default function GoalTracker() {
                               );
                             }}
                           onKeyDown={(event) => handleInputSaveKeyDown(event, finishEditingGoal, isSaving)}
-                          className="editing-text-field h-24 w-full min-w-0 max-w-full resize-none overflow-auto rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                          className="editing-text-field min-h-40 w-full min-w-0 max-w-full resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
                           placeholder="Describe the final goal or why it matters."
                         />
                       </label>
@@ -6971,6 +7398,8 @@ export default function GoalTracker() {
                             <button
                               type="button"
                               aria-expanded={isGoalMemoExpanded}
+                              aria-label={isGoalMemoExpanded ? text.collapseMemo : text.expandMemo}
+                              title={isGoalMemoExpanded ? text.collapseMemo : text.expandMemo}
                               onMouseDown={(event) => event.stopPropagation()}
                               onDoubleClick={(event) => event.stopPropagation()}
                               onPointerUp={(event) => event.stopPropagation()}
@@ -6978,9 +7407,9 @@ export default function GoalTracker() {
                                 event.stopPropagation();
                                 setExpandedGoalMemoId((expandedId) => (expandedId === activeGoal.id ? null : activeGoal.id));
                               }}
-                              className="rounded px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-emerald-700 hover:bg-emerald-50"
                             >
-                              {isGoalMemoExpanded ? text.collapseMemo : text.expandMemo}
+                              {isGoalMemoExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
                             </button>
                           )}
                         </div>
@@ -7179,10 +7608,14 @@ export default function GoalTracker() {
                                       />
                                     </div>
                                     <textarea
+                                      ref={resizeTextareaToFitContent}
                                       value={editEntryMemo}
-                                      onChange={(event) => setEditEntryMemo(event.target.value)}
+                                      onChange={(event) => {
+                                        resizeTextareaToFitContent(event.currentTarget);
+                                        setEditEntryMemo(event.target.value);
+                                      }}
                                       onKeyDown={(event) => handleInputSaveKeyDown(event, () => updateEntryRecord(entry.id), isSaving)}
-                                      className="editing-text-field mt-2 min-h-16 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm font-normal text-stone-700 outline-none focus:border-emerald-600"
+                                      className="editing-text-field mt-2 min-h-32 w-full min-w-0 resize-none overflow-hidden rounded-md border border-stone-300 px-3 py-2 text-sm font-normal text-stone-700 outline-none focus:border-emerald-600"
                                       aria-label="Edit record memo"
                                       placeholder="No memo"
                                     />
@@ -7371,6 +7804,191 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && assignmentFormModal && createPortal(
         assignmentFormModal,
+        document.body,
+      )}
+      {typeof document !== "undefined" && activeAnnouncement && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 py-6 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="announcement-title"
+            className={`w-full max-w-md overflow-hidden rounded-lg border shadow-2xl shadow-stone-950/25 ${
+              isDarkMode
+                ? "border-stone-700 bg-stone-950 text-stone-50"
+                : "border-stone-200 bg-white text-stone-950"
+            }`}
+          >
+            <div className={`border-b px-5 pb-4 pt-5 ${isDarkMode ? "border-stone-800" : "border-stone-200"}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div
+                    className={`mb-2 inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-bold uppercase ${
+                      isDarkMode
+                        ? "border-emerald-500/30 bg-emerald-400/10 text-emerald-300"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    }`}
+                  >
+                    BoostMaster
+                  </div>
+                  <h2 id="announcement-title" className="text-lg font-semibold tracking-normal">
+                    {language === "ko" ? "공지사항" : "Announcement"}
+                  </h2>
+                  <p className={`mt-1 text-xs font-medium ${isDarkMode ? "text-stone-400" : "text-stone-500"}`}>
+                    {formatSavedAt(activeAnnouncement.createdAt, language)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeActiveAnnouncement}
+                  aria-label={language === "ko" ? "공지 닫기" : "Close announcement"}
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${
+                    isDarkMode
+                      ? "border-stone-700 text-stone-200 hover:bg-stone-900"
+                      : "border-stone-300 text-stone-700 hover:bg-stone-100"
+                  }`}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            </div>
+            <div className="px-5 py-5">
+              <p
+                className={`max-h-[45vh] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-7 ${
+                  isDarkMode ? "text-stone-200" : "text-stone-800"
+                }`}
+              >
+                {activeAnnouncement.message}
+              </p>
+            </div>
+            <div
+              className={`flex items-center justify-between gap-3 border-t px-5 py-3 ${
+                isDarkMode ? "border-stone-800" : "border-stone-200"
+              }`}
+            >
+              <label
+                className={`flex min-w-0 items-center gap-2 text-xs font-medium ${
+                  isDarkMode ? "text-stone-400" : "text-stone-600"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={shouldDismissActiveAnnouncement}
+                  onChange={(event) => setShouldDismissActiveAnnouncement(event.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-emerald-700"
+                />
+                <span className="truncate">
+                  {language === "ko" ? "다시 보지 않기" : "Do not show again"}
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={closeActiveAnnouncement}
+                className="h-9 shrink-0 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800"
+              >
+                {language === "ko" ? "닫기" : "Close"}
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+      {typeof document !== "undefined" && isAnnouncementModalOpen && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 py-6">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="send-announcement-title"
+            className="grid max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto rounded-lg border border-stone-300 bg-white p-5 text-stone-950 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="send-announcement-title" className="text-base font-semibold">
+                {language === "ko" ? "공지사항 보내기" : "Send Announcement"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsAnnouncementModalOpen(false)}
+                aria-label={language === "ko" ? "공지 작성 닫기" : "Close send announcement"}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <label className="grid gap-1 text-sm font-medium">
+              {language === "ko" ? "메시지" : "Message"}
+              <textarea
+                value={announcementMessage}
+                onChange={(event) => setAnnouncementMessage(event.target.value)}
+                className="min-h-36 resize-y rounded-md border border-stone-300 px-3 py-2 font-normal outline-none focus:border-emerald-600"
+                maxLength={1000}
+                autoFocus
+              />
+            </label>
+            <div className="grid gap-2 text-sm">
+              <div className="font-medium">{language === "ko" ? "대상" : "Recipients"}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 rounded-md border border-stone-200 px-3 py-2">
+                  <input
+                    type="radio"
+                    checked={announcementTargetMode === "all"}
+                    onChange={() => setAnnouncementTargetMode("all")}
+                    className="accent-emerald-700"
+                  />
+                  {language === "ko" ? "전체알림" : "Everyone"}
+                </label>
+                <label className="flex items-center gap-2 rounded-md border border-stone-200 px-3 py-2">
+                  <input
+                    type="radio"
+                    checked={announcementTargetMode === "selected"}
+                    onChange={() => setAnnouncementTargetMode("selected")}
+                    className="accent-emerald-700"
+                  />
+                  {language === "ko" ? "선택알림" : "Selected"}
+                </label>
+              </div>
+              {announcementTargetMode === "selected" && (
+                <div className="grid max-h-56 gap-1.5 overflow-y-auto rounded-md border border-stone-200 p-2">
+                  {adminUsers.map((user) => (
+                    <label key={user.loginId} className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-2 py-1.5 hover:bg-stone-50">
+                      <input
+                        type="checkbox"
+                        checked={selectedAnnouncementUserIds.includes(user.loginId)}
+                        onChange={() => toggleAnnouncementRecipient(user.loginId)}
+                        className="h-4 w-4 accent-emerald-700"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-stone-900">
+                          {user.displayName || user.googleEmail || user.loginId}
+                        </span>
+                        <span className="block truncate text-xs text-stone-500">
+                          ID: {user.loginId}
+                          {user.googleEmail ? ` · EMAIL: ${user.googleEmail}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAnnouncementModalOpen(false)}
+                disabled={isSaving}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                {text.close}
+              </button>
+              <button
+                type="button"
+                onClick={submitAnnouncement}
+                disabled={isSaving || !announcementMessage.trim() || (announcementTargetMode === "selected" && selectedAnnouncementUserIds.length === 0)}
+                className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                {language === "ko" ? "보내기" : "Send"}
+              </button>
+            </div>
+          </section>
+        </div>,
         document.body,
       )}
       {typeof document !== "undefined" && isAgentSettingsModalOpen && createPortal(
@@ -7946,6 +8564,44 @@ function LoadingScreen() {
   );
 }
 
+function AdminStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2">
+      <div className="text-xs font-medium text-stone-500">{label}</div>
+      <div className="mt-1 text-xl font-semibold text-stone-900">{value}</div>
+    </div>
+  );
+}
+
+function AdminUserField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="grid min-w-0 grid-cols-[3.8rem_minmax(0,1fr)] items-center gap-2">
+      <span className="shrink-0 rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[10px] font-bold text-stone-500">
+        {label}
+      </span>
+      <span className={`min-w-0 truncate text-stone-600 ${mono ? "font-mono" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function ShieldIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
 function BinIcon() {
   return (
     <svg
@@ -8153,7 +8809,7 @@ function LoginScreen({
         <div className="border-b border-stone-200 bg-[#f7faf6] px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-bold text-emerald-700">PlanTree</p>
+              <p className="text-sm font-bold text-emerald-700">BoostMaster</p>
               <h1 className="mt-2 text-2xl font-semibold">
                 {mode === "login" ? (isKorean ? "로그인" : "Login") : isKorean ? "회원가입" : "Sign up"}
               </h1>

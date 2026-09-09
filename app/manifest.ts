@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "PlanTree",
-    short_name: "PlanTree",
-    description: "PlanTree helps you track goals, tasks, and habits.",
+    name: "BoostMaster",
+    short_name: "BoostMaster",
+    description: "BoostMaster helps you track goals, tasks, and habits.",
     start_url: "/",
     scope: "/",
     display: "standalone",

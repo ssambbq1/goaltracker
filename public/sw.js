@@ -1,4 +1,4 @@
-const CACHE_NAME = "plantree-v3";
+const CACHE_NAME = "boostmaster-v1";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icon.png", "/apple-icon.png"];
 
 self.addEventListener("install", (event) => {

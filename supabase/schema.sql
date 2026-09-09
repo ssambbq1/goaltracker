@@ -4,6 +4,7 @@ create table if not exists public.app_users (
   google_email text,
   display_name text,
   password_hash text,
+  ai_enabled boolean not null default false,
   created_at_ms bigint not null,
   last_login_at_ms bigint not null
 );
@@ -12,7 +13,8 @@ alter table public.app_users
   add column if not exists google_user_id text,
   add column if not exists google_email text,
   add column if not exists display_name text,
-  add column if not exists password_hash text;
+  add column if not exists password_hash text,
+  add column if not exists ai_enabled boolean not null default false;
 
 create unique index if not exists app_users_google_user_id_idx
   on public.app_users (google_user_id)
@@ -93,6 +95,14 @@ alter table public.agent_settings
   add column if not exists api_keys jsonb not null default '[]'::jsonb,
   add column if not exists active_key_id text not null default '';
 
+create table if not exists public.announcements (
+  id text primary key,
+  sender_id text not null references public.app_users(login_id) on delete cascade,
+  message text not null,
+  target_user_ids jsonb,
+  created_at_ms bigint not null
+);
+
 create table if not exists public.friendships (
   id text primary key,
   requester_id text not null references public.app_users(login_id) on delete cascade,
@@ -164,6 +174,9 @@ create index if not exists item_assignments_assigner_idx
 create index if not exists item_assignments_assignee_idx
   on public.item_assignments (assignee_id, status, created_at_ms desc);
 
+create index if not exists announcements_created_idx
+  on public.announcements (created_at_ms desc);
+
 alter table public.app_users enable row level security;
 alter table public.goals enable row level security;
 alter table public.progress_entries enable row level security;
@@ -171,5 +184,6 @@ alter table public.todos enable row level security;
 alter table public.routines enable row level security;
 alter table public.routine_marks enable row level security;
 alter table public.agent_settings enable row level security;
+alter table public.announcements enable row level security;
 alter table public.friendships enable row level security;
 alter table public.item_assignments enable row level security;

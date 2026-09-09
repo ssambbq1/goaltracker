@@ -12,6 +12,7 @@ export type Database = {
           google_email: string | null;
           display_name: string | null;
           password_hash: string | null;
+          ai_enabled: boolean;
           created_at_ms: number;
           last_login_at_ms: number;
         };
@@ -21,6 +22,7 @@ export type Database = {
           google_email?: string | null;
           display_name?: string | null;
           password_hash?: string | null;
+          ai_enabled?: boolean;
           created_at_ms: number;
           last_login_at_ms: number;
         };
@@ -200,6 +202,24 @@ export type Database = {
             referencedColumns: ["login_id"];
           },
         ];
+      };
+      announcements: {
+        Row: {
+          id: string;
+          sender_id: string;
+          message: string;
+          target_user_ids: Json | null;
+          created_at_ms: number;
+        };
+        Insert: {
+          id: string;
+          sender_id: string;
+          message: string;
+          target_user_ids?: Json | null;
+          created_at_ms: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["announcements"]["Insert"]>;
+        Relationships: [];
       };
       friendships: {
         Row: {

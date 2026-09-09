@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PlanTree",
-  description: "PlanTree helps you track goals, tasks, and habits.",
+  title: "BoostMaster",
+  description: "BoostMaster helps you track goals, tasks, and habits.",
   appleWebApp: {
     capable: true,
-    title: "PlanTree",
+    title: "BoostMaster",
     statusBarStyle: "default",
   },
   formatDetection: {

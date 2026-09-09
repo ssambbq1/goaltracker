@@ -56,7 +56,17 @@ export default function Head({
       const width = container.clientWidth;
       if (width <= 0) return;
 
-      const wordmarkBase = window.innerWidth >= 1024 ? 60 : window.innerWidth >= 640 ? 48 : 42;
+      const wordmarkBase = text.appName === "BoostMaster"
+        ? window.innerWidth >= 1024
+          ? 56
+          : window.innerWidth >= 640
+            ? 44
+            : 38
+        : window.innerWidth >= 1024
+          ? 60
+          : window.innerWidth >= 640
+            ? 48
+            : 42;
       const taglineBase = window.innerWidth >= 640 ? 14 : 12;
 
       wordmark.style.fontSize = `${wordmarkBase}px`;
@@ -93,21 +103,27 @@ export default function Head({
         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left outline-none transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:gap-3.5"
         aria-label={language === "ko" ? "목표 리스트로 이동" : "Go to goal list"}
       >
-        <AppleTreeIcon />
-        <div ref={brandTextRef} className="min-w-0 flex-1 overflow-hidden">
+        <div ref={brandTextRef} className="relative min-w-0 flex-1 py-1 min-[390px]:py-0">
+          <AppleTreeIcon className="pointer-events-none absolute left-0 top-1/2 h-28 w-48 -translate-y-1/2 opacity-25 sm:h-36 sm:w-64" />
           <p
             ref={taglineRef}
-            className="whitespace-nowrap font-semibold uppercase tracking-[0.14em] text-emerald-700"
-            style={{ fontSize: taglineFontSize ? `${taglineFontSize}px` : undefined }}
+            className={`relative whitespace-nowrap text-emerald-700 ${
+              language === "en" ? "font-medium tracking-normal" : "font-semibold tracking-[0.14em]"
+            }`}
+            style={{
+              fontSize: taglineFontSize ? `${taglineFontSize}px` : undefined,
+              fontFamily: language === "en" ? "\"Segoe Script\", \"Bradley Hand ITC\", cursive" : undefined,
+            }}
           >
             {text.tagline}
           </p>
           <h1
             ref={wordmarkRef}
-            className="plantree-wordmark mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text font-semibold leading-[0.95] text-transparent"
+            aria-label={text.appName}
+            className="boostmaster-wordmark relative mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text font-semibold leading-[0.95] text-transparent"
             style={{ fontSize: wordmarkFontSize ? `${wordmarkFontSize}px` : undefined }}
           >
-            {text.appName}
+            <WordmarkText appName={text.appName} />
           </h1>
         </div>
       </button>
@@ -127,7 +143,7 @@ export default function Head({
             aria-label="Select language"
             className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-100 sm:h-10 sm:px-3"
           >
-            Lang
+            {language === "ko" ? "언어" : "Lang"}
           </button>
           {isLanguageMenuOpen && (
             <div
@@ -187,9 +203,46 @@ export default function Head({
   );
 }
 
-function AppleTreeIcon() {
+function WordmarkText({ appName }: { appName: string }) {
+  if (appName === "BoostMaster") {
+    const gradientTextClass =
+      "boostmaster-wordmark-letter bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text text-transparent";
+
+    return (
+      <span aria-hidden="true" className="inline-flex origin-left scale-x-[0.92] items-baseline">
+        <span className={gradientTextClass}>B</span>
+        <span className={`${gradientTextClass} text-[0.5em]`}>oost</span>
+        <span className={gradientTextClass}>M</span>
+        <span className={`${gradientTextClass} text-[0.5em]`}>aster</span>
+      </span>
+    );
+  }
+
+  if (appName !== "부스트마스터") return appName;
+
   return (
-    <span className="block h-12 w-12 shrink-0 overflow-hidden rounded-lg drop-shadow-sm min-[390px]:h-14 min-[390px]:w-14 sm:h-20 sm:w-20">
+    <span aria-hidden="true" className="inline-flex items-baseline">
+      <span>부</span>
+      <span className="text-[0.56em]">스트</span>
+      <span>마</span>
+      <span className="text-[0.56em]">스터</span>
+    </span>
+  );
+}
+
+function AppleTreeIcon({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg drop-shadow-sm ${className}`}
+      style={{
+        WebkitMaskImage:
+          "linear-gradient(90deg, transparent 0%, black 18%, black 82%, transparent 100%), linear-gradient(180deg, transparent 0%, black 18%, black 82%, transparent 100%)",
+        WebkitMaskComposite: "source-in",
+        maskImage:
+          "linear-gradient(90deg, transparent 0%, black 18%, black 82%, transparent 100%), linear-gradient(180deg, transparent 0%, black 18%, black 82%, transparent 100%)",
+        maskComposite: "intersect",
+      }}
+    >
       <Image
         src={appIcon}
         alt=""

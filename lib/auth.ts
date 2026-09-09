@@ -6,6 +6,7 @@ import type { User } from "@supabase/supabase-js";
 
 const SESSION_COOKIE = "boostmaster_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const ADMIN_EMAIL = "ssambbqcjh@gmail.com";
 
 export class UnauthorizedError extends Error {
   constructor() {
@@ -20,6 +21,22 @@ function getAuthSecret() {
 
 function normalizeLoginId(loginId: string) {
   return loginId.trim().toLowerCase();
+}
+
+function isMissingAiEnabledColumnError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const message = String(record.message ?? "");
+  return (
+    record.code === "42703" ||
+    record.code === "PGRST204" ||
+    message.includes("app_users.ai_enabled") ||
+    message.includes("ai_enabled")
+  );
+}
+
+export function isAdminIdentity(identity: { loginId?: string | null; googleEmail?: string | null }) {
+  return identity.loginId?.toLowerCase() === ADMIN_EMAIL || identity.googleEmail?.toLowerCase() === ADMIN_EMAIL;
 }
 
 function validateManualLoginId(loginId: string) {
@@ -196,14 +213,37 @@ export async function getAccountProfile(loginId: string) {
   const supabase = getSupabaseServerClient();
   const { data: user, error } = await supabase
     .from("app_users")
-    .select("login_id, display_name")
+    .select("login_id, display_name, google_email, ai_enabled")
     .eq("login_id", loginId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    if (!isMissingAiEnabledColumnError(error)) throw error;
+
+    const fallback = await supabase
+      .from("app_users")
+      .select("login_id, display_name, google_email")
+      .eq("login_id", loginId)
+      .maybeSingle();
+    if (fallback.error) throw fallback.error;
+
+    const isAdmin = isAdminIdentity({ loginId, googleEmail: fallback.data?.google_email ?? null });
+    return {
+      loginId,
+      displayName: fallback.data?.display_name ?? null,
+      isAdmin,
+      aiEnabled: isAdmin,
+      aiAccessSchemaMissing: true,
+    };
+  }
+
+  const isAdmin = isAdminIdentity({ loginId, googleEmail: user?.google_email ?? null });
   return {
     loginId,
     displayName: user?.display_name ?? null,
+    isAdmin,
+    aiEnabled: isAdmin || Boolean(user?.ai_enabled),
+    aiAccessSchemaMissing: false,
   };
 }
 
@@ -339,6 +379,30 @@ export async function updateCurrentDisplayName(rawDisplayName: string) {
     .eq("login_id", loginId);
   if (error) throw error;
   return displayName;
+}
+
+export async function canCurrentUserUseAi() {
+  const loginId = await requireLoginId();
+  const supabase = getSupabaseServerClient();
+  const { data: user, error } = await supabase
+    .from("app_users")
+    .select("login_id, google_email, ai_enabled")
+    .eq("login_id", loginId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingAiEnabledColumnError(error)) {
+      return isAdminIdentity({ loginId });
+    }
+    throw error;
+  }
+
+  return isAdminIdentity({ loginId, googleEmail: user?.google_email ?? null }) || Boolean(user?.ai_enabled);
+}
+
+export async function requireAiAccess() {
+  if (await canCurrentUserUseAi()) return;
+  throw new Error("AI 사용 권한이 없습니다. 관리자에게 권한을 요청하세요.");
 }
 
 export async function deleteCurrentAccount(rawPassword?: string) {

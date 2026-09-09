@@ -1083,14 +1083,14 @@ export default function RoutineTracker({
                     type="button"
                     aria-label={
                       language === "ko"
-                        ? `?? ?? ??: ${routineSortDirection === "asc" ? "??" : "??"}`
+                        ? `습관 정렬 방향: ${routineSortDirection === "asc" ? "오름" : "내림"}`
                         : `Habit sort direction: ${routineSortDirection === "asc" ? "Asc" : "Desc"}`
                     }
                     onClick={() => setRoutineSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
                     disabled={routineSortKey === "manual"}
-                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {language === "ko" ? (routineSortDirection === "asc" ? "??" : "??") : routineSortDirection === "asc" ? "Asc" : "Desc"}
+                    {routineSortDirection === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 </div>
                 <button
@@ -1131,14 +1131,14 @@ export default function RoutineTracker({
                     type="button"
                     aria-label={
                       language === "ko"
-                        ? `?? ?? ??: ${routineSortDirection === "asc" ? "??" : "??"}`
+                        ? `습관 정렬 방향: ${routineSortDirection === "asc" ? "오름" : "내림"}`
                         : `Habit sort direction: ${routineSortDirection === "asc" ? "Asc" : "Desc"}`
                     }
                     onClick={() => setRoutineSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
                     disabled={routineSortKey === "manual"}
-                    className="flex h-8 min-w-12 items-center justify-center rounded-md border border-stone-300 bg-white px-2 text-xs font-bold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {language === "ko" ? (routineSortDirection === "asc" ? "??" : "??") : routineSortDirection === "asc" ? "Asc" : "Desc"}
+                    {routineSortDirection === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -1624,7 +1624,7 @@ function RoutineCard({
                   onEditChange({ ...editValue, memo: event.target.value });
                 }}
                 onKeyDown={handleEditKeyDown}
-                className="editing-text-field mt-2 h-24 w-full resize-none overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+                className="editing-text-field mt-2 min-h-40 w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
                 aria-label="Edit routine memo"
                 placeholder={text.memo}
               />
@@ -1648,6 +1648,8 @@ function RoutineCard({
                   <button
                     type="button"
                     aria-expanded={isMemoExpanded}
+                    aria-label={isMemoExpanded ? text.collapseMemo : text.expandMemo}
+                    title={isMemoExpanded ? text.collapseMemo : text.expandMemo}
                     onMouseDown={(event) => event.stopPropagation()}
                     onDoubleClick={(event) => event.stopPropagation()}
                     onPointerUp={(event) => event.stopPropagation()}
@@ -1655,9 +1657,9 @@ function RoutineCard({
                       event.stopPropagation();
                       setExpandedMemoRoutineId((expandedId) => (expandedId === routine.id ? null : routine.id));
                     }}
-                    className="rounded px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-emerald-700 hover:bg-emerald-50"
                   >
-                    {isMemoExpanded ? text.collapseMemo : text.expandMemo}
+                    {isMemoExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 )}
               </div>
@@ -1983,6 +1985,40 @@ function BinIcon() {
       <path d="M19 6l-1 14H6L5 6" />
       <path d="M10 11v5" />
       <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  );
+}
+
+function ArrowDownIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }

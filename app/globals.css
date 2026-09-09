@@ -49,10 +49,16 @@ html {
   user-select: none;
 }
 
-html.dark-mode .plantree-wordmark,
-body.dark-mode .plantree-wordmark,
-.app-dark .plantree-wordmark {
+html.dark-mode .boostmaster-wordmark,
+body.dark-mode .boostmaster-wordmark,
+.app-dark .boostmaster-wordmark {
   background-image: linear-gradient(90deg, #34d399 0%, #d1d5db 48%, #14b8a6 100%);
+}
+
+html.dark-mode .boostmaster-wordmark-letter,
+body.dark-mode .boostmaster-wordmark-letter,
+.app-dark .boostmaster-wordmark-letter {
+  background-image: linear-gradient(90deg, #6ee7b7 0%, #f8fafc 48%, #5eead4 100%) !important;
 }
 
 main:not(.app-dark).bg-\[\#f6f7f4\] {

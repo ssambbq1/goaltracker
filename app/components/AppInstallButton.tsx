@@ -17,7 +17,7 @@ const INSTALL_TEXT = {
   en: {
     install: "Install",
     preparing: "Preparing",
-    title: "Install PlanTree",
+    title: "Install BoostMaster",
     iosTitle: "Install on iPhone or iPad",
     iosBody: "Open the Safari share menu, then choose Add to Home Screen.",
     unavailableTitle: "Install is not ready yet",
@@ -27,7 +27,7 @@ const INSTALL_TEXT = {
   ko: {
     install: "설치",
     preparing: "준비 중",
-    title: "플랜트리 설치",
+    title: "부스트마스터 설치",
     iosTitle: "iPhone 또는 iPad에 설치",
     iosBody: "Safari 공유 메뉴를 열고 홈 화면에 추가를 선택하세요.",
     unavailableTitle: "설치 준비 중",
