@@ -201,12 +201,7 @@ type AppLanguage = "en" | "ko";
 type SortDirection = "asc" | "desc";
 type GoalSortKey = "manual" | "startDate" | "deadline" | "latestRecord" | "progress";
 type TodoSortKey = "manual" | "createdAt" | "targetDate";
-type TodoGroup = {
-  key: string;
-  label: string;
-  todos: Todo[];
-};
-
+type GoalChartModeById = Record<string, ProgressChartMode>;
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
 };
@@ -302,14 +297,6 @@ type NavItemDragState = {
   didLongPress: boolean;
 };
 
-type TodoCategoryDragState = {
-  pointerId: number;
-  categoryKey: string;
-  startX: number;
-  startY: number;
-  didLongPress: boolean;
-};
-
 type ReorderLongPressState = {
   pointerId: number;
   startX: number;
@@ -380,6 +367,7 @@ const AGENT_ENABLED_STORAGE_KEY = "boost-mastery.agent-enabled";
 const AGENT_BUTTON_POSITION_STORAGE_KEY = "boost-mastery.agent-button-position";
 const GOAL_SORT_KEY_STORAGE_KEY = "boost-mastery.goal-sort-key";
 const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
+const GOAL_CHART_MODES_STORAGE_KEY = "boost-mastery.goal-chart-modes";
 const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
 const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
@@ -1022,10 +1010,15 @@ function getGoalSortValue(goal: Goal, sortKey: GoalSortKey, progressMode: Progre
   return null;
 }
 
-function sortGoals(goals: Goal[], sortKey: GoalSortKey, direction: SortDirection, progressMode: ProgressChartMode) {
+function sortGoals(
+  goals: Goal[],
+  sortKey: GoalSortKey,
+  direction: SortDirection,
+  getProgressMode: (goal: Goal) => ProgressChartMode,
+) {
   return sortKey === "manual"
     ? goals
-    : sortWithStableFallback(goals, (goal) => getGoalSortValue(goal, sortKey, progressMode), direction);
+    : sortWithStableFallback(goals, (goal) => getGoalSortValue(goal, sortKey, getProgressMode(goal)), direction);
 }
 
 function getTodoSortValue(todo: Todo, sortKey: TodoSortKey) {
@@ -1056,6 +1049,10 @@ function isGoalSortKey(value: string | null): value is GoalSortKey {
 
 function isTodoSortKey(value: string | null): value is TodoSortKey {
   return value === "manual" || value === "createdAt" || value === "targetDate";
+}
+
+function isProgressChartMode(value: unknown): value is ProgressChartMode {
+  return value === "raw" || value === "cumulative";
 }
 
 function toDateInputValue(date = new Date()) {
@@ -1334,6 +1331,22 @@ function readStoredGoalSortDirection(): SortDirection {
   }
 }
 
+function readStoredGoalChartModes(): GoalChartModeById {
+  try {
+    const stored = window.localStorage.getItem(GOAL_CHART_MODES_STORAGE_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, ProgressChartMode] => typeof entry[0] === "string" && isProgressChartMode(entry[1]),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function readStoredTodoSortKey(): TodoSortKey {
   try {
     const stored = window.localStorage.getItem(TODO_SORT_KEY_STORAGE_KEY);
@@ -1363,6 +1376,14 @@ function writeStoredGoalSortKey(sortKey: GoalSortKey) {
 function writeStoredGoalSortDirection(direction: SortDirection) {
   try {
     window.localStorage.setItem(GOAL_SORT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredGoalChartModes(modesByGoalId: GoalChartModeById) {
+  try {
+    window.localStorage.setItem(GOAL_CHART_MODES_STORAGE_KEY, JSON.stringify(modesByGoalId));
   } catch {
     // Ignore unavailable storage.
   }
@@ -1431,17 +1452,6 @@ function readStoredTodoCategoryOrder() {
     return parsed.filter((category): category is string => typeof category === "string");
   } catch {
     return [];
-  }
-}
-
-function writeStoredTodoCategoryOrder(order: string[]) {
-  try {
-    window.localStorage.setItem(
-      TODO_CATEGORY_ORDER_STORAGE_KEY,
-      JSON.stringify(order.filter((category, index) => order.indexOf(category) === index)),
-    );
-  } catch {
-    // Ignore unavailable storage.
   }
 }
 
@@ -1945,7 +1955,7 @@ export default function GoalTracker() {
   const [selectedTodoCategories, setSelectedTodoCategories] = useState<string[]>(() =>
     typeof window === "undefined" ? [] : readStoredTodoCategoryFilter(),
   );
-  const [todoCategoryOrder, setTodoCategoryOrder] = useState<string[]>(() =>
+  const [todoCategoryOrder] = useState<string[]>(() =>
     typeof window === "undefined" ? [] : readStoredTodoCategoryOrder(),
   );
   const [selectedTodoIds, setSelectedTodoIds] = useState<string[]>([]);
@@ -1961,7 +1971,9 @@ export default function GoalTracker() {
   const [todoSortDirection, setTodoSortDirection] = useState<SortDirection>(() =>
     typeof window === "undefined" ? "asc" : readStoredTodoSortDirection(),
   );
-  const [progressChartMode, setProgressChartMode] = useState<ProgressChartMode>("raw");
+  const [goalChartModesByGoalId, setGoalChartModesByGoalId] = useState<GoalChartModeById>(() =>
+    typeof window === "undefined" ? {} : readStoredGoalChartModes(),
+  );
   const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [entryValue, setEntryValue] = useState("0");
   const [entryMemo, setEntryMemo] = useState("");
@@ -1985,8 +1997,6 @@ export default function GoalTracker() {
   const [navMenuOrder, setNavMenuOrder] = useState<TrackerView[]>(() =>
     typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
   );
-  const [draggingTodoCategoryKey, setDraggingTodoCategoryKey] = useState<string | null>(null);
-  const [todoCategoryDropTargetKey, setTodoCategoryDropTargetKey] = useState<string | null>(null);
   const [draggingNavItemId, setDraggingNavItemId] = useState<TrackerView | null>(null);
   const [navItemDropTargetId, setNavItemDropTargetId] = useState<TrackerView | null>(null);
   const [screenSwipeOffset, setScreenSwipeOffset] = useState(0);
@@ -2022,19 +2032,13 @@ export default function GoalTracker() {
   const navRef = useRef<HTMLElement | null>(null);
   const navDragState = useRef<NavDragState | null>(null);
   const navItemDragState = useRef<NavItemDragState | null>(null);
-  const todoCategoryDragState = useRef<TodoCategoryDragState | null>(null);
-  const latestTodoCategoryOrder = useRef<string[]>(
-    typeof window === "undefined" ? [] : readStoredTodoCategoryOrder(),
-  );
   const latestNavMenuOrder = useRef<TrackerView[]>(
     typeof window === "undefined" ? DEFAULT_NAV_MENU_ORDER : readStoredNavMenuOrder(),
   );
   const navItemLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const todoCategoryLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const screenSwipeState = useRef<ScreenSwipeState | null>(null);
   const screenSwipeAnimationTimer = useRef<number | null>(null);
   const suppressNextNavClick = useRef(false);
-  const suppressNextTodoCategoryClick = useRef(false);
   const suppressNextScreenClick = useRef(false);
   const confettiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bestDayMessageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2251,7 +2255,6 @@ export default function GoalTracker() {
       if (agentVoiceSilenceTimer.current) clearTimeout(agentVoiceSilenceTimer.current);
       if (agentVoiceRestartTimer.current) clearTimeout(agentVoiceRestartTimer.current);
       if (navItemLongPressTimer.current) clearTimeout(navItemLongPressTimer.current);
-      if (todoCategoryLongPressTimer.current) clearTimeout(todoCategoryLongPressTimer.current);
       clearListReorderLongPressTimer(goalReorderLongPressTimer);
       clearListReorderLongPressTimer(todoReorderLongPressTimer);
       window.removeEventListener("touchmove", preventListReorderScrollEvent);
@@ -2317,6 +2320,10 @@ export default function GoalTracker() {
   useEffect(() => {
     writeStoredGoalSortDirection(goalSortDirection);
   }, [goalSortDirection]);
+
+  useEffect(() => {
+    writeStoredGoalChartModes(goalChartModesByGoalId);
+  }, [goalChartModesByGoalId]);
 
   useEffect(() => {
     writeStoredTodoSortKey(todoSortKey);
@@ -2418,10 +2425,28 @@ export default function GoalTracker() {
     () => goals.find((goal) => goal.id === activeGoalId) ?? null,
     [goals, activeGoalId],
   );
+  const getGoalChartMode = useCallback(
+    (goalId: string) => goalChartModesByGoalId[goalId] ?? "raw",
+    [goalChartModesByGoalId],
+  );
+  const setGoalChartMode = useCallback((goalId: string, mode: ProgressChartMode) => {
+    setGoalChartModesByGoalId((current) => {
+      if ((current[goalId] ?? "raw") === mode) return current;
+
+      const next = { ...current };
+      if (mode === "raw") {
+        delete next[goalId];
+      } else {
+        next[goalId] = mode;
+      }
+      return next;
+    });
+  }, []);
 
   const latestEntry = activeGoal ? getLatestEntry(activeGoal.entries) : null;
-  const currentGoalValue = activeGoal ? getGoalCurrentValue(activeGoal, progressChartMode) : 0;
-  const progressPercent = activeGoal ? getGoalProgressValue(activeGoal, progressChartMode) : 0;
+  const activeGoalChartMode = activeGoal ? getGoalChartMode(activeGoal.id) : "raw";
+  const currentGoalValue = activeGoal ? getGoalCurrentValue(activeGoal, activeGoalChartMode) : 0;
+  const progressPercent = activeGoal ? getGoalProgressValue(activeGoal, activeGoalChartMode) : 0;
   const numericEntryValue = isNumberInputValueValid(entryValue) ? Number(entryValue) : 0;
   const entryRangeMin = activeGoal ? Math.min(activeGoal.target, numericEntryValue, 0) : 0;
   const entryRangeMax = activeGoal ? Math.max(activeGoal.target, numericEntryValue, 0) : 1;
@@ -2447,8 +2472,8 @@ export default function GoalTracker() {
   );
 
   const visibleGoals = useMemo(
-    () => sortGoals(goals, goalSortKey, goalSortDirection, progressChartMode),
-    [goalSortDirection, goalSortKey, goals, progressChartMode],
+    () => sortGoals(goals, goalSortKey, goalSortDirection, (goal) => getGoalChartMode(goal.id)),
+    [getGoalChartMode, goalSortDirection, goalSortKey, goals],
   );
   const todoCategoryKeys = useMemo(
     () =>
@@ -2464,10 +2489,6 @@ export default function GoalTracker() {
     [todoCategoryKeys, todoCategoryOrder],
   );
 
-  useEffect(() => {
-    latestTodoCategoryOrder.current = orderedTodoCategoryKeys;
-  }, [orderedTodoCategoryKeys]);
-
   const activeSelectedTodoCategories = useMemo(
     () => selectedTodoCategories.filter((category) => todoCategoryKeys.includes(category)),
     [selectedTodoCategories, todoCategoryKeys],
@@ -2477,25 +2498,12 @@ export default function GoalTracker() {
     () => sortTodos(todos, todoSortKey, todoSortDirection),
     [todoSortDirection, todoSortKey, todos],
   );
-  const visibleTodoGroups = useMemo<TodoGroup[]>(
-    () => {
-      const todosByCategory = new Map<string, Todo[]>();
-      for (const todo of visibleTodos) {
-        const categoryKey = getTodoCategoryKey(todo);
-        const categoryTodos = todosByCategory.get(categoryKey) ?? [];
-        categoryTodos.push(todo);
-        todosByCategory.set(categoryKey, categoryTodos);
-      }
-
-      return orderedTodoCategoryKeys
-        .map((categoryKey) => ({
-          key: categoryKey,
-          label: getTodoCategoryLabel(categoryKey, language),
-          todos: todosByCategory.get(categoryKey) ?? [],
-        }))
-        .filter((group) => group.todos.length > 0);
-    },
-    [language, orderedTodoCategoryKeys, visibleTodos],
+  const filteredVisibleTodos = useMemo(
+    () =>
+      selectedTodoCategorySet.size === 0
+        ? visibleTodos
+        : visibleTodos.filter((todo) => selectedTodoCategorySet.has(getTodoCategoryKey(todo))),
+    [selectedTodoCategorySet, visibleTodos],
   );
   const selectedTodoIdSet = useMemo(() => new Set(selectedTodoIds), [selectedTodoIds]);
   const selectedTodos = useMemo(
@@ -3898,87 +3906,6 @@ export default function GoalTracker() {
     setNavItemDropTargetId(null);
   }
 
-  function clearTodoCategoryLongPressTimer() {
-    if (!todoCategoryLongPressTimer.current) return;
-    clearTimeout(todoCategoryLongPressTimer.current);
-    todoCategoryLongPressTimer.current = null;
-  }
-
-  function startTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>, categoryKey: string) {
-    if ((event.button !== 0 && event.pointerType === "mouse") || isSaving) return;
-    event.stopPropagation();
-    clearTodoCategoryLongPressTimer();
-    todoCategoryDragState.current = {
-      pointerId: event.pointerId,
-      categoryKey,
-      startX: event.clientX,
-      startY: event.clientY,
-      didLongPress: false,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    todoCategoryLongPressTimer.current = setTimeout(() => {
-      const dragState = todoCategoryDragState.current;
-      if (!dragState || dragState.pointerId !== event.pointerId) return;
-      dragState.didLongPress = true;
-      suppressNextTodoCategoryClick.current = true;
-      lockListReorderScroll();
-      const normalizedOrder = normalizeTodoCategoryOrder(todoCategoryOrder, todoCategoryKeys);
-      latestTodoCategoryOrder.current = normalizedOrder;
-      setTodoCategoryOrder(normalizedOrder);
-      setDraggingTodoCategoryKey(categoryKey);
-      setTodoCategoryDropTargetKey(categoryKey);
-    }, LIST_REORDER_LONG_PRESS_MS);
-  }
-
-  function moveTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = todoCategoryDragState.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-    const movedBeforeLongPress =
-      Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > LIST_REORDER_DRAG_CANCEL_DISTANCE;
-    if (!dragState.didLongPress && movedBeforeLongPress) {
-      clearTodoCategoryLongPressTimer();
-      return;
-    }
-    if (!dragState.didLongPress) return;
-
-    event.preventDefault();
-    const targetCategoryKey = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>("[data-todo-category-key]")
-      ?.dataset.todoCategoryKey;
-    if (!targetCategoryKey || targetCategoryKey === dragState.categoryKey) return;
-
-    setTodoCategoryDropTargetKey(targetCategoryKey);
-    setTodoCategoryOrder((currentOrder) => {
-      const normalizedOrder = normalizeTodoCategoryOrder(currentOrder, todoCategoryKeys);
-      const fromIndex = normalizedOrder.indexOf(dragState.categoryKey);
-      const toIndex = normalizedOrder.indexOf(targetCategoryKey);
-      const nextOrder = moveToIndex(normalizedOrder, fromIndex, toIndex);
-      latestTodoCategoryOrder.current = nextOrder;
-      return nextOrder;
-    });
-  }
-
-  function endTodoCategoryDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = todoCategoryDragState.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-    clearTodoCategoryLongPressTimer();
-    safeReleasePointerCapture(event.currentTarget, event.pointerId);
-    todoCategoryDragState.current = null;
-
-    if (dragState.didLongPress) {
-      writeStoredTodoCategoryOrder(latestTodoCategoryOrder.current);
-      unlockListReorderScroll();
-      window.setTimeout(() => {
-        suppressNextTodoCategoryClick.current = false;
-      }, 0);
-    }
-    setDraggingTodoCategoryKey(null);
-    setTodoCategoryDropTargetKey(null);
-  }
-
   function startNavDrag(event: ReactPointerEvent<HTMLElement>) {
     if (event.pointerType !== "mouse" || event.button !== 0) return;
     const nav = navRef.current;
@@ -4703,7 +4630,7 @@ export default function GoalTracker() {
     const value = Number(entryValue);
     if (!activeGoal || !Number.isFinite(value)) return;
 
-    const previousProgressPercent = getGoalProgressValue(activeGoal, progressChartMode);
+    const previousProgressPercent = getGoalProgressValue(activeGoal, activeGoalChartMode);
     setIsSaving(true);
     setError("");
 
@@ -4714,7 +4641,7 @@ export default function GoalTracker() {
         createdAt: parseDateInputValue(entryRecordedAt),
       });
       const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
-      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, progressChartMode) : 0;
+      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, activeGoalChartMode) : 0;
       setGoals(savedGoals);
       if (nextProgressPercent > previousProgressPercent) triggerSuccessConfetti();
       setEntryMemo("");
@@ -4991,7 +4918,7 @@ export default function GoalTracker() {
     const value = Number(editEntryValue);
     if (!activeGoal || !Number.isFinite(value)) return;
 
-    const previousProgressPercent = getGoalProgressValue(activeGoal, progressChartMode);
+    const previousProgressPercent = getGoalProgressValue(activeGoal, activeGoalChartMode);
     setIsSaving(true);
     setError("");
 
@@ -5002,7 +4929,7 @@ export default function GoalTracker() {
         createdAt: parseDateInputValue(editEntryRecordedAt),
       });
       const savedGoal = savedGoals.find((goal) => goal.id === activeGoal.id);
-      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, progressChartMode) : 0;
+      const nextProgressPercent = savedGoal ? getGoalProgressValue(savedGoal, activeGoalChartMode) : 0;
       setGoals(savedGoals);
       if (nextProgressPercent > previousProgressPercent) triggerSuccessConfetti();
       setEditingEntryId(null);
@@ -5109,6 +5036,9 @@ export default function GoalTracker() {
     </div>
   ) : null;
 
+  const assignmentDetailGoal = assignmentDetail?.detail.kind === "goal" ? assignmentDetail.detail.item : null;
+  const assignmentDetailGoalChartMode = assignmentDetailGoal ? getGoalChartMode(assignmentDetailGoal.id) : "raw";
+
   const assignmentDetailModal = assignmentDetail ? (
     <div className="fixed inset-0 z-50 bg-stone-950/40 px-4 py-6">
       <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-3xl gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -5138,7 +5068,7 @@ export default function GoalTracker() {
               <div>
                 <div className="text-xs font-medium text-stone-500">{text.current}</div>
                 <div className="font-semibold text-stone-950">
-                  {getGoalCurrentValue(assignmentDetail.detail.item, progressChartMode)}
+                  {getGoalCurrentValue(assignmentDetail.detail.item, assignmentDetailGoalChartMode)}
                 </div>
               </div>
               <div>
@@ -5154,7 +5084,7 @@ export default function GoalTracker() {
               <div>
                 <div className="text-xs font-medium text-stone-500">{text.progress}</div>
                 <div className="font-semibold text-emerald-700">
-                  {getGoalProgressValue(assignmentDetail.detail.item, progressChartMode)}%
+                  {getGoalProgressValue(assignmentDetail.detail.item, assignmentDetailGoalChartMode)}%
                 </div>
               </div>
             </div>
@@ -5168,8 +5098,10 @@ export default function GoalTracker() {
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-base font-semibold">{text.progressChart}</h3>
                 <select
-                  value={progressChartMode}
-                  onChange={(event) => setProgressChartMode(event.target.value as ProgressChartMode)}
+                  value={assignmentDetailGoalChartMode}
+                  onChange={(event) =>
+                    setGoalChartMode(assignmentDetail.detail.item.id, event.target.value as ProgressChartMode)
+                  }
                   aria-label={text.chartValueMode}
                   className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-semibold text-stone-700 outline-none focus:border-emerald-600"
                 >
@@ -5182,7 +5114,7 @@ export default function GoalTracker() {
                 target={assignmentDetail.detail.item.target}
                 unit={assignmentDetail.detail.item.unit}
                 deadline={assignmentDetail.detail.item.deadline}
-                mode={progressChartMode}
+                mode={assignmentDetailGoalChartMode}
               />
             </div>
             <div className="grid gap-2">
@@ -6499,16 +6431,12 @@ export default function GoalTracker() {
           </section>
         )}
 
-        {(draggingNavItemId || draggingGoalId || draggingTodoId || draggingTodoCategoryKey) && (
+        {(draggingNavItemId || draggingGoalId || draggingTodoId) && (
           <div className="fixed left-1/2 top-3 z-[80] -translate-x-1/2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-lg backdrop-blur">
             {draggingNavItemId
               ? language === "ko"
                 ? "메뉴 순서 변경 중"
                 : "Reordering menu"
-              : draggingTodoCategoryKey
-                ? language === "ko"
-                  ? "카테고리 순서 변경 중"
-                  : "Reordering categories"
               : language === "ko"
                 ? "목록 순서 변경 중"
                 : "Reordering list"}
@@ -6631,7 +6559,7 @@ export default function GoalTracker() {
                                 <span className="min-w-0 break-words font-medium">{goal.title}</span>
                                 <MiniGoalProgressChart
                                   goal={goal}
-                                  mode={progressChartMode}
+                                  mode={getGoalChartMode(goal.id)}
                                   label={`${goal.title} ${text.progressChart}`}
                                 />
                               </div>
@@ -6702,69 +6630,48 @@ export default function GoalTracker() {
                       {text.noTodos}
                     </p>
                   ) : (
-                    visibleTodoGroups.map((group) => {
-                      const isExpanded = selectedTodoCategorySet.has(group.key);
-                      const completedCount = group.todos.filter((todo) => todo.completed).length;
-
-                      return (
-                        <section
-                          key={group.key}
-                          data-todo-category-key={group.key}
-                          className={`relative transition-all duration-200 ${
-                            draggingTodoCategoryKey === group.key
-                              ? "scale-[0.99] opacity-60"
-                              : todoCategoryDropTargetKey === group.key
-                                ? isDarkMode
-                                  ? "rounded-md bg-[#0b2a22]"
-                                  : "rounded-md bg-emerald-50/80"
-                                : ""
+                    <>
+                      <div className="flex flex-wrap gap-1.5 px-1 pb-1">
+                        <button
+                          type="button"
+                          aria-pressed={activeSelectedTodoCategories.length === 0}
+                          onClick={() => setSelectedTodoCategories([])}
+                          className={`h-8 rounded-md border px-2.5 text-xs font-semibold transition ${
+                            activeSelectedTodoCategories.length === 0
+                              ? "border-emerald-700 bg-emerald-700 text-white"
+                              : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
                           }`}
                         >
-                          <button
-                            type="button"
-                            aria-expanded={isExpanded}
-                            onClick={() => {
-                              if (suppressNextTodoCategoryClick.current) return;
-                              toggleTodoCategoryFilter(group.key);
-                            }}
-                            onPointerDown={(event) => startTodoCategoryDrag(event, group.key)}
-                            onPointerMove={moveTodoCategoryDrag}
-                            onPointerUp={endTodoCategoryDrag}
-                            onPointerCancel={endTodoCategoryDrag}
-                            className={`todo-category-row flex w-full touch-none items-center gap-2 border-y border-stone-200/70 px-1.5 py-1 text-left transition ${
-                              draggingTodoCategoryKey === group.key
-                                ? isDarkMode
-                                  ? "cursor-grabbing bg-[#0b2a22]"
-                                  : "cursor-grabbing bg-emerald-100/80"
-                                : todoCategoryDropTargetKey === group.key
-                                  ? isDarkMode
-                                    ? "cursor-grabbing bg-[#0d1a18] text-emerald-300 shadow-sm"
-                                    : "cursor-grabbing bg-white text-emerald-800 shadow-sm"
-                                  : isDarkMode
-                                    ? "cursor-grab bg-[#0a1017] hover:bg-[#0f1720] active:cursor-grabbing"
-                                    : "cursor-grab bg-stone-50/60 hover:bg-stone-100/70 active:cursor-grabbing"
-                            }`}
-                          >
-                            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-stone-500">
-                              {isExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
-                            </span>
-                            <span className="min-w-0 flex-1 break-words text-xs font-semibold text-stone-600">
-                              {group.label}
-                            </span>
-                            <span className="shrink-0 text-[11px] font-medium text-stone-400">
-                              {completedCount}/{group.todos.length}
-                            </span>
-                          </button>
-                          <div
-                            className={`grid transition-all duration-300 ease-out ${
-                              isExpanded
-                                ? "grid-rows-[1fr] translate-y-0 opacity-100"
-                                : "pointer-events-none grid-rows-[0fr] -translate-y-2 opacity-0"
-                            }`}
-                          >
-                            <div className="min-h-0 overflow-hidden">
-                              <div className="space-y-2 pl-3 pt-2">
-                              {group.todos.map((todo) => {
+                          {text.all}
+                        </button>
+                        {orderedTodoCategoryKeys.map((categoryKey) => {
+                          const isSelected = selectedTodoCategorySet.has(categoryKey);
+                          return (
+                            <button
+                              key={categoryKey}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => toggleTodoCategoryFilter(categoryKey)}
+                              className={`h-8 min-w-0 rounded-md border px-2.5 text-xs font-semibold transition ${
+                                isSelected
+                                  ? "border-emerald-700 bg-emerald-700 text-white"
+                                  : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                              }`}
+                            >
+                              <span className="block max-w-32 truncate">
+                                {getTodoCategoryLabel(categoryKey, language)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {filteredVisibleTodos.length === 0 ? (
+                        <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
+                          {text.noTodosForCategory}
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {filteredVisibleTodos.map((todo) => {
                       const isEditingTodo = editingTodoId === todo.id;
                       const todoTargetTimingState = todo.targetDate
                         ? getTodoTargetTimingState(todo.targetDate)
@@ -7029,13 +6936,10 @@ export default function GoalTracker() {
                         )}
                       </div>
                       );
-                              })}
-                              </div>
-                            </div>
-                          </div>
-                        </section>
-                      );
-                    })
+                          })}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -7086,7 +6990,7 @@ export default function GoalTracker() {
                   <>
                     <ArchiveGroup title={text.goalList} count={archivedGoals.length}>
                       {archivedGoals.map((goal) => {
-                        const latest = getGoalCurrentValue(goal, progressChartMode);
+                        const latest = getGoalCurrentValue(goal, getGoalChartMode(goal.id));
                         return (
                           <StoredItemCard
                             key={goal.id}
@@ -7180,7 +7084,7 @@ export default function GoalTracker() {
                   <>
                     <ArchiveGroup title={text.goalList} count={deletedGoals.length}>
                       {deletedGoals.map((goal) => {
-                        const latest = getGoalCurrentValue(goal, progressChartMode);
+                        const latest = getGoalCurrentValue(goal, getGoalChartMode(goal.id));
                         return (
                           <StoredItemCard
                             key={goal.id}
@@ -7529,8 +7433,8 @@ export default function GoalTracker() {
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
                           <select
-                            value={progressChartMode}
-                            onChange={(event) => setProgressChartMode(event.target.value as ProgressChartMode)}
+                            value={activeGoalChartMode}
+                            onChange={(event) => setGoalChartMode(activeGoal.id, event.target.value as ProgressChartMode)}
                             aria-label={text.chartValueMode}
                             className="h-8 rounded-md border border-stone-300 bg-white px-2 text-sm font-semibold text-stone-700 outline-none hover:bg-stone-50 focus:border-emerald-600"
                           >
@@ -7556,7 +7460,7 @@ export default function GoalTracker() {
                         target={activeGoal.target}
                         unit={activeGoal.unit}
                         deadline={activeGoal.deadline}
-                        mode={progressChartMode}
+                        mode={activeGoalChartMode}
                       />
                     </div>
 
