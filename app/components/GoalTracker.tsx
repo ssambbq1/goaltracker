@@ -372,6 +372,7 @@ const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
 const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
 const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
+const ADMIN_USER_LIST_EXPANDED_STORAGE_KEY = "boost-mastery.admin-user-list-expanded";
 const DISMISSED_ANNOUNCEMENTS_STORAGE_KEY = "boost-mastery.dismissed-announcements";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
@@ -1028,7 +1029,10 @@ function getTodoSortValue(todo: Todo, sortKey: TodoSortKey) {
 }
 
 function sortTodos(todos: Todo[], sortKey: TodoSortKey, direction: SortDirection) {
-  return sortKey === "manual" ? todos : sortWithStableFallback(todos, (todo) => getTodoSortValue(todo, sortKey), direction);
+  const sortedTodos =
+    sortKey === "manual" ? todos : sortWithStableFallback(todos, (todo) => getTodoSortValue(todo, sortKey), direction);
+
+  return [...sortedTodos.filter((todo) => !todo.completed), ...sortedTodos.filter((todo) => todo.completed)];
 }
 
 function getTodoCategoryKey(todo: Pick<Todo, "category">) {
@@ -1067,10 +1071,12 @@ function parseDateInputValue(value: string) {
   return Number.isFinite(timestamp) ? timestamp : Date.now();
 }
 
-function getTodoTargetStatus(targetDate: string | undefined, language: AppLanguage = "en") {
+function getTodoTargetStatus(targetDate: string | undefined, language: AppLanguage = "en", completed = false) {
   if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
     return language === "ko" ? "목표일 미설정" : "Target not set";
   }
+
+  if (completed) return `${UI_TEXT[language].target}: ${targetDate}`;
 
   return `${UI_TEXT[language].target}: ${targetDate} · ${getTodoTargetTiming(targetDate, language)}`;
 }
@@ -1129,6 +1135,14 @@ function moveToIndex<T>(items: T[], fromIndex: number, toIndex: number) {
   const [item] = nextItems.splice(fromIndex, 1);
   nextItems.splice(toIndex, 0, item);
   return nextItems;
+}
+
+function updateTodoCompletionAndMoveCompletedLast(todos: Todo[], todoIds: string[], completed: boolean) {
+  const todoIdSet = new Set(todoIds);
+  const updatedTodos = todos.map((todo) => (todoIdSet.has(todo.id) ? { ...todo, completed } : todo));
+  if (!completed) return updatedTodos;
+
+  return [...updatedTodos.filter((todo) => !todoIdSet.has(todo.id)), ...updatedTodos.filter((todo) => todoIdSet.has(todo.id))];
 }
 
 function pseudoRandom(seed: number) {
@@ -1260,6 +1274,23 @@ function readStoredLanguage(): AppLanguage {
 function writeStoredLanguage(language: AppLanguage) {
   try {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function readStoredAdminUserListExpanded() {
+  try {
+    const stored = window.localStorage.getItem(ADMIN_USER_LIST_EXPANDED_STORAGE_KEY);
+    return stored === null ? true : stored === "true";
+  } catch {
+    return true;
+  }
+}
+
+function writeStoredAdminUserListExpanded(isExpanded: boolean) {
+  try {
+    window.localStorage.setItem(ADMIN_USER_LIST_EXPANDED_STORAGE_KEY, isExpanded ? "true" : "false");
   } catch {
     // Ignore unavailable storage.
   }
@@ -1859,7 +1890,9 @@ export default function GoalTracker() {
   const [hasAiAccess, setHasAiAccess] = useState(false);
   const [aiAccessSchemaMissing, setAiAccessSchemaMissing] = useState(false);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [isAdminUserListExpanded, setIsAdminUserListExpanded] = useState(true);
+  const [isAdminUserListExpanded, setIsAdminUserListExpanded] = useState(() =>
+    typeof window === "undefined" ? true : readStoredAdminUserListExpanded(),
+  );
   const [announcementQueue, setAnnouncementQueue] = useState<Announcement[]>([]);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
   const [shouldDismissActiveAnnouncement, setShouldDismissActiveAnnouncement] = useState(false);
@@ -2308,6 +2341,10 @@ export default function GoalTracker() {
   useEffect(() => {
     writeStoredLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    writeStoredAdminUserListExpanded(isAdminUserListExpanded);
+  }, [isAdminUserListExpanded]);
 
   useEffect(() => {
     writeStoredAgentEnabled(isAgentEnabled);
@@ -4337,12 +4374,17 @@ export default function GoalTracker() {
 
     const previousTodos = todos;
     const nextCompleted = !todo.completed;
-    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, completed: nextCompleted } : item)));
+    setTodos((current) => updateTodoCompletionAndMoveCompletedLast(current, [todo.id], nextCompleted));
     setIsSaving(true);
     setError("");
 
     try {
-      setTodos(await patchTodo(todo.id, { completed: nextCompleted }));
+      const updatedTodos = await patchTodo(todo.id, { completed: nextCompleted });
+      setTodos(
+        nextCompleted
+          ? await reorderTodoList(updateTodoCompletionAndMoveCompletedLast(updatedTodos, [todo.id], true).map((item) => item.id))
+          : updatedTodos,
+      );
       if (nextCompleted) triggerSuccessConfetti();
     } catch (updateError) {
       setTodos(previousTodos);
@@ -4362,9 +4404,7 @@ export default function GoalTracker() {
     }
 
     const previousTodos = todos;
-    setTodos((current) =>
-      current.map((todo) => (todoIds.includes(todo.id) ? { ...todo, completed: true } : todo)),
-    );
+    setTodos((current) => updateTodoCompletionAndMoveCompletedLast(current, todoIds, true));
     setIsSaving(true);
     setError("");
 
@@ -4373,7 +4413,7 @@ export default function GoalTracker() {
       for (const todoId of todoIds) {
         latestTodos = await patchTodo(todoId, { completed: true });
       }
-      setTodos(latestTodos);
+      setTodos(await reorderTodoList(updateTodoCompletionAndMoveCompletedLast(latestTodos, todoIds, true).map((todo) => todo.id)));
       setSelectedTodoIds([]);
       triggerSuccessConfetti();
     } catch (updateError) {
@@ -4394,9 +4434,7 @@ export default function GoalTracker() {
     }
 
     const previousTodos = todos;
-    setTodos((current) =>
-      current.map((todo) => (todoIds.includes(todo.id) ? { ...todo, completed: false } : todo)),
-    );
+    setTodos((current) => updateTodoCompletionAndMoveCompletedLast(current, todoIds, false));
     setIsSaving(true);
     setError("");
 
@@ -5129,10 +5167,12 @@ export default function GoalTracker() {
                   .sort((left, right) => right.createdAt - left.createdAt)
                   .map((entry) => (
                     <div key={entry.id} className="rounded-md border border-stone-200 bg-white p-3 text-sm">
-                      <div className="font-semibold">
-                        {entry.value} {assignmentDetail.detail.kind === "goal" ? assignmentDetail.detail.item.unit : ""}
+                      <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+                        <span className="shrink-0 font-semibold">
+                          {entry.value} {assignmentDetail.detail.kind === "goal" ? assignmentDetail.detail.item.unit : ""}
+                        </span>
+                        <span className="shrink-0 text-xs text-stone-500">{formatDate(entry.createdAt)}</span>
                       </div>
-                      <div className="text-xs text-stone-500">{formatDate(entry.createdAt)}</div>
                       <p className="mt-2 whitespace-pre-wrap break-words text-stone-700">{entry.memo || "No memo"}</p>
                     </div>
                   ))
@@ -5959,7 +5999,7 @@ export default function GoalTracker() {
                   </button>
                 </div>
                 <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="grid grid-cols-3 gap-2">
                     <AdminStat
                       label={language === "ko" ? "회원" : "Users"}
                       value={String(adminUsers.length)}
@@ -6755,7 +6795,7 @@ export default function GoalTracker() {
                             disabled={isSaving || isEditingTodo}
                             className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-wait disabled:opacity-50 ${
                               todo.completed
-                                ? "border-stone-500 bg-stone-500 text-white"
+                                ? "border-transparent bg-stone-400 text-white"
                                 : "border-stone-300 bg-white text-stone-300 hover:border-stone-500 hover:text-stone-500"
                             }`}
                           >
@@ -6817,7 +6857,7 @@ export default function GoalTracker() {
                             </div>
                           ) : (
                             <div
-                              className={`break-words text-sm font-medium ${
+                              className={`whitespace-pre-wrap break-words text-sm font-medium ${
                                 todo.completed ? "text-stone-500 line-through" : "text-stone-900"
                               }`}
                             >
@@ -6832,17 +6872,22 @@ export default function GoalTracker() {
                                 </span>
                               )}
                               {todo.targetDate ? (
-                                <span>
-                                  {text.target}: {todo.targetDate} ·{" "}
-                                  <span
-                                    className={
-                                      todoTargetTimingState === "past" || todoTargetTimingState === "today"
-                                        ? "font-semibold text-red-700"
-                                        : ""
-                                    }
-                                  >
-                                    {getTodoTargetTiming(todo.targetDate, language)}
-                                  </span>
+                                <span className={todo.completed ? "line-through" : ""}>
+                                  {text.target}: {todo.targetDate}
+                                  {!todo.completed && (
+                                    <>
+                                      {" · "}
+                                      <span
+                                        className={
+                                          todoTargetTimingState === "past" || todoTargetTimingState === "today"
+                                            ? "font-semibold text-red-700"
+                                            : ""
+                                        }
+                                      >
+                                        {getTodoTargetTiming(todo.targetDate, language)}
+                                      </span>
+                                    </>
+                                  )}
                                 </span>
                               ) : (
                                 <span>{getTodoTargetStatus(todo.targetDate, language)}</span>
@@ -7012,7 +7057,7 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`${text.archived}: ${todo.archivedAt ? formatDate(todo.archivedAt) : text.unknown}`}
-                          detail={`${todo.completed ? text.completed : text.notCompleted} · ${getTodoTargetStatus(todo.targetDate, language)}${
+                          detail={`${todo.completed ? text.completed : text.notCompleted} · ${getTodoTargetStatus(todo.targetDate, language, todo.completed)}${
                             todo.category.trim() ? ` · ${text.category}: ${todo.category}` : ""
                           }`}
                           isSaving={isSaving}
@@ -7106,7 +7151,7 @@ export default function GoalTracker() {
                           key={todo.id}
                           title={todo.title}
                           meta={`${text.deleted}: ${todo.deletedAt ? formatDate(todo.deletedAt) : text.unknown}`}
-                          detail={`${todo.completed ? text.completed : text.notCompleted} · ${getTodoTargetStatus(todo.targetDate, language)}${
+                          detail={`${todo.completed ? text.completed : text.notCompleted} · ${getTodoTargetStatus(todo.targetDate, language, todo.completed)}${
                             todo.category.trim() ? ` · ${text.category}: ${todo.category}` : ""
                           }`}
                           isSaving={isSaving}
@@ -7565,10 +7610,12 @@ export default function GoalTracker() {
                                   className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-stone-200 bg-white p-3 text-left"
                                 >
                                   <div className="min-w-0">
-                                    <div className="font-semibold">
-                                      {entry.value} {activeGoal.unit}
+                                    <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+                                      <span className="shrink-0 font-semibold">
+                                        {entry.value} {activeGoal.unit}
+                                      </span>
+                                      <span className="shrink-0 text-xs text-stone-500">{formatDate(entry.createdAt)}</span>
                                     </div>
-                                    <div className="text-xs text-stone-500">{formatDate(entry.createdAt)}</div>
                                     <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-sm text-stone-700">
                                       {entry.memo || "No memo"}
                                     </p>
@@ -8470,9 +8517,9 @@ function LoadingScreen() {
 
 function AdminStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2">
-      <div className="text-xs font-medium text-stone-500">{label}</div>
-      <div className="mt-1 text-xl font-semibold text-stone-900">{value}</div>
+    <div className="min-w-0 rounded-md border border-stone-200 bg-stone-50 px-2 py-2 text-center">
+      <div className="truncate text-[11px] font-medium text-stone-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-stone-900">{value}</div>
     </div>
   );
 }
