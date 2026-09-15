@@ -524,7 +524,6 @@ export default function RoutineTracker({
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [form, setForm] = useState(emptyRoutineForm);
   const [detectedPhrase, setDetectedPhrase] = useState<ParsedDatePhrase | null>(null);
-  const [detectedConfirmed, setDetectedConfirmed] = useState(false);
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
   const [activeRoutineResetSignal, setActiveRoutineResetSignal] = useState(resetSignal);
   const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
@@ -607,6 +606,12 @@ export default function RoutineTracker({
   const displayedCheckScore = useMemo(() => getDisplayedCheckScore(visibleRoutines), [visibleRoutines]);
   const displayedScoreFeedback = getTodayScoreFeedback(displayedCheckScore.score, language);
 
+  function updateRoutineTitleInput(title: string) {
+    const parsed = parseKoreanDatePhrase(title);
+    setForm((current) => ({ ...current, title, endDate: parsed?.iso ?? current.endDate }));
+    setDetectedPhrase(parsed);
+  }
+
   async function addRoutine() {
     const parsedDate = parseKoreanDatePhrase(form.title) ?? detectedPhrase;
     const title = removeParsedDatePhrase(form.title, parsedDate).trim() || form.title.trim();
@@ -622,7 +627,6 @@ export default function RoutineTracker({
       setIsRoutineModalOpen(false);
       setForm({ ...emptyRoutineForm, startDate: todayIso, endDate: todayIso });
       setDetectedPhrase(null);
-      setDetectedConfirmed(false);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Failed to add habit");
     } finally {
@@ -1264,19 +1268,7 @@ export default function RoutineTracker({
                 {text.routine}
                 <input
                   value={form.title}
-                  onChange={(event) => {
-                    const v = event.target.value;
-                    setForm((current) => ({ ...current, title: v }));
-                    const parsed = parseKoreanDatePhrase(v);
-                    if (parsed) {
-                      setForm((current) => ({ ...current, endDate: parsed.iso }));
-                      setDetectedPhrase(parsed);
-                      setDetectedConfirmed(false);
-                    } else {
-                      setDetectedPhrase(null);
-                      setDetectedConfirmed(false);
-                    }
-                  }}
+                  onChange={(event) => updateRoutineTitleInput(event.target.value)}
                   onKeyDown={handleRoutineFormKeyDown}
                   autoFocus
                   disabled={schemaMissing}
@@ -1284,35 +1276,15 @@ export default function RoutineTracker({
                   placeholder="Example: Morning workout"
                 />
                 {detectedPhrase && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className={`inline-flex items-center gap-2 rounded-full px-2 py-0.5 text-sm border ${
-                      detectedConfirmed ? "bg-emerald-200 text-emerald-900 border-emerald-300" : "bg-emerald-100 text-emerald-800 border-emerald-200"
-                    }`}>
-                      {detectedPhrase.phrase} · {detectedPhrase.iso}
-                    </span>
-                    {!detectedConfirmed && (
-                      <button
-                        type="button"
-                        onClick={() => setDetectedConfirmed(true)}
-                        className="h-6 w-6 rounded-md bg-emerald-700 text-white text-xs flex items-center justify-center"
-                        title="Confirm detected date"
-                      >
-                        OK
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDetectedPhrase(null);
-                        setForm((f) => ({ ...f, title: removeParsedDatePhrase(f.title, detectedPhrase), endDate: todayIso }));
-                        setDetectedConfirmed(false);
-                      }}
-                      className="h-6 w-6 rounded-md border border-stone-300 text-stone-700 flex items-center justify-center"
-                      title="Clear detected date"
-                    >
-                      x
-                    </button>
-                  </div>
+                  <DatePhraseSticker
+                    phrase={detectedPhrase.phrase}
+                    date={detectedPhrase.iso}
+                    label={text.end}
+                    onClear={() => {
+                      setDetectedPhrase(null);
+                      setForm((current) => ({ ...current, title: removeParsedDatePhrase(current.title, detectedPhrase), endDate: todayIso }));
+                    }}
+                  />
                 )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
@@ -1525,6 +1497,7 @@ function RoutineCard({
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
   const [expandedMemoRoutineId, setExpandedMemoRoutineId] = useState<string | null>(null);
   const isMemoExpanded = expandedMemoRoutineId === routine.id;
+  const editDetectedPhrase = editValue ? parseKoreanDatePhrase(editValue.title) : null;
   const memoDoubleTapTime = useRef(0);
   const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
@@ -1552,8 +1525,8 @@ function RoutineCard({
   };
 
   return (
-    <div className="grid gap-0">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <div className="grid min-w-0 gap-0">
+      <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div className="min-w-0">
           {editValue && (
             <div className="mb-2 inline-flex -rotate-1 items-center rounded-sm border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900 shadow-sm">
@@ -1561,18 +1534,33 @@ function RoutineCard({
             </div>
           )}
           {editValue ? (
-            <input
-              value={editValue.title}
-              onChange={(event) => {
-                const v = event.target.value;
-                onEditChange({ ...editValue, title: v });
-                const parsed = parseKoreanDatePhrase(v);
-                if (parsed) onEditChange({ ...editValue, title: v, endDate: parsed.iso });
-              }}
-              onKeyDown={handleEditKeyDown}
-              className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
-              aria-label="Edit routine title"
-            />
+            <>
+              <input
+                value={editValue.title}
+                onChange={(event) => {
+                  const title = event.target.value;
+                  const parsed = parseKoreanDatePhrase(title);
+                  onEditChange({ ...editValue, title, endDate: parsed?.iso ?? editValue.endDate });
+                }}
+                onKeyDown={handleEditKeyDown}
+                className="editing-text-field w-full rounded-md border border-stone-300 px-2 py-1 text-lg font-semibold outline-none focus:border-emerald-600"
+                aria-label="Edit routine title"
+              />
+              {editDetectedPhrase && (
+                <DatePhraseSticker
+                  phrase={editDetectedPhrase.phrase}
+                  date={editDetectedPhrase.iso}
+                  label={text.end}
+                  onClear={() => {
+                    onEditChange({
+                      ...editValue,
+                      title: removeParsedDatePhrase(editValue.title, editDetectedPhrase),
+                      endDate: routine.endDate,
+                    });
+                  }}
+                />
+              )}
+            </>
           ) : (
             <h3 className="break-words py-1 text-lg font-semibold">{routine.title}</h3>
           )}
@@ -1609,65 +1597,6 @@ function RoutineCard({
             <span>{stats.failure} {text.failureLower}</span>
             <span>{stats.missed} {text.missed}</span>
           </div>
-          {editValue ? (
-            <>
-              <textarea
-                value={editValue.memo}
-                onMouseDown={preventDoubleClickTextSelection}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  clearTextSelection();
-                  saveMemoEdit();
-                }}
-                onPointerUp={(event) => handleMemoDoubleTap(event, saveMemoEdit)}
-                onChange={(event) => {
-                  onEditChange({ ...editValue, memo: event.target.value });
-                }}
-                onKeyDown={handleEditKeyDown}
-                className="editing-text-field mt-2 min-h-40 w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
-                aria-label="Edit routine memo"
-                placeholder={text.memo}
-              />
-            </>
-          ) : (
-            <div
-              className={`mt-2 break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
-                routine.memo ? "text-stone-700" : "text-stone-500"
-              }`}
-              onMouseDown={preventDoubleClickTextSelection}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                clearTextSelection();
-                onEdit();
-              }}
-              onPointerUp={(event) => handleMemoDoubleTap(event, onEdit)}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium text-stone-500">{text.memo}</div>
-                {routine.memo && (
-                  <button
-                    type="button"
-                    aria-expanded={isMemoExpanded}
-                    aria-label={isMemoExpanded ? text.collapseMemo : text.expandMemo}
-                    title={isMemoExpanded ? text.collapseMemo : text.expandMemo}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onDoubleClick={(event) => event.stopPropagation()}
-                    onPointerUp={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setExpandedMemoRoutineId((expandedId) => (expandedId === routine.id ? null : routine.id));
-                    }}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-emerald-700 hover:bg-emerald-50"
-                  >
-                    {isMemoExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
-                  </button>
-                )}
-              </div>
-              <p className={`mt-1 min-w-0 max-w-full break-words ${isMemoExpanded ? "whitespace-pre-wrap" : "truncate"}`}>
-                {routine.memo || text.memo}
-              </p>
-            </div>
-          )}
         </div>
         <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 md:w-auto">
           {editValue ? (
@@ -1740,7 +1669,65 @@ function RoutineCard({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-0 border-t border-stone-200 pt-3 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
+      {editValue ? (
+        <textarea
+          value={editValue.memo}
+          onMouseDown={preventDoubleClickTextSelection}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            clearTextSelection();
+            saveMemoEdit();
+          }}
+          onPointerUp={(event) => handleMemoDoubleTap(event, saveMemoEdit)}
+          onChange={(event) => {
+            onEditChange({ ...editValue, memo: event.target.value });
+          }}
+          onKeyDown={handleEditKeyDown}
+          className="editing-text-field mt-2 min-h-40 w-full min-w-0 max-w-full resize-y overflow-auto rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 outline-none focus:border-emerald-600"
+          aria-label="Edit routine memo"
+          placeholder={text.memo}
+        />
+      ) : (
+        <div
+          className={`mt-2 min-w-0 max-w-full break-words rounded-md border border-stone-200 bg-white p-3 text-sm ${
+            routine.memo ? "text-stone-700" : "text-stone-500"
+          }`}
+          onMouseDown={preventDoubleClickTextSelection}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            clearTextSelection();
+            onEdit();
+          }}
+          onPointerUp={(event) => handleMemoDoubleTap(event, onEdit)}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-medium text-stone-500">{text.memo}</div>
+            {routine.memo && (
+              <button
+                type="button"
+                aria-expanded={isMemoExpanded}
+                aria-label={isMemoExpanded ? text.collapseMemo : text.expandMemo}
+                title={isMemoExpanded ? text.collapseMemo : text.expandMemo}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setExpandedMemoRoutineId((expandedId) => (expandedId === routine.id ? null : routine.id));
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-emerald-700 hover:bg-emerald-50"
+              >
+                {isMemoExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
+              </button>
+            )}
+          </div>
+          <p className={`mt-1 min-w-0 max-w-full break-words ${isMemoExpanded ? "whitespace-pre-wrap" : "truncate"}`}>
+            {routine.memo || text.memo}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3 grid min-w-0 gap-3 border-t border-stone-200 pt-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,320px)]">
         <ChainCalendar
           key={routine.id}
           dates={dates}
@@ -1773,13 +1760,13 @@ function ChainCalendar({
   const [expandedPastMonthKeys, setExpandedPastMonthKeys] = useState<Set<string>>(() => new Set());
 
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 max-w-full">
       {monthGroups.length === 0 ? (
-        <div className="rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
+        <div className="w-full max-w-full rounded-md border border-stone-200 bg-white px-3 py-4 text-sm text-stone-600">
           {text.calendarPending}
         </div>
       ) : (
-        <div className="rounded-md border border-stone-200 bg-white p-2">
+        <div className="w-full max-w-full overflow-hidden rounded-md border border-stone-200 bg-white p-2">
           {monthGroups.map((group, index) => {
             const isPastMonth = group.key < currentMonthKey;
             const isExpanded = !isPastMonth || expandedPastMonthKeys.has(group.key);
@@ -1877,7 +1864,7 @@ function RoutineSuccessGraph({ routine, text }: { routine: Routine; text: Routin
   });
 
   return (
-    <div className="min-w-0 rounded-md border border-stone-200 bg-white p-3">
+    <div className="min-w-0 max-w-full rounded-md border border-stone-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-medium text-stone-500">{text.successRate}</div>
@@ -1925,6 +1912,39 @@ function MiniLineChart({ points, text }: { points: number[]; text: RoutineText }
         <circle className="routine-chart-dot" key={`${point}-${index}`} cx={xFor(index)} cy={yFor(point)} r="3" fill="var(--chart-primary)" />
       ))}
     </svg>
+  );
+}
+
+function DatePhraseSticker({
+  phrase,
+  date,
+  label,
+  onClear,
+}: {
+  phrase: string;
+  date: string;
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-2">
+      <span className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-900">
+        <span className="max-w-[9rem] truncate">{phrase}</span>
+        <span className="text-emerald-700/70">-&gt;</span>
+        <span className="whitespace-nowrap">
+          {label} {date}
+        </span>
+      </span>
+      <button
+        type="button"
+        aria-label={`Clear ${phrase}`}
+        title="Clear detected date"
+        onClick={onClear}
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+      >
+        <CloseIcon />
+      </button>
+    </div>
   );
 }
 

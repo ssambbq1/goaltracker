@@ -20,6 +20,15 @@ function nextWeekdayIsoFrom(now: Date, targetWeekday: number, weeksOffset = 0) {
   return toIso(d);
 }
 
+function monthsFromNowIso(now: Date, months: number) {
+  const d = new Date(now);
+  const targetYear = d.getFullYear();
+  const targetMonth = d.getMonth() + months;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  d.setMonth(targetMonth, Math.min(d.getDate(), lastDay));
+  return toIso(d);
+}
+
 describe('parseKoreanDatePhrase', () => {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -76,6 +85,29 @@ describe('parseKoreanDatePhrase', () => {
     expect(res).not.toBeNull();
     expect(res!.iso).toBe(toIso(target));
     expect(res!.phrase).toBe('7일까지');
+  });
+
+  it('parses year-end until phrases', () => {
+    const res = parseKoreanDatePhrase('매일 스트레칭 연말까지');
+    expect(res).not.toBeNull();
+    expect(res!.iso).toBe(toIso(new Date(now.getFullYear(), 11, 31)));
+    expect(res!.phrase).toBe('연말까지');
+  });
+
+  it('parses month-end until phrases', () => {
+    const target = new Date(now.getFullYear(), 9, 31);
+    if (target.getTime() < now.getTime()) target.setFullYear(target.getFullYear() + 1);
+    const res = parseKoreanDatePhrase('독서 10월 말까지');
+    expect(res).not.toBeNull();
+    expect(res!.iso).toBe(toIso(target));
+    expect(res!.phrase).toBe('10월 말까지');
+  });
+
+  it('parses duration phrases in months', () => {
+    const res = parseKoreanDatePhrase('운동 세달동안');
+    expect(res).not.toBeNull();
+    expect(res!.iso).toBe(monthsFromNowIso(now, 3));
+    expect(res!.phrase).toBe('세달동안');
   });
 
   it('removes detected date phrases from saved titles', () => {

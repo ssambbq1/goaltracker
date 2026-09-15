@@ -572,6 +572,54 @@ select {
   font: inherit;
 }
 
+html.dark-mode .todo-calendar-outside-month,
+body.dark-mode .todo-calendar-outside-month,
+.app-dark .todo-calendar-outside-month {
+  background-color: #05080c !important;
+  border-color: rgb(24 32 40 / 0.72) !important;
+  color: #4b5563 !important;
+}
+
+html.dark-mode .todo-calendar-outside-month-date,
+body.dark-mode .todo-calendar-outside-month-date,
+.app-dark .todo-calendar-outside-month-date {
+  color: #46515f !important;
+}
+
+html.dark-mode .todo-calendar-task-chip-active,
+body.dark-mode .todo-calendar-task-chip-active,
+.app-dark .todo-calendar-task-chip-active {
+  color: #b7f7da !important;
+}
+
+html.dark-mode .todo-calendar-task-chip-completed,
+body.dark-mode .todo-calendar-task-chip-completed,
+.app-dark .todo-calendar-task-chip-completed {
+  background-color: #111820 !important;
+  border-color: rgb(51 65 78 / 0.58) !important;
+  color: #6b7684 !important;
+}
+
+html.dark-mode .todo-calendar-outside-month .todo-calendar-task-chip,
+body.dark-mode .todo-calendar-outside-month .todo-calendar-task-chip,
+.app-dark .todo-calendar-outside-month .todo-calendar-task-chip {
+  background-color: #071018 !important;
+  border-color: rgb(30 41 51 / 0.72) !important;
+  color: #64748b !important;
+}
+
+.todo-calendar-task-chip,
+.todo-calendar-task-chip * {
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+}
+
+.todo-calendar-task-title {
+  display: block;
+  max-height: 2.3em;
+  overflow: hidden;
+}
+
 .todo-action-menu-panel {
   background-color: rgb(255 255 255 / 0.82);
   backdrop-filter: blur(10px);

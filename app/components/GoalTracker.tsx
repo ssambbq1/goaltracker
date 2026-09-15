@@ -201,6 +201,7 @@ type AppLanguage = "en" | "ko";
 type SortDirection = "asc" | "desc";
 type GoalSortKey = "manual" | "startDate" | "deadline" | "latestRecord" | "progress";
 type TodoSortKey = "manual" | "createdAt" | "targetDate";
+type TodoDisplayMode = "list" | "calendar";
 type GoalChartModeById = Record<string, ProgressChartMode>;
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
@@ -370,6 +371,7 @@ const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
 const GOAL_CHART_MODES_STORAGE_KEY = "boost-mastery.goal-chart-modes";
 const TODO_SORT_KEY_STORAGE_KEY = "boost-mastery.todo-sort-key";
 const TODO_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.todo-sort-direction";
+const TODO_DISPLAY_MODE_STORAGE_KEY = "boost-mastery.todo-display-mode";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
 const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
 const ADMIN_USER_LIST_EXPANDED_STORAGE_KEY = "boost-mastery.admin-user-list-expanded";
@@ -415,6 +417,8 @@ const UI_TEXT = {
     moveToBin: "Move to bin",
     deleteForever: "Delete forever",
     all: "All",
+    listView: "List view",
+    calendarView: "Calendar view",
     category: "Category",
     noCategory: "No category",
     target: "Target",
@@ -446,6 +450,7 @@ const UI_TEXT = {
     noGoals: "No goals yet. Add the first goal to start tracking.",
     noTodos: "No tasks yet. Add a simple task to keep it on the list.",
     noTodosForCategory: "No tasks match the selected categories.",
+    noTodosForDate: "No tasks",
     noProgress: "No progress records yet. Add a record to draw the chart.",
     noRecords: "No records yet. Saved records will be written with their date.",
     noMemo: "No memo",
@@ -457,6 +462,7 @@ const UI_TEXT = {
     completed: "Completed",
     cancelCompleted: "Undo complete",
     notCompleted: "Not completed",
+    remainingDays: "Remaining",
     lastProgress: "Last progress",
     emptyBinTitle: "Empty bin?",
     emptyBinConfirm: (count: number) => `Delete ${count} item${count === 1 ? "" : "s"} forever. This cannot be undone.`,
@@ -487,6 +493,8 @@ const UI_TEXT = {
     moveToBin: "휴지통으로 이동",
     deleteForever: "영구 삭제",
     all: "전체",
+    listView: "리스트 보기",
+    calendarView: "캘린더 보기",
     category: "카테고리",
     noCategory: "무제",
     target: "목표",
@@ -518,6 +526,7 @@ const UI_TEXT = {
     noGoals: "아직 목표가 없습니다. 첫 목표를 추가해 추적을 시작하세요.",
     noTodos: "아직 할일이 없습니다. 단순 할일을 추가하세요.",
     noTodosForCategory: "선택한 카테고리에 해당하는 할일이 없습니다.",
+    noTodosForDate: "할일 없음",
     noProgress: "아직 진행 기록이 없습니다. 기록을 추가하면 그래프가 표시됩니다.",
     noRecords: "아직 기록이 없습니다. 저장한 기록은 날짜와 함께 표시됩니다.",
     noMemo: "메모 없음",
@@ -529,6 +538,7 @@ const UI_TEXT = {
     completed: "완료",
     cancelCompleted: "완료 취소",
     notCompleted: "미완료",
+    remainingDays: "잔여일",
     lastProgress: "최근 진행",
     emptyBinTitle: "휴지통을 비울까요?",
     emptyBinConfirm: (count: number) => `${count}개 항목을 영구 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
@@ -1055,6 +1065,10 @@ function isTodoSortKey(value: string | null): value is TodoSortKey {
   return value === "manual" || value === "createdAt" || value === "targetDate";
 }
 
+function isTodoDisplayMode(value: string | null): value is TodoDisplayMode {
+  return value === "list" || value === "calendar";
+}
+
 function isProgressChartMode(value: unknown): value is ProgressChartMode {
   return value === "raw" || value === "cumulative";
 }
@@ -1064,6 +1078,45 @@ function toDateInputValue(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function toMonthInputValue(date = new Date()) {
+  return toDateInputValue(date).slice(0, 7);
+}
+
+function addDaysToDate(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonthsToMonthValue(monthValue: string, months: number) {
+  const [year, month] = monthValue.split("-").map(Number);
+  return toMonthInputValue(new Date(year, month - 1 + months, 1));
+}
+
+function formatCalendarMonth(monthValue: string, language: AppLanguage) {
+  const [year, month] = monthValue.split("-").map(Number);
+  return new Intl.DateTimeFormat(language === "ko" ? "ko-KR" : "en-US", {
+    year: "numeric",
+    month: "long",
+  }).format(new Date(year, month - 1, 1));
+}
+
+function getCalendarDates(monthValue: string) {
+  const [year, month] = monthValue.split("-").map(Number);
+  const firstDate = new Date(year, month - 1, 1);
+  const calendarStart = addDaysToDate(firstDate, -firstDate.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDaysToDate(calendarStart, index);
+    const iso = toDateInputValue(date);
+    return {
+      iso,
+      day: date.getDate(),
+      isCurrentMonth: iso.slice(0, 7) === monthValue,
+      isToday: iso === toDateInputValue(),
+    };
+  });
 }
 
 function parseDateInputValue(value: string) {
@@ -1115,6 +1168,15 @@ function getTodoTargetTimingState(targetDate: string) {
   if (diffDays > 0) return "future";
   if (diffDays < 0) return "past";
   return "today";
+}
+
+function hasTodoTargetDate(todo: Todo): todo is Todo & { targetDate: string } {
+  return Boolean(todo.targetDate && /^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate));
+}
+
+function formatTodoCalendarTitle(title: string) {
+  const trimmed = title.trim();
+  return trimmed.length > 18 ? `${trimmed.slice(0, 18).trimEnd()}.` : trimmed;
 }
 
 function toGoalDraft(goal: Goal): GoalDraft {
@@ -1396,6 +1458,15 @@ function readStoredTodoSortDirection(): SortDirection {
   }
 }
 
+function readStoredTodoDisplayMode(): TodoDisplayMode {
+  try {
+    const stored = window.localStorage.getItem(TODO_DISPLAY_MODE_STORAGE_KEY);
+    return isTodoDisplayMode(stored) ? stored : "list";
+  } catch {
+    return "list";
+  }
+}
+
 function writeStoredGoalSortKey(sortKey: GoalSortKey) {
   try {
     window.localStorage.setItem(GOAL_SORT_KEY_STORAGE_KEY, sortKey);
@@ -1431,6 +1502,14 @@ function writeStoredTodoSortKey(sortKey: TodoSortKey) {
 function writeStoredTodoSortDirection(direction: SortDirection) {
   try {
     window.localStorage.setItem(TODO_SORT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function writeStoredTodoDisplayMode(mode: TodoDisplayMode) {
+  try {
+    window.localStorage.setItem(TODO_DISPLAY_MODE_STORAGE_KEY, mode);
   } catch {
     // Ignore unavailable storage.
   }
@@ -1968,6 +2047,7 @@ export default function GoalTracker() {
   const [isAgentSettingsModalOpen, setIsAgentSettingsModalOpen] = useState(false);
   const [isEmptyBinModalOpen, setIsEmptyBinModalOpen] = useState(false);
   const [todoToDelete, setTodoToDelete] = useState<Todo | null>(null);
+  const [selectedCalendarTodoId, setSelectedCalendarTodoId] = useState<string | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [todoActionMenuId, setTodoActionMenuId] = useState<string | null>(null);
   const [editingTodoTitle, setEditingTodoTitle] = useState("");
@@ -2004,6 +2084,10 @@ export default function GoalTracker() {
   const [todoSortDirection, setTodoSortDirection] = useState<SortDirection>(() =>
     typeof window === "undefined" ? "asc" : readStoredTodoSortDirection(),
   );
+  const [todoDisplayMode, setTodoDisplayMode] = useState<TodoDisplayMode>(() =>
+    typeof window === "undefined" ? "list" : readStoredTodoDisplayMode(),
+  );
+  const [todoCalendarMonth, setTodoCalendarMonth] = useState(() => toMonthInputValue());
   const [goalChartModesByGoalId, setGoalChartModesByGoalId] = useState<GoalChartModeById>(() =>
     typeof window === "undefined" ? {} : readStoredGoalChartModes(),
   );
@@ -2371,6 +2455,10 @@ export default function GoalTracker() {
   }, [todoSortDirection]);
 
   useEffect(() => {
+    writeStoredTodoDisplayMode(todoDisplayMode);
+  }, [todoDisplayMode]);
+
+  useEffect(() => {
     writeStoredTodoCategoryFilter(selectedTodoCategories);
   }, [selectedTodoCategories]);
 
@@ -2400,6 +2488,7 @@ export default function GoalTracker() {
       setIsEntryModalOpen(false);
       setIsEmptyBinModalOpen(false);
       setTodoToDelete(null);
+      setSelectedCalendarTodoId(null);
       setSelectedTodoIds([]);
       setEditingTodoId(null);
       setEditingTodoTitle("");
@@ -2547,6 +2636,10 @@ export default function GoalTracker() {
     () => todos.filter((todo) => selectedTodoIdSet.has(todo.id)),
     [selectedTodoIdSet, todos],
   );
+  const selectedCalendarTodo = useMemo(
+    () => todos.find((todo) => todo.id === selectedCalendarTodoId) ?? null,
+    [selectedCalendarTodoId, todos],
+  );
   const selectedTodoCount = selectedTodos.length;
   const selectedCompletedTodoCount = selectedTodos.filter((todo) => todo.completed).length;
   const selectedIncompleteTodoCount = selectedTodoCount - selectedCompletedTodoCount;
@@ -2570,6 +2663,7 @@ export default function GoalTracker() {
     setIsAgentSettingsModalOpen(false);
     setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
+    setSelectedCalendarTodoId(null);
     setSelectedTodoIds([]);
     setEditingTodoId(null);
     setEditingTodoTitle("");
@@ -2645,6 +2739,7 @@ export default function GoalTracker() {
     setIsAgentSettingsModalOpen(false);
     setIsEmptyBinModalOpen(false);
     setTodoToDelete(null);
+    setSelectedCalendarTodoId(null);
     setEditingTodoId(null);
     setEditingTodoTitle("");
     setEditingTodoTargetDate("");
@@ -6623,6 +6718,32 @@ export default function GoalTracker() {
                   <TodoIcon />
                   {text.todoList}
                 </h2>
+                <div className="flex shrink-0 rounded-md border border-stone-300 bg-white p-0.5">
+                  <button
+                    type="button"
+                    aria-pressed={todoDisplayMode === "list"}
+                    aria-label={text.listView}
+                    title={text.listView}
+                    onClick={() => setTodoDisplayMode("list")}
+                    className={`grid h-6 w-7 place-items-center rounded text-stone-700 transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
+                      todoDisplayMode === "list" ? "bg-emerald-700 text-white" : "hover:bg-stone-100"
+                    }`}
+                  >
+                    <ListIcon />
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={todoDisplayMode === "calendar"}
+                    aria-label={text.calendarView}
+                    title={text.calendarView}
+                    onClick={() => setTodoDisplayMode("calendar")}
+                    className={`grid h-6 w-7 place-items-center rounded text-stone-700 transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
+                      todoDisplayMode === "calendar" ? "bg-emerald-700 text-white" : "hover:bg-stone-100"
+                    }`}
+                  >
+                    <CalendarIcon />
+                  </button>
+                </div>
                 <div className="ml-auto flex shrink-0 items-center gap-1">
                   <select
                     value={todoSortKey}
@@ -6709,6 +6830,16 @@ export default function GoalTracker() {
                         <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                           {text.noTodosForCategory}
                         </p>
+                      ) : todoDisplayMode === "calendar" ? (
+                        <TodoCalendar
+                          todos={filteredVisibleTodos}
+                          month={todoCalendarMonth}
+                          language={language}
+                          text={text}
+                          isSaving={isSaving}
+                          onMonthChange={setTodoCalendarMonth}
+                          onOpenTodo={(todo) => setSelectedCalendarTodoId(todo.id)}
+                        />
                       ) : (
                         <div className="space-y-2">
                           {filteredVisibleTodos.map((todo) => {
@@ -8225,6 +8356,35 @@ export default function GoalTracker() {
         </div>,
         document.body,
       )}
+      {typeof document !== "undefined" && selectedCalendarTodo && createPortal(
+        <TodoCalendarDetailModal
+          todo={selectedCalendarTodo}
+          language={language}
+          text={text}
+          isSaving={isSaving}
+          isEditing={editingTodoId === selectedCalendarTodo.id}
+          editingTitle={editingTodoTitle}
+          editingTargetDate={editingTodoTargetDate}
+          editingCategory={editingTodoCategory}
+          onEditingTitleChange={setEditingTodoTitle}
+          onEditingTargetDateChange={setEditingTodoTargetDate}
+          onEditingCategoryChange={setEditingTodoCategory}
+          onClose={() => {
+            cancelEditingTodo();
+            setSelectedCalendarTodoId(null);
+          }}
+          onEdit={() => startEditingTodo(selectedCalendarTodo)}
+          onSaveEdit={() => saveTodoTitle(selectedCalendarTodo)}
+          onCancelEdit={cancelEditingTodo}
+          onCheck={() => toggleTodoCompleted(selectedCalendarTodo)}
+          onDelete={() => {
+            cancelEditingTodo();
+            setSelectedCalendarTodoId(null);
+            setTodoToDelete(selectedCalendarTodo);
+          }}
+        />,
+        document.body,
+      )}
       {typeof document !== "undefined" && todoToDelete && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
@@ -8416,6 +8576,391 @@ function ArchiveGroup({ title, count, children }: { title: string; count: number
         <div className="space-y-2">{children}</div>
       )}
     </section>
+  );
+}
+
+function TodoCalendar({
+  todos,
+  month,
+  language,
+  text,
+  isSaving,
+  onMonthChange,
+  onOpenTodo,
+}: {
+  todos: Todo[];
+  month: string;
+  language: AppLanguage;
+  text: (typeof UI_TEXT)[AppLanguage];
+  isSaving: boolean;
+  onMonthChange: (month: string) => void;
+  onOpenTodo: (todo: Todo) => void;
+}) {
+  const calendarDates = getCalendarDates(month);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const expandedDateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todosByDate = useMemo(() => {
+    const groups = new Map<string, Array<Todo & { targetDate: string }>>();
+    todos.forEach((todo) => {
+      if (!hasTodoTargetDate(todo)) return;
+      groups.set(todo.targetDate, [...(groups.get(todo.targetDate) ?? []), todo]);
+    });
+    return groups;
+  }, [todos]);
+
+  useEffect(() => {
+    return () => {
+      if (expandedDateTimer.current) clearTimeout(expandedDateTimer.current);
+    };
+  }, []);
+
+  function temporarilyExpandDate(date: string) {
+    if (expandedDateTimer.current) clearTimeout(expandedDateTimer.current);
+    setExpandedDate(date);
+    expandedDateTimer.current = setTimeout(() => {
+      setExpandedDate(null);
+      expandedDateTimer.current = null;
+    }, 5000);
+  }
+
+  return (
+    <section className="grid min-w-0 gap-1 rounded-md border border-stone-200 bg-white p-1 sm:p-1.5">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            aria-label={language === "ko" ? "이전 년도" : "Previous year"}
+            title={language === "ko" ? "이전 년도" : "Previous year"}
+            onClick={() => onMonthChange(addMonthsToMonthValue(month, -12))}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 [&_svg]:h-3.5 [&_svg]:w-3.5"
+          >
+            <ChevronsLeftIcon />
+          </button>
+          <button
+            type="button"
+            aria-label={language === "ko" ? "이전 달" : "Previous month"}
+            title={language === "ko" ? "이전 달" : "Previous month"}
+            onClick={() => onMonthChange(addMonthsToMonthValue(month, -1))}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 [&_svg]:h-3.5 [&_svg]:w-3.5"
+          >
+            <ChevronLeftIcon />
+          </button>
+        </div>
+        <div className="min-w-0 text-center text-sm font-semibold text-stone-900">
+          {formatCalendarMonth(month, language)}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            aria-label={language === "ko" ? "다음 달" : "Next month"}
+            title={language === "ko" ? "다음 달" : "Next month"}
+            onClick={() => onMonthChange(addMonthsToMonthValue(month, 1))}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 [&_svg]:h-3.5 [&_svg]:w-3.5"
+          >
+            <ChevronRightIcon />
+          </button>
+          <button
+            type="button"
+            aria-label={language === "ko" ? "다음 년도" : "Next year"}
+            title={language === "ko" ? "다음 년도" : "Next year"}
+            onClick={() => onMonthChange(addMonthsToMonthValue(month, 12))}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 [&_svg]:h-3.5 [&_svg]:w-3.5"
+          >
+            <ChevronsRightIcon />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] font-semibold text-stone-500">
+        {(language === "ko" ? ["일", "월", "화", "수", "목", "금", "토"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]).map(
+          (day) => (
+            <div key={day}>{day}</div>
+          ),
+        )}
+      </div>
+      <div className="grid min-w-0 grid-cols-7 gap-0 overflow-hidden rounded-sm border-l border-t border-stone-200">
+        {calendarDates.map((date) => {
+          const dayTodos = todosByDate.get(date.iso) ?? [];
+          const isExpanded = expandedDate === date.iso;
+          const visibleDayTodos = isExpanded ? dayTodos : dayTodos.slice(0, 3);
+          return (
+            <div
+              key={date.iso}
+              className={`grid min-h-24 min-w-0 content-start gap-px border-b border-r p-0.5 text-left transition-[min-height] duration-200 ${
+                isExpanded ? "min-h-40" : ""
+              } ${
+                date.isToday
+                  ? "border-stone-200 bg-emerald-50 ring-1 ring-inset ring-emerald-500"
+                  : date.isCurrentMonth
+                    ? "border-stone-200 bg-white"
+                    : "todo-calendar-outside-month border-stone-100 bg-stone-50/70 text-stone-400"
+              }`}
+            >
+              <div
+                className={`text-[10px] font-semibold ${
+                  date.isCurrentMonth ? "text-stone-700" : "todo-calendar-outside-month-date text-stone-400"
+                }`}
+              >
+                {date.day}
+              </div>
+              <div className="grid min-w-0 gap-px">
+                {visibleDayTodos.map((todo) => {
+                  const timingState = getTodoTargetTimingState(todo.targetDate);
+                  return (
+                    <button
+                      key={todo.id}
+                      type="button"
+                      title={todo.title}
+                      aria-pressed={todo.completed}
+                      onClick={() => onOpenTodo(todo)}
+                      disabled={isSaving}
+                      style={{ fontSize: "11px", lineHeight: "1.15" }}
+                      className={`todo-calendar-task-chip ${
+                        todo.completed ? "todo-calendar-task-chip-completed" : "todo-calendar-task-chip-active"
+                      } min-w-0 rounded-sm border px-px py-0 text-left font-semibold transition disabled:cursor-wait disabled:opacity-60 ${
+                        todo.completed
+                          ? "border-stone-200 bg-stone-100 text-stone-500 line-through"
+                          : timingState === "past" || timingState === "today"
+                            ? "border-red-200 bg-red-50 text-red-800 hover:bg-red-100"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+                      }`}
+                    >
+                      <span
+                        className="todo-calendar-task-title block overflow-hidden whitespace-normal break-words"
+                        style={{ fontSize: "11px", lineHeight: "1.15" }}
+                      >
+                        {formatTodoCalendarTitle(todo.title)}
+                      </span>
+                    </button>
+                  );
+                })}
+                {!isExpanded && dayTodos.length > 3 && (
+                  <button
+                    type="button"
+                    onClick={() => temporarilyExpandDate(date.iso)}
+                    style={{ fontSize: "11px", lineHeight: "1.15" }}
+                    className="todo-calendar-task-chip rounded-sm border border-stone-200 bg-stone-50 px-px py-0 text-left font-semibold text-stone-500 hover:bg-stone-100"
+                  >
+                    +{dayTodos.length - 3}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {todos.every((todo) => !todo.targetDate || todo.targetDate.slice(0, 7) !== month) && (
+        <div className="rounded-md bg-stone-100 px-3 py-3 text-sm text-stone-600">{text.noTodosForDate}</div>
+      )}
+    </section>
+  );
+}
+
+function TodoCalendarDetailModal({
+  todo,
+  language,
+  text,
+  isSaving,
+  isEditing,
+  editingTitle,
+  editingTargetDate,
+  editingCategory,
+  onEditingTitleChange,
+  onEditingTargetDateChange,
+  onEditingCategoryChange,
+  onClose,
+  onEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onCheck,
+  onDelete,
+}: {
+  todo: Todo;
+  language: AppLanguage;
+  text: (typeof UI_TEXT)[AppLanguage];
+  isSaving: boolean;
+  isEditing: boolean;
+  editingTitle: string;
+  editingTargetDate: string;
+  editingCategory: string;
+  onEditingTitleChange: (title: string) => void;
+  onEditingTargetDateChange: (date: string) => void;
+  onEditingCategoryChange: (category: string) => void;
+  onClose: () => void;
+  onEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onCheck: () => void;
+  onDelete: () => void;
+}) {
+  const targetDate = todo.targetDate && /^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate) ? todo.targetDate : "";
+  const remainingText = targetDate ? getTodoTargetTiming(targetDate, language) : text.notSet;
+  const targetTimingState = getTodoTargetTimingState(targetDate);
+  const canSaveEdit = Boolean(editingTitle.trim() && editingTargetDate.trim());
+  const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (isSaving || !canSaveEdit) return;
+    onSaveEdit();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4"
+      onPointerDown={onClose}
+    >
+      <section
+        data-swipe-ignore
+        onPointerDown={(event) => event.stopPropagation()}
+        className="relative grid w-full max-w-lg grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 overflow-visible rounded-md border border-stone-300 bg-white p-3 text-stone-950 shadow-xl sm:gap-3"
+      >
+        <button
+          type="button"
+          aria-pressed={todo.completed}
+          aria-label={todo.completed ? `Mark ${todo.title} incomplete` : `Complete ${todo.title}`}
+          onClick={onCheck}
+          disabled={isSaving || isEditing}
+          className={`relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-wait disabled:opacity-50 ${
+            todo.completed
+              ? "border-transparent bg-stone-400 text-white"
+              : "border-stone-300 bg-white text-stone-300 hover:border-stone-500 hover:text-stone-500"
+          }`}
+        >
+          <CheckIcon />
+        </button>
+
+        <div className="relative min-w-0" onDoubleClick={isEditing ? undefined : onEdit}>
+          {isEditing ? (
+            <div className="grid min-w-0 gap-1">
+              <textarea
+                value={editingTitle}
+                onChange={(event) => {
+                  const parsed = parseKoreanDatePhrase(event.target.value);
+                  onEditingTitleChange(event.target.value);
+                  if (parsed) onEditingTargetDateChange(parsed.iso);
+                }}
+                onKeyDown={handleEditKeyDown}
+                autoFocus
+                rows={3}
+                className="editing-text-field min-h-20 min-w-0 resize-y rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm font-medium text-stone-900 outline-none focus:border-emerald-600"
+                aria-label={`Edit ${todo.title}`}
+              />
+              <div className="grid min-w-0 grid-cols-[minmax(7.5rem,auto)_minmax(0,1fr)] items-center gap-1 text-xs text-stone-500">
+                <input
+                  type="date"
+                  value={editingTargetDate}
+                  onChange={(event) => onEditingTargetDateChange(event.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  className="editing-text-field h-7 min-w-0 rounded-md border border-stone-300 bg-white px-1.5 text-xs text-stone-700 outline-none focus:border-emerald-600"
+                  aria-label={`Edit target date for ${todo.title}`}
+                />
+                <input
+                  value={editingCategory}
+                  onChange={(event) => onEditingCategoryChange(event.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  className="editing-text-field h-7 min-w-0 rounded-md border border-stone-300 bg-white px-2 text-xs font-normal text-stone-700 outline-none focus:border-emerald-600"
+                  aria-label={`Edit category for ${todo.title}`}
+                  placeholder={text.category}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div
+                className={`whitespace-pre-wrap break-words text-sm font-medium ${
+                  todo.completed ? "text-stone-500 line-through" : "text-stone-900"
+                }`}
+              >
+                {todo.title}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+                {todo.category.trim() && (
+                  <span className="todo-category-chip rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 font-medium text-stone-700">
+                    {todo.category.trim()}
+                  </span>
+                )}
+                {targetDate ? (
+                  <span className={todo.completed ? "line-through" : ""}>
+                    {text.target}: {targetDate}
+                  </span>
+                ) : (
+                  <span>{getTodoTargetStatus(todo.targetDate, language)}</span>
+                )}
+                <span
+                  className={
+                    !todo.completed && (targetTimingState === "past" || targetTimingState === "today")
+                      ? "font-semibold text-red-700"
+                      : ""
+                  }
+                >
+                  {text.remainingDays}: {remainingText}
+                </span>
+                <span className={`font-semibold ${todo.completed ? "text-emerald-700" : "text-stone-600"}`}>
+                  {todo.completed ? text.completed : text.notCompleted}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-1">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            aria-label="Close task detail"
+            title={text.close}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <CloseIcon />
+          </button>
+          {isEditing ? (
+            <>
+              <button
+                type="button"
+                onClick={onSaveEdit}
+                disabled={isSaving || !canSaveEdit}
+                aria-label={text.saveTitle}
+                title={text.saveTitle}
+                className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <CheckIcon />
+              </button>
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                disabled={isSaving}
+                aria-label={text.cancel}
+                title={text.cancel}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <CloseIcon />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onEdit}
+              disabled={isSaving}
+              aria-label={text.edit}
+              title={text.edit}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+            >
+              <EditIcon />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isSaving}
+            aria-label={text.delete}
+            title={text.delete}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+          >
+            <BinIcon />
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -8976,6 +9521,96 @@ function TodoIcon() {
     >
       <path d="M9 11l2 2 4-4" />
       <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M3 10h18" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function ChevronsLeftIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m11 17-5-5 5-5" />
+      <path d="m18 17-5-5 5-5" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+function ChevronsRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m6 17 5-5-5-5" />
+      <path d="m13 17 5-5-5-5" />
     </svg>
   );
 }

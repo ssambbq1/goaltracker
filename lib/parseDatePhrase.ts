@@ -48,6 +48,32 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
     return toIso(d);
   }
 
+  function endOfYearIso() {
+    return toIso(new Date(now.getFullYear(), 11, 31));
+  }
+
+  function endOfMonthIso(year: number, monthIndex: number) {
+    return toIso(new Date(year, monthIndex + 1, 0));
+  }
+
+  function endOfNamedMonthIso(month: number) {
+    const safeMonth = Math.min(12, Math.max(1, month));
+    let year = now.getFullYear();
+    const monthIndex = safeMonth - 1;
+    const end = new Date(year, monthIndex + 1, 0);
+    if (end.getTime() < now.getTime()) year += 1;
+    return endOfMonthIso(year, monthIndex);
+  }
+
+  function isoForMonthsFromNow(months: number) {
+    const d = new Date(now);
+    const targetYear = d.getFullYear();
+    const targetMonth = d.getMonth() + months;
+    const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+    d.setMonth(targetMonth, Math.min(d.getDate(), lastDay));
+    return toIso(d);
+  }
+
   function dateForMonthDay(month: number, day: number) {
     const safeMonth = Math.min(12, Math.max(1, month));
     const firstOfMonth = new Date(now.getFullYear(), safeMonth - 1, 1);
@@ -78,6 +104,24 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
     return toIso(d);
   }
 
+  const koreanNumberMap: Record<string, number> = {
+    한: 1,
+    두: 2,
+    세: 3,
+    네: 4,
+    다섯: 5,
+    여섯: 6,
+    일곱: 7,
+    여덟: 8,
+    아홉: 9,
+    열: 10,
+    십: 10,
+  };
+
+  function parseDurationNumber(value: string) {
+    return /^\d+$/.test(value) ? Number(value) : koreanNumberMap[value] ?? null;
+  }
+
   // Numeric offsets: '3일 후', '2주 후', '5일 전'
   const offDayMatch = lower.match(/(\d+)\s*일\s*(?:뒤|후)\s*(?:까지)?/);
   if (offDayMatch) return { iso: isoForDaysFromNow(Number(offDayMatch[1])), phrase: offDayMatch[0].trim() };
@@ -85,6 +129,21 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
   if (offDayBefore) return { iso: isoForDaysFromNow(-Number(offDayBefore[1])), phrase: `${offDayBefore[1]}일 전` };
   const offWeekMatch = lower.match(/(\d+)\s*주\s*(?:뒤|후)\s*(?:까지)?/);
   if (offWeekMatch) return { iso: isoForDaysFromNow(Number(offWeekMatch[1]) * 7), phrase: offWeekMatch[0].trim() };
+
+  const durationMatch = lower.match(/(\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|십)\s*(일|주|달|개월)\s*동안/);
+  if (durationMatch) {
+    const amount = parseDurationNumber(durationMatch[1]);
+    if (amount !== null) {
+      const unit = durationMatch[2];
+      const iso =
+        unit === "일"
+          ? isoForDaysFromNow(amount)
+          : unit === "주"
+            ? isoForDaysFromNow(amount * 7)
+            : isoForMonthsFromNow(amount);
+      return { iso, phrase: durationMatch[0].trim() };
+    }
+  }
 
   // direct words
   const tomorrow = lower.match(/내일(?:까지)?/);
@@ -96,9 +155,42 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
   const yesterday = lower.match(/어제(?:까지)?/);
   if (yesterday) return { iso: isoForDaysFromNow(-1), phrase: yesterday[0] };
 
+  // patterns like '이번주 금요일', '다음 화요일', '금요일'
+  const weekdayRegex = new RegExp(`(이번주|다음주|다음|이번)?\\s*([일월화수목금토])요일`);
+  const weekdayMatch = lower.match(weekdayRegex);
+  if (weekdayMatch) {
+    const prefix = weekdayMatch[1] || "";
+    const w = weekdayMatch[2];
+    const target = weekdayMap[w];
+    if (prefix.includes("다음") || prefix === "다음주") return { iso: nextWeekdayIso(target, 1), phrase: `${prefix}${w}요일` };
+    // default: this/next upcoming
+    return { iso: nextWeekdayIso(target, 0), phrase: `${prefix}${w}요일` };
+  }
+
+  // bare weekday like '금요일'
+  const bareWeekday = lower.match(/(^|\s)([일월화수목금토])요일(?=\s|$)/);
+  if (bareWeekday) {
+    const w = bareWeekday[2];
+    const target = weekdayMap[w];
+    return { iso: nextWeekdayIso(target, 0), phrase: `${w}요일` };
+  }
+
   if (/(\b|^)다음주(\b|$)|\b내주\b/.test(lower)) return { iso: isoForDaysFromNow(7), phrase: "다음주" };
   if (/이번주(까지)?/.test(lower)) return { iso: endOfCurrentWeekIso(), phrase: "이번주" };
   if (/이번달(까지)?|이번\s*월(까지)?/.test(lower)) return { iso: endOfCurrentMonthIso(), phrase: "이번달" };
+  const yearEnd = lower.match(/(?:연말|올해\s*말|금년\s*말)\s*(?:까지)?/);
+  if (yearEnd) return { iso: endOfYearIso(), phrase: yearEnd[0].trim() };
+  const nextMonthEnd = lower.match(/다음\s*달\s*말\s*(?:까지)?/);
+  if (nextMonthEnd) return { iso: endOfMonthIso(now.getFullYear(), now.getMonth() + 1), phrase: nextMonthEnd[0].trim() };
+  const namedMonthEnd = lower.match(/(\d{1,2})\s*월\s*말\s*(?:까지)?/);
+  if (namedMonthEnd) {
+    return {
+      iso: endOfNamedMonthIso(Number(namedMonthEnd[1])),
+      phrase: namedMonthEnd[0].trim(),
+    };
+  }
+  const thisMonthEnd = lower.match(/(?:이번\s*달|월)\s*말\s*(?:까지)?/);
+  if (thisMonthEnd) return { iso: endOfCurrentMonthIso(), phrase: thisMonthEnd[0].trim() };
 
   const monthDayUntil = lower.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:까지)?/);
   if (monthDayUntil) {
@@ -114,26 +206,6 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
       iso: dateForCurrentMonthDay(Number(currentMonthDayUntil[1])),
       phrase: currentMonthDayUntil[0].trim(),
     };
-  }
-
-  // patterns like '이번주 금요일', '다음 화요일', '금요일'
-  const weekdayRegex = new RegExp(`(이번주|다음주|다음|이번)?\s*([일월화수목금토])요일`);
-  const weekdayMatch = lower.match(weekdayRegex);
-  if (weekdayMatch) {
-    const prefix = weekdayMatch[1] || "";
-    const w = weekdayMatch[2];
-    const target = weekdayMap[w];
-    if (prefix.includes("다음") || prefix === "다음주") return { iso: nextWeekdayIso(target, 1), phrase: `${prefix}${w}요일` };
-    // default: this/next upcoming
-    return { iso: nextWeekdayIso(target, 0), phrase: `${prefix}${w}요일` };
-  }
-
-  // bare weekday like '금요일'
-  const bareWeekday = lower.match(/\b([일월화수목금토])요일\b/);
-  if (bareWeekday) {
-    const w = bareWeekday[1];
-    const target = weekdayMap[w];
-    return { iso: nextWeekdayIso(target, 0), phrase: `${w}요일` };
   }
 
   // '다음달 3일', '이번달 15일'
@@ -160,9 +232,9 @@ export default function parseKoreanDatePhrase(text: string): ParsedDatePhrase | 
   }
 
   // simple numeric day-of-month like '15일' -> this month or next if passed
-  const plainDay = lower.match(/\b(\d{1,2})\s*일\b/);
+  const plainDay = lower.match(/(^|\s)(\d{1,2})\s*일(?=\s|$)/);
   if (plainDay) {
-    const day = Math.min(31, Number(plainDay[1]));
+    const day = Math.min(31, Number(plainDay[2]));
     const d = new Date(now);
     d.setDate(day);
     if (d.getTime() < now.getTime()) d.setMonth(d.getMonth() + 1, day);
