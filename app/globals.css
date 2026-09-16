@@ -812,3 +812,72 @@ body.dark-mode .routine-celebration-image,
     transform: scale(1.8);
   }
 }
+
+html.dark-mode .login-screen,
+body.dark-mode .login-screen,
+.login-screen {
+  background:
+    radial-gradient(circle at 50% 0%, rgb(225 242 234 / 0.9), transparent 34rem),
+    #eef4ee !important;
+  color: #0c1512 !important;
+  color-scheme: light;
+}
+
+html.dark-mode .login-screen .bg-white,
+body.dark-mode .login-screen .bg-white,
+.login-screen .bg-white {
+  background-color: #ffffff !important;
+}
+
+html.dark-mode .login-screen .bg-\[\#f7faf6\],
+body.dark-mode .login-screen .bg-\[\#f7faf6\],
+.login-screen .bg-\[\#f7faf6\] {
+  background-color: #f7faf6 !important;
+}
+
+html.dark-mode .login-screen .bg-stone-100,
+body.dark-mode .login-screen .bg-stone-100,
+.login-screen .bg-stone-100 {
+  background-color: #f5f5f4 !important;
+}
+
+html.dark-mode .login-screen .text-stone-950,
+html.dark-mode .login-screen .text-stone-900,
+html.dark-mode .login-screen .text-stone-800,
+body.dark-mode .login-screen .text-stone-950,
+body.dark-mode .login-screen .text-stone-900,
+body.dark-mode .login-screen .text-stone-800,
+.login-screen .text-stone-950,
+.login-screen .text-stone-900,
+.login-screen .text-stone-800 {
+  color: #0c1512 !important;
+}
+
+html.dark-mode .login-screen .text-stone-700,
+html.dark-mode .login-screen .text-stone-600,
+html.dark-mode .login-screen .text-stone-500,
+html.dark-mode .login-screen .text-stone-400,
+body.dark-mode .login-screen .text-stone-700,
+body.dark-mode .login-screen .text-stone-600,
+body.dark-mode .login-screen .text-stone-500,
+body.dark-mode .login-screen .text-stone-400,
+.login-screen .text-stone-700,
+.login-screen .text-stone-600,
+.login-screen .text-stone-500,
+.login-screen .text-stone-400 {
+  color: #57534e !important;
+}
+
+html.dark-mode .login-screen input,
+body.dark-mode .login-screen input,
+.login-screen input {
+  background-color: #ffffff !important;
+  color: #0c1512 !important;
+  border-color: #d6d3d1 !important;
+}
+
+html.dark-mode .login-screen input::placeholder,
+body.dark-mode .login-screen input::placeholder,
+.login-screen input::placeholder {
+  color: #78716c !important;
+}

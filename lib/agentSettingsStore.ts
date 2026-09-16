@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { ensureAppUser, requireLoginId } from "@/lib/auth";
+import { canCurrentUserUseAi, ensureAppUser, isAdminIdentity, requireLoginId } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export type AgentSettings = {
@@ -9,6 +9,7 @@ export type AgentSettings = {
   updatedAt?: number;
   schemaMissing?: boolean;
   activeKeyId?: string;
+  canManage: boolean;
   keys: AgentKeySetting[];
 };
 
@@ -138,10 +139,12 @@ function legacyKeyFromRow(row: { llm_model: string | null; api_key_ciphertext: s
 function toPublicSettings(input: {
   keys: StoredAgentKey[];
   activeKeyId: string;
+  canManage: boolean;
   updatedAt?: number;
   schemaMissing?: boolean;
 }): AgentSettings {
   const activeKey = input.keys.find((key) => key.id === input.activeKeyId) ?? input.keys[0] ?? null;
+  const visibleKeys = input.canManage ? input.keys : activeKey ? [activeKey] : [];
   return {
     llmModel: activeKey?.llm_model || DEFAULT_MODEL,
     hasApiKey: Boolean(activeKey?.api_key_ciphertext),
@@ -149,7 +152,8 @@ function toPublicSettings(input: {
     updatedAt: input.updatedAt,
     schemaMissing: input.schemaMissing,
     activeKeyId: activeKey?.id,
-    keys: input.keys.map((key) => ({
+    canManage: input.canManage,
+    keys: visibleKeys.map((key) => ({
       id: key.id,
       llmModel: key.llm_model || DEFAULT_MODEL,
       apiKeyPreview: makeApiKeyPreview(key.api_key_ciphertext),
@@ -159,55 +163,107 @@ function toPublicSettings(input: {
   };
 }
 
-export async function readAgentSettings(): Promise<AgentSettings> {
-  const loginId = await requireLoginId();
+async function getCurrentAdminState(loginId: string) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("login_id, google_email")
+    .eq("login_id", loginId)
+    .maybeSingle();
+  if (error) throw error;
+
+  return isAdminIdentity({ loginId, googleEmail: data?.google_email ?? null });
+}
+
+async function getGlobalAgentSettingsOwnerId() {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("login_id, google_email")
+    .or("login_id.eq.ssambbqcjh@gmail.com,google_email.eq.ssambbqcjh@gmail.com")
+    .limit(10);
+  if (error) throw error;
+
+  const adminIds = (data ?? []).map((user) => user.login_id);
+  if (adminIds.length === 0) return null;
+
+  const settings = await supabase
+    .from("agent_settings")
+    .select("user_id, api_key_ciphertext, api_keys")
+    .in("user_id", adminIds);
+  if (settings.error) {
+    if (isMissingAgentSettingsTableError(settings.error)) return adminIds[0] ?? null;
+    if (isMissingAgentSettingsColumnsError(settings.error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
+    throw settings.error;
+  }
+
+  const ownerWithKey = (settings.data ?? []).find((setting) => {
+    const keyCount = Array.isArray(setting.api_keys) ? setting.api_keys.length : 0;
+    return Boolean(setting.api_key_ciphertext) || keyCount > 0;
+  });
+
+  return ownerWithKey?.user_id ?? adminIds[0] ?? null;
+}
+
+async function readStoredGlobalAgentSettings() {
+  const ownerId = await getGlobalAgentSettingsOwnerId();
+  if (!ownerId) return { ownerId: null, data: null, schemaMissing: false };
+
   const { data, error } = await getSupabaseServerClient()
     .from("agent_settings")
     .select("llm_model,api_key_ciphertext,updated_at_ms,api_keys,active_key_id")
-    .eq("user_id", loginId)
+    .eq("user_id", ownerId)
     .maybeSingle();
 
   if (error) {
-    if (isMissingAgentSettingsTableError(error)) {
-      return toPublicSettings({ keys: [], activeKeyId: "", schemaMissing: true });
-    }
+    if (isMissingAgentSettingsTableError(error)) return { ownerId, data: null, schemaMissing: true };
     if (isMissingAgentSettingsColumnsError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
     throw error;
   }
 
+  return { ownerId, data, schemaMissing: false };
+}
+
+function normalizeSettingsKeys(data: Awaited<ReturnType<typeof readStoredGlobalAgentSettings>>["data"]) {
   const keys = normalizeStoredKeys(data?.api_keys);
   const legacyKey = data ? legacyKeyFromRow(data) : null;
-  const storedKeys = keys.length ? keys : legacyKey ? [legacyKey] : [];
+  return keys.length ? keys : legacyKey ? [legacyKey] : [];
+}
+
+export async function readAgentSettings(): Promise<AgentSettings> {
+  const loginId = await requireLoginId();
+  const canManage = await getCurrentAdminState(loginId);
+  const { data, schemaMissing } = await readStoredGlobalAgentSettings();
+  const storedKeys = normalizeSettingsKeys(data);
   return toPublicSettings({
     keys: storedKeys,
-    activeKeyId: data?.active_key_id || legacyKey?.id || "",
+    activeKeyId: data?.active_key_id || storedKeys[0]?.id || "",
+    canManage,
     updatedAt: data?.updated_at_ms ?? undefined,
+    schemaMissing,
   });
 }
 
 export async function readAgentCredentials() {
-  const loginId = await requireLoginId();
-  const { data, error } = await getSupabaseServerClient()
-    .from("agent_settings")
-    .select("llm_model,api_key_ciphertext,api_keys,active_key_id")
-    .eq("user_id", loginId)
-    .maybeSingle();
-
-  if (error) {
-    if (isMissingAgentSettingsTableError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
-    if (isMissingAgentSettingsColumnsError(error)) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
-    throw error;
-  }
-  const keys = normalizeStoredKeys(data?.api_keys);
-  const legacyKey = data ? legacyKeyFromRow({ ...data, updated_at_ms: null }) : null;
-  const storedKeys = keys.length ? keys : legacyKey ? [legacyKey] : [];
+  await requireLoginId();
+  const { ownerId, data, schemaMissing } = await readStoredGlobalAgentSettings();
+  if (schemaMissing) throw new Error(AGENT_SETTINGS_SCHEMA_MESSAGE);
+  if (!ownerId) throw new Error("Admin must configure an LLM API key before AI Agent can run.");
+  const storedKeys = normalizeSettingsKeys(data);
   const activeKey = storedKeys.find((key) => key.id === data?.active_key_id) ?? storedKeys[0] ?? null;
-  if (!activeKey?.api_key_ciphertext) throw new Error("Add your LLM API key in Settings first.");
+  if (!activeKey?.api_key_ciphertext) throw new Error("Admin must configure an LLM API key before AI Agent can run.");
 
   return {
     model: activeKey.llm_model || data?.llm_model || DEFAULT_MODEL,
     apiKey: decryptApiKey(activeKey.api_key_ciphertext),
   };
+}
+
+export async function requireAgentAccess() {
+  if (!(await canCurrentUserUseAi())) {
+    throw new Error("AI access is not enabled for this account.");
+  }
+  await readAgentCredentials();
 }
 
 export async function saveAgentSettings(input: {
@@ -219,6 +275,7 @@ export async function saveAgentSettings(input: {
   deleteKeyId?: string;
 }) {
   const loginId = await requireLoginId();
+  if (!(await getCurrentAdminState(loginId))) throw new Error("Admin access is required to change AI Agent settings.");
   await ensureAppUser(loginId);
 
   const current = await getSupabaseServerClient()

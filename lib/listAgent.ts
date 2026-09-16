@@ -84,6 +84,29 @@ function asString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+type AgentConversationMessage = {
+  role: "user" | "agent";
+  content: string;
+};
+
+function normalizeConversationHistory(value: unknown): AgentConversationMessage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const role = item.role === "agent" ? "agent" : item.role === "user" ? "user" : null;
+      const content = asString(item.content);
+      if (!role || !content) return null;
+      return {
+        role,
+        content: content.slice(0, 1200),
+      };
+    })
+    .filter((item): item is AgentConversationMessage => Boolean(item))
+    .slice(-10);
+}
+
 function asOptionalString(value: unknown) {
   const text = asString(value);
   return text || undefined;
@@ -748,6 +771,82 @@ function buildAppliedActionsMessage(request: string, actionCount: number) {
     : `Applied ${actionCount} change${actionCount === 1 ? "" : "s"}.`;
 }
 
+function getRequestedCount(request: string, fallback: number) {
+  const digitMatch = request.match(/(\d+)\s*(?:개|가지|items?|habits?|routines?)?/i);
+  if (digitMatch) return Math.min(Math.max(Number(digitMatch[1]) || fallback, 1), 10);
+
+  const koreanCounts: Array<[RegExp, number]> = [
+    [/한\s*(?:개|가지)?/, 1],
+    [/두\s*(?:개|가지)?/, 2],
+    [/세\s*(?:개|가지)?/, 3],
+    [/네\s*(?:개|가지)?/, 4],
+    [/다섯\s*(?:개|가지)?/, 5],
+  ];
+  return koreanCounts.find(([pattern]) => pattern.test(request))?.[1] ?? fallback;
+}
+
+function buildFamousRecommendedHabitActions(request: string): Extract<AgentAction, { type: "add_routine" }>[] {
+  const text = request.toLowerCase();
+  const asksForHabits = /\b(habits?|routines?)\b|습관|루틴/.test(text);
+  const asksToAdd = /\b(add|create|make|put)\b|추가|넣|만들|생성/.test(text);
+  const asksForRecommendation = /\b(famous|successful|recommended|recommendations?|celebrities?|well-known)\b|유명|성공한|추천/.test(text);
+  if (!asksForHabits || !asksToAdd || !asksForRecommendation) return [];
+
+  const count = getRequestedCount(request, 5);
+  const startDate = toLocalDateInputValue();
+  const endDate = toLocalDateInputValue(addDays(new Date(), 365));
+  const habits = [
+    {
+      title: "매일 20분 독서하기",
+      memo: "워런 버핏, 빌 게이츠처럼 꾸준히 읽고 배운 내용을 짧게 남기기",
+    },
+    {
+      title: "아침 운동하기",
+      memo: "버락 오바마, 리처드 브랜슨처럼 하루 초반에 몸을 깨우기",
+    },
+    {
+      title: "10분 명상하기",
+      memo: "오프라 윈프리, 스티브 잡스처럼 마음을 정리하고 집중력 높이기",
+    },
+    {
+      title: "감사 일기 쓰기",
+      memo: "오프라 윈프리처럼 매일 감사한 일을 기록하며 관점 훈련하기",
+    },
+    {
+      title: "하루 목표 3개 정하기",
+      memo: "벤저민 프랭클린, 일론 머스크처럼 중요한 일부터 계획하기",
+    },
+    {
+      title: "잠들기 전 회고하기",
+      memo: "피터 드러커식 자기 점검처럼 오늘의 선택과 내일의 개선점을 적기",
+    },
+    {
+      title: "깊은 작업 시간 확보하기",
+      memo: "칼 뉴포트가 강조한 것처럼 알림을 끄고 한 가지 중요한 일에 몰입하기",
+    },
+    {
+      title: "새 아이디어 3개 적기",
+      memo: "제임스 알투처처럼 창의력을 매일 훈련하기",
+    },
+    {
+      title: "건강한 수면 루틴 지키기",
+      memo: "아리아나 허핑턴처럼 회복을 성과의 기반으로 관리하기",
+    },
+    {
+      title: "중요한 사람에게 먼저 연락하기",
+      memo: "성공한 리더들이 강조하는 관계 관리 습관을 매일 작게 실천하기",
+    },
+  ];
+
+  return habits.slice(0, count).map((habit) => ({
+    type: "add_routine",
+    title: habit.title,
+    memo: habit.memo,
+    startDate,
+    endDate,
+  }));
+}
+
 function looksLikeAlreadySatisfiedAgentMessage(message: string) {
   return /already|done|completed|no\s+changes?|up[-\s]?to[-\s]?date|nothing\s+to\s+(?:do|change)|이미|완료|되어\s*있|변경할?\s*(?:내용|사항)?\s*없/i.test(
     message,
@@ -1155,6 +1254,7 @@ async function callOpenAiCompatibleChat(input: {
   prompt: string;
   context: unknown;
   selectedList: AgentSelectedList | null;
+  conversationHistory: AgentConversationMessage[];
 }) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1176,6 +1276,10 @@ async function callOpenAiCompatibleChat(input: {
             "Only return no actions for an already-satisfied request when the current provided lists already match the requested final state. " +
             "targetList must be one of todo, goal, routine, archive, bin, or unknown. Choose targetList before choosing actions. " +
             "A selectedList value is provided. If the user does not clearly name another list, selectedList is the target list. Do not ask which list to use when selectedList is present. " +
+            "A recent conversationHistory may be provided. Use it only to interpret the current request when it is an explicit follow-up, answer, or clarification to your prior question. " +
+            "If the current request is a short answer to a clarification question, combine it with the earlier user request and proceed with the resolved intent. " +
+            "Do not let history override the current database lists; the provided current lists are the source of truth for ids, status, and whether work is already done. " +
+            "If the user's request is in Korean, write the user-facing message and clarificationQuestion in Korean. If the request is in English, write them in English. " +
             "If selectedList is goal, use only goal actions by default; if todo, use only todo actions; if routine, use only routine actions; if archive, use only archive-scoped actions; if bin, use only permanent bin cleanup actions. " +
             "A clear user mention of another list overrides selectedList. If the user clearly names Tasks/todos, Goals, Habits/routines, archive/storage, or bin/trash, follow that named list instead. " +
             "Actions must be an array of allowed action objects for that exact targetList. Use existing ids for updates/deletes. " +
@@ -1193,6 +1297,8 @@ async function callOpenAiCompatibleChat(input: {
             "add_goal_entry, update_goal_entry, delete_goal_entry, " +
             "add_routine, update_routine, delete_routine, archive_routine, restore_routine, permanently_delete_routine. " +
             "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. If the user did not specify a date for a new task/todo, use today's date. " +
+            "For a habit/routine add request, return add_routine actions with title, memo, startDate, and endDate. If the user did not specify dates, use today as startDate and one year after today as endDate; do not merely say you will add habits. " +
+            "When the user asks to add several recommended habits, famous people's habits, or successful people's habits, create that many add_routine actions with practical habit titles and short memo explanations. " +
             "For adding a new item to the Goals list, always use add_goal with title/memo/target/unit/deadline; never use add_goal_entry for that. " +
             "Use add_goal_entry, update_goal_entry, or delete_goal_entry only when the user explicitly asks to add/update/delete a progress record, record, entry, log, value, amount, 기록, 진행, 진척, 달성량, 실적, 수치, or 값 for an existing goal. " +
             "If the user says 목표에 ... 추가, 목표 목록에 ... 추가, add ... to goals, or add a goal, this means add_goal unless progress record wording is explicit. " +
@@ -1220,8 +1326,9 @@ async function callOpenAiCompatibleChat(input: {
             today: new Date().toISOString().slice(0, 10),
             currentListsReadAt: new Date().toISOString(),
             executionPolicy:
-              "Fresh independent request. Ignore any prior agent execution. Use only these current lists to decide whether actions are needed. If request does not name a list, use selectedList.",
+              "Treat the current request as fresh for database state, but use conversationHistory to resolve direct follow-up answers to prior clarification questions. Use only current lists to decide ids and whether actions are needed. If request does not name a list and history does not resolve it, use selectedList.",
             selectedList: input.selectedList,
+            conversationHistory: input.conversationHistory,
             request: input.prompt,
             lists: input.context,
           }),
@@ -1393,11 +1500,17 @@ async function applyAction(action: AgentAction) {
   });
 }
 
-export async function runListAgent(prompt: string, apply: boolean, selectedListInput?: unknown): Promise<AgentResult> {
+export async function runListAgent(
+  prompt: string,
+  apply: boolean,
+  selectedListInput?: unknown,
+  conversationHistoryInput?: unknown,
+): Promise<AgentResult> {
   const request = prompt.trim();
   if (!request) throw new Error("Agent request is required");
 
   const selectedList = normalizeSelectedList(selectedListInput);
+  const conversationHistory = normalizeConversationHistory(conversationHistoryInput);
   const context = await readAgentListContext();
   const requestedKinds = getRequestedListKinds(request);
   const requestTargetList = getRequestTargetList(request, selectedList);
@@ -1510,6 +1623,26 @@ export async function runListAgent(prompt: string, apply: boolean, selectedListI
     };
   }
 
+  const famousHabitActions = buildFamousRecommendedHabitActions(request);
+  if (famousHabitActions.length > 0) {
+    const shouldApply = shouldApplyActionsImmediately(apply, famousHabitActions);
+    if (shouldApply) {
+      for (const action of famousHabitActions) {
+        await applyAction(action);
+      }
+    }
+
+    return {
+      message: shouldApply
+        ? `유명 인물들이 자주 추천하는 습관 ${famousHabitActions.length}개를 추가했습니다.`
+        : `유명 인물들이 자주 추천하는 습관 ${famousHabitActions.length}개를 추가할 수 있습니다.`,
+      actions: famousHabitActions,
+      applied: shouldApply,
+      targetList: "routine",
+      data: shouldApply ? await readAgentListContext() : context,
+    };
+  }
+
   const itemReferenceClarification = buildItemReferenceClarification(request, context);
   if (itemReferenceClarification) return itemReferenceClarification;
 
@@ -1535,6 +1668,7 @@ export async function runListAgent(prompt: string, apply: boolean, selectedListI
     prompt: request,
     context,
     selectedList,
+    conversationHistory,
   });
   if (
     looksLikeMutationRequest(request) &&
@@ -1548,6 +1682,7 @@ export async function runListAgent(prompt: string, apply: boolean, selectedListI
       prompt: buildFreshRunRetryPrompt(request),
       context,
       selectedList,
+      conversationHistory,
     });
   }
   const sanitizedAgentActions = sanitizeActionsForRequest(agentResponse.actions, request, selectedList);

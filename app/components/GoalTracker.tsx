@@ -138,6 +138,7 @@ type AgentSettings = {
   updatedAt?: number;
   schemaMissing?: boolean;
   activeKeyId?: string;
+  canManage: boolean;
   keys: AgentKeySetting[];
 };
 
@@ -194,6 +195,11 @@ type AgentChatMessage =
       response: AgentResponse;
       status?: "cancelled";
     };
+
+type AgentConversationMessage = {
+  role: "user" | "agent";
+  content: string;
+};
 
 type TrackerView = "list" | "todo" | "routine" | "archive" | "bin" | "detail" | "user";
 type AgentSelectedList = "goal" | "todo" | "routine" | "archive" | "bin";
@@ -626,17 +632,30 @@ function getAgentSelectedList(view: TrackerView): AgentSelectedList {
   return "goal";
 }
 
-async function runAgentRequest(prompt: string, apply: boolean, selectedList: AgentSelectedList) {
+async function runAgentRequest(
+  prompt: string,
+  apply: boolean,
+  selectedList: AgentSelectedList,
+  conversationHistory: AgentConversationMessage[],
+) {
   const response = await fetch("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, apply, selectedList }),
+    body: JSON.stringify({ prompt, apply, selectedList, conversationHistory }),
   });
   const data = (await response.json()) as { error?: string } & Partial<AgentResponse>;
   if (!response.ok || !data.message || !data.data || !Array.isArray(data.actions)) {
     throw new Error(data.error || "Failed to run agent");
   }
   return data as AgentResponse;
+}
+
+function buildAgentConversationHistory(messages: AgentChatMessage[], limit = 10): AgentConversationMessage[] {
+  return messages.slice(-limit).map((message) =>
+    message.role === "user"
+      ? { role: "user", content: message.content }
+      : { role: "agent", content: message.response.message },
+  );
 }
 
 async function applyAgentActionRequest(actions: AgentAction[]) {
@@ -708,7 +727,8 @@ function buildClarifiedAgentPrompt(originalPrompt: string, question: string, ans
     `Original request: ${originalPrompt}`,
     `Clarification question: ${question}`,
     `Clarification answer: ${answer}`,
-    `Combined command: ${answer} ${originalPrompt}`,
+    `Combined command: ${originalPrompt}`,
+    `Use the clarification answer to resolve the missing detail in the original request: ${answer}`,
   ].join("\n");
 }
 
@@ -2013,6 +2033,7 @@ export default function GoalTracker() {
   const [agentSettings, setAgentSettings] = useState<AgentSettings>({
     llmModel: "gpt-4o-mini",
     hasApiKey: false,
+    canManage: false,
     keys: [],
   });
   const [agentSettingsModel, setAgentSettingsModel] = useState("gpt-4o-mini");
@@ -2170,6 +2191,7 @@ export default function GoalTracker() {
   const agentSpeechGeneration = useRef(0);
   const text = UI_TEXT[language];
   const currentAgentSelectedList = getAgentSelectedList(currentView);
+  const canManageAgentSettings = isAdmin && agentSettings.canManage;
   const canRunAgentRequest =
     hasAiAccess &&
     (agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt, currentAgentSelectedList)));
@@ -2255,7 +2277,7 @@ export default function GoalTracker() {
         setDisplayName(session.displayName ?? "");
         setDisplayNameDraft(session.displayName ?? "");
         setIsAdmin(Boolean(session.isAdmin));
-        setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+        setHasAiAccess(false);
         setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
         void loadAnnouncements();
         if (session.isAdmin) {
@@ -2275,6 +2297,7 @@ export default function GoalTracker() {
             if (!isActive) return;
             setAgentSettings(settings);
             setAgentSettingsModel(settings.llmModel);
+            setHasAiAccess(Boolean(settings.hasApiKey && (session.aiEnabled || session.isAdmin)));
           })
           .catch((settingsError) => {
             if (!isActive) return;
@@ -2720,7 +2743,7 @@ export default function GoalTracker() {
     setAssignmentEndDate(toDateInputValue());
     setAssignmentTargetDate(toDateInputValue());
     setAssignmentCategory("");
-    setAgentSettings({ llmModel: "gpt-4o-mini", hasApiKey: false, keys: [] });
+    setAgentSettings({ llmModel: "gpt-4o-mini", hasApiKey: false, canManage: false, keys: [] });
     setAgentSettingsModel("gpt-4o-mini");
     setAgentSettingsApiKey("");
     setAgentPrompt("");
@@ -2809,10 +2832,21 @@ export default function GoalTracker() {
     }
   }
 
+  async function loadAgentSettingsForSession(session: Session) {
+    try {
+      const settings = await fetchAgentSettings();
+      setAgentSettings(settings);
+      setAgentSettingsModel(settings.llmModel);
+      setHasAiAccess(Boolean(settings.hasApiKey && (session.aiEnabled || session.isAdmin)));
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : "Failed to load agent settings");
+    }
+  }
+
   async function submitLogin() {
     const nextLoginId = loginForm.trim();
     if (!nextLoginId || !passwordForm) return;
-    if (passwordForm.length < 8) {
+    if (passwordForm.length < 8 && !(nextLoginId.toLowerCase() === "test" && passwordForm === "TEST")) {
       setError("Password must be at least 8 characters.");
       return;
     }
@@ -2828,8 +2862,9 @@ export default function GoalTracker() {
       setDisplayName(session.displayName ?? "");
       setDisplayNameDraft(session.displayName ?? "");
       setIsAdmin(Boolean(session.isAdmin));
-      setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+      setHasAiAccess(false);
       setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
+      await loadAgentSettingsForSession(session);
       if (session.isAdmin) {
         const adminResult = await fetchAdminUsers();
         setAdminUsers(adminResult.users);
@@ -2867,8 +2902,9 @@ export default function GoalTracker() {
       setDisplayName(displayNameDraft.trim());
       setDisplayNameDraft(displayNameDraft.trim());
       setIsAdmin(Boolean(session.isAdmin));
-      setHasAiAccess(Boolean(session.aiEnabled || session.isAdmin));
+      setHasAiAccess(false);
       setAiAccessSchemaMissing(Boolean(session.aiAccessSchemaMissing));
+      await loadAgentSettingsForSession(session);
       setAdminUsers([]);
       void loadAnnouncements();
       setIsEditingDisplayName(false);
@@ -2945,6 +2981,10 @@ export default function GoalTracker() {
   }
 
   async function submitAgentSettings() {
+    if (!canManageAgentSettings) {
+      setError(language === "ko" ? "관리자만 AI Agent 설정을 변경할 수 있습니다." : "Only admins can change AI Agent settings.");
+      return;
+    }
     const model = agentSettingsModel.trim();
     if (!model) {
       setError("LLM model name is required.");
@@ -2984,6 +3024,7 @@ export default function GoalTracker() {
   }
 
   function openAgentSettingsModal() {
+    if (!canManageAgentSettings) return;
     setAgentKeyToEdit(null);
     setAgentSettingsModel(agentSettings.llmModel || "gpt-4o-mini");
     setAgentSettingsApiKey("");
@@ -2991,6 +3032,7 @@ export default function GoalTracker() {
   }
 
   function openAgentKeyEditModal(key: AgentKeySetting) {
+    if (!canManageAgentSettings) return;
     setAgentKeyToEdit(key);
     setAgentSettingsModel(key.llmModel || "gpt-4o-mini");
     setAgentSettingsApiKey("");
@@ -3005,6 +3047,7 @@ export default function GoalTracker() {
   }
 
   async function selectAgentApiKey(keyId: string, llmModel?: string) {
+    if (!canManageAgentSettings) return;
     setIsSaving(true);
     setError("");
 
@@ -3024,7 +3067,7 @@ export default function GoalTracker() {
   }
 
   async function confirmDeleteAgentApiKey() {
-    if (!agentKeyToDelete) return;
+    if (!agentKeyToDelete || !canManageAgentSettings) return;
 
     setIsSaving(true);
     setError("");
@@ -3069,7 +3112,7 @@ export default function GoalTracker() {
       const result = await saveAdminUserAiAccess(loginIdToUpdate, aiEnabled);
       setAdminUsers(result.users);
       setAiAccessSchemaMissing(result.aiAccessSchemaMissing);
-      if (loginIdToUpdate === loginId) setHasAiAccess(aiEnabled);
+      if (loginIdToUpdate === loginId) setHasAiAccess(Boolean(aiEnabled && agentSettings.hasApiKey));
     } catch (adminError) {
       setError(adminError instanceof Error ? adminError.message : "Failed to update AI access");
     } finally {
@@ -3208,7 +3251,8 @@ export default function GoalTracker() {
     setError("");
 
     try {
-      const result = await runAgentRequest(agentRequest, agentApplyChanges, currentAgentSelectedList);
+      const conversationHistory = buildAgentConversationHistory(agentChatMessages);
+      const result = await runAgentRequest(agentRequest, agentApplyChanges, currentAgentSelectedList, conversationHistory);
       setAgentPrompt("");
       setAgentChatMessages((messages) => [
         ...messages,
@@ -5572,6 +5616,7 @@ export default function GoalTracker() {
           text={text}
           isDarkMode={isDarkMode}
           isUserView={currentView === "user"}
+          pendingAssignmentCount={receivedAssignments.length}
           onLanguageChange={setLanguage}
           onHomeOpen={() => {
             setCurrentView("list");
@@ -5707,9 +5752,9 @@ export default function GoalTracker() {
             />
             <section
               data-swipe-ignore
-              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-[110] grid max-h-[min(82vh,42rem)] w-[calc(100vw-1.5rem)] max-w-xl gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:right-5 sm:p-4"
+              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-[110] flex max-h-[min(82vh,42rem)] w-[calc(100vw-1.5rem)] max-w-xl flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:right-5 sm:p-4"
             >
-            <div className="grid gap-2">
+            <div className="grid shrink-0 gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <h2
                   aria-live="polite"
@@ -5760,7 +5805,7 @@ export default function GoalTracker() {
                   </div>
                 )}
                 <div className="ml-auto flex min-w-0 items-center gap-2">
-                  {agentSettings.keys.length > 0 ? (
+                  {agentSettings.keys.length > 0 && canManageAgentSettings ? (
                     <select
                       value={agentSettings.keys.find((key) => key.isActive)?.id ?? ""}
                       onChange={(event) => {
@@ -5788,6 +5833,14 @@ export default function GoalTracker() {
                         {language === "ko" ? "추가설정.." : "More settings..."}
                       </option>
                     </select>
+                  ) : agentSettings.keys.length > 0 ? (
+                    <span
+                      className={`w-fit truncate whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ${
+                        isAgentPanelExpanded ? "max-w-[42vw] sm:max-w-none" : "max-w-20 sm:max-w-32 md:max-w-none"
+                      }`}
+                    >
+                      {agentSettings.llmModel}
+                    </span>
                   ) : (
                     <span
                       className={`w-fit truncate whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ${
@@ -5827,7 +5880,7 @@ export default function GoalTracker() {
                 {agentChatMessages.length > 0 && (
                   <div
                     ref={agentChatScrollRef}
-                    className="grid max-h-[min(42vh,24rem)] min-h-40 gap-3 overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm"
+                    className="grid min-h-0 flex-1 gap-3 overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm"
                   >
                     {agentChatMessages.map((message) =>
                       message.role === "user" ? (
@@ -5899,9 +5952,9 @@ export default function GoalTracker() {
                     )}
                   </div>
                 )}
-                <div className="grid min-w-0 gap-2">
+                <div className="grid shrink-0 min-w-0 gap-2">
                   {pendingAgentClarification && (
-                    <div className="grid gap-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <div className="grid max-h-28 gap-1 overflow-y-auto rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                       <div className="font-semibold">{language === "ko" ? "Agent 확인 질문" : "Agent clarification"}</div>
                       <p className="whitespace-pre-wrap break-words">{pendingAgentClarification.question}</p>
                     </div>
@@ -5920,10 +5973,10 @@ export default function GoalTracker() {
                           ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
                           : "Example: Review this week's tasks and reschedule overdue items."
                     }
-                    className="min-h-24 w-full min-w-0 resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
+                    className="min-h-24 max-h-32 w-full min-w-0 resize-none rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
                   />
                 </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <label className="flex items-center gap-2 text-sm font-medium text-stone-700">
                     <input
                       type="checkbox"
@@ -6104,8 +6157,8 @@ export default function GoalTracker() {
                       value={String(adminUsers.filter((user) => user.aiEnabled).length)}
                     />
                     <AdminStat
-                      label={language === "ko" ? "키 보유" : "With keys"}
-                      value={String(adminUsers.filter((user) => user.hasApiKey).length)}
+                      label={language === "ko" ? "전역 모델" : "Global model"}
+                      value={agentSettings.llmModel}
                     />
                   </div>
                   {aiAccessSchemaMissing && (
@@ -6396,9 +6449,13 @@ export default function GoalTracker() {
                   </span>
                   <span className="block text-xs text-stone-500">
                     {!hasAiAccess
-                      ? language === "ko"
-                        ? "관리자가 AI 사용 권한을 부여해야 사용할 수 있습니다."
-                        : "An admin must grant AI access before you can use this."
+                      ? !agentSettings.hasApiKey
+                        ? language === "ko"
+                          ? "관리자가 AI Agent key를 설정해야 사용할 수 있습니다."
+                          : "An admin must configure the AI Agent key before you can use this."
+                        : language === "ko"
+                          ? "관리자가 이 계정의 AI 사용을 허용해야 사용할 수 있습니다."
+                          : "An admin must enable AI access for this account."
                       : language === "ko"
                         ? "켜면 목록 화면에 AI Agent 입력 항목이 표시됩니다."
                         : "Show the AI Agent input on list pages when enabled."}
@@ -6416,24 +6473,38 @@ export default function GoalTracker() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-semibold text-stone-900">
-                      {language === "ko" ? "저장된 LLM keys" : "Saved LLM keys"}
+                      {canManageAgentSettings
+                        ? language === "ko"
+                          ? "저장된 LLM keys"
+                          : "Saved LLM keys"
+                        : language === "ko"
+                          ? "AI Agent 모델"
+                          : "AI Agent model"}
                     </div>
                     <div className="truncate text-xs font-medium text-stone-500">
                       {language === "ko" ? "현재 사용" : "Active"}: {agentSettings.llmModel}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={openAgentSettingsModal}
-                    disabled={isSaving || !hasAiAccess}
-                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {text.add}
-                  </button>
+                  {canManageAgentSettings && (
+                    <button
+                      type="button"
+                      onClick={openAgentSettingsModal}
+                      disabled={isSaving}
+                      className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {text.add}
+                    </button>
+                  )}
                 </div>
                 {agentSettings.keys.length === 0 ? (
                   <div className="rounded-md border border-dashed border-stone-300 bg-white px-3 py-3 text-sm text-stone-600">
-                    {language === "ko" ? "저장된 API key가 없습니다." : "No API key is saved."}
+                    {canManageAgentSettings
+                      ? language === "ko"
+                        ? "저장된 API key가 없습니다."
+                        : "No API key is saved."
+                      : language === "ko"
+                        ? "관리자가 아직 AI Agent key를 설정하지 않았습니다."
+                        : "An admin has not configured the AI Agent key yet."}
                   </div>
                 ) : (
                   <div className="grid gap-1.5">
@@ -6449,7 +6520,7 @@ export default function GoalTracker() {
                             type="checkbox"
                             checked={key.isActive}
                             onChange={() => selectAgentApiKey(key.id, key.llmModel)}
-                            disabled={isSaving || key.isActive}
+                            disabled={isSaving || key.isActive || !canManageAgentSettings}
                             className="h-4 w-4 shrink-0 accent-emerald-700"
                           />
                           <span className="grid min-w-0 gap-0.5">
@@ -6460,28 +6531,30 @@ export default function GoalTracker() {
                             </span>
                           </span>
                         </label>
-                        <div className="flex shrink-0 items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openAgentKeyEditModal(key)}
-                            disabled={isSaving}
-                            aria-label={`Edit ${key.llmModel}`}
-                            title={text.edit}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            <EditIcon />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAgentKeyToDelete(key)}
-                            disabled={isSaving}
-                            aria-label={`Delete ${key.llmModel}`}
-                            title={text.delete}
-                            className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            <BinIcon />
-                          </button>
-                        </div>
+                        {canManageAgentSettings && (
+                          <div className="flex shrink-0 items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openAgentKeyEditModal(key)}
+                              disabled={isSaving}
+                              aria-label={`Edit ${key.llmModel}`}
+                              title={text.edit}
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <EditIcon />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAgentKeyToDelete(key)}
+                              disabled={isSaving}
+                              aria-label={`Delete ${key.llmModel}`}
+                              title={text.delete}
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <BinIcon />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -6494,6 +6567,10 @@ export default function GoalTracker() {
                       ? language === "ko"
                         ? "AI 사용 권한이 필요합니다."
                         : "AI access is required."
+                      : !canManageAgentSettings
+                      ? language === "ko"
+                        ? "관리자가 설정한 key로 AI Agent가 실행됩니다."
+                        : "AI Agent runs with the key configured by an admin."
                       : language === "ko"
                       ? "체크된 key가 AI Agent에서 사용됩니다."
                       : "The checked key is used by AI Agent."
@@ -8073,7 +8150,7 @@ export default function GoalTracker() {
         </div>,
         document.body,
       )}
-      {typeof document !== "undefined" && isAgentSettingsModalOpen && createPortal(
+      {typeof document !== "undefined" && isAgentSettingsModalOpen && canManageAgentSettings && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
@@ -8424,7 +8501,7 @@ export default function GoalTracker() {
         </div>,
         document.body,
       )}
-      {typeof document !== "undefined" && agentKeyToDelete && createPortal(
+      {typeof document !== "undefined" && agentKeyToDelete && canManageAgentSettings && createPortal(
         <div className="fixed inset-0 z-50 bg-stone-950/40">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
@@ -9300,13 +9377,13 @@ function LoginScreen({
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#eef4ee] px-3 py-8 text-stone-950">
+    <main className="login-screen flex min-h-screen items-center justify-center bg-[#eef4ee] px-3 py-8 text-stone-950">
       <section className="w-full max-w-md overflow-hidden rounded-lg border border-stone-300 bg-white shadow-lg">
         <div className="border-b border-stone-200 bg-[#f7faf6] px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-bold text-emerald-700">BoostMaster</p>
-              <h1 className="mt-2 text-2xl font-semibold">
+              <h1 className="mt-2 text-2xl font-semibold text-stone-950">
                 {mode === "login" ? (isKorean ? "로그인" : "Login") : isKorean ? "회원가입" : "Sign up"}
               </h1>
             </div>

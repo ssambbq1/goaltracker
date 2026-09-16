@@ -17,6 +17,7 @@ type HeadProps = {
   text: HeadText;
   isDarkMode: boolean;
   isUserView: boolean;
+  pendingAssignmentCount: number;
   onLanguageChange: (language: AppLanguage) => void;
   onHomeOpen: () => void;
   onThemeToggle: () => void;
@@ -28,6 +29,7 @@ export default function Head({
   text,
   isDarkMode,
   isUserView,
+  pendingAssignmentCount,
   onLanguageChange,
   onHomeOpen,
   onThemeToggle,
@@ -189,14 +191,28 @@ export default function Head({
         <button
           type="button"
           onClick={onUserOpen}
-          aria-label="Open user page"
-          className={`flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition sm:h-10 sm:w-10 ${
+          aria-label={
+            pendingAssignmentCount > 0
+              ? language === "ko"
+                ? `사용자 페이지 열기, 새 부여 요청 ${pendingAssignmentCount}개`
+                : `Open user page, ${pendingAssignmentCount} new assignments`
+              : "Open user page"
+          }
+          className={`relative flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition sm:h-10 sm:w-10 ${
             isUserView
               ? "border-emerald-700 bg-emerald-700 text-white"
               : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
           }`}
         >
           <UserIcon />
+          {pendingAssignmentCount > 0 && (
+            <span
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold leading-none text-white ring-1 ring-white"
+            >
+              {pendingAssignmentCount > 99 ? "99+" : pendingAssignmentCount}
+            </span>
+          )}
         </button>
       </div>
     </header>

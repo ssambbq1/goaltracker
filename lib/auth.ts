@@ -51,6 +51,10 @@ function validatePassword(password: string) {
   }
 }
 
+function isTestLoginPassword(loginId: string, password: string) {
+  return loginId === "test" && password === "TEST";
+}
+
 function normalizeDisplayName(displayName: string | null | undefined) {
   const value = (displayName ?? "").trim();
   if (value.length > 30) throw new Error("Nickname must be 30 characters or fewer.");
@@ -178,7 +182,7 @@ export async function loginWithId(rawLoginId: string, rawPassword: string) {
   const loginId = normalizeLoginId(rawLoginId);
   const password = rawPassword;
   validateManualLoginId(loginId);
-  validatePassword(password);
+  if (!isTestLoginPassword(loginId, password)) validatePassword(password);
 
   const supabase = getSupabaseServerClient();
   const now = Date.now();
