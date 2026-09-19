@@ -5217,7 +5217,7 @@ export default function GoalTracker() {
   const assignmentDetailGoalChartMode = assignmentDetailGoal ? getGoalChartMode(assignmentDetailGoal.id) : "raw";
 
   const assignmentDetailModal = assignmentDetail ? (
-    <div className="fixed inset-0 z-50 bg-stone-950/40 px-4 py-6">
+    <div className="fixed inset-0 z-[120] bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
       <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-3xl gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -5408,7 +5408,7 @@ export default function GoalTracker() {
   ) : null;
 
   const assignmentFormModal = isAssignmentModalOpen ? (
-    <div className="fixed inset-0 z-50 bg-stone-950/40 px-4 py-6">
+    <div className="fixed inset-0 z-[120] bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
       <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-lg gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</h2>
@@ -7860,7 +7860,7 @@ export default function GoalTracker() {
         </section>
 
         {isEntryModalOpen && activeGoal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4 py-6">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
             <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold">{text.addProgressRecord}</h2>
@@ -8052,7 +8052,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && isAnnouncementModalOpen && createPortal(
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 py-6">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 py-6 backdrop-blur-sm">
           <section
             role="dialog"
             aria-modal="true"
@@ -8151,7 +8151,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && isAgentSettingsModalOpen && canManageAgentSettings && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">
@@ -8240,7 +8240,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && isGoalModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addGoal}</h2>
@@ -8353,7 +8353,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && isTodoModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addTodo}</h2>
@@ -8463,7 +8463,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && todoToDelete && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.delete}?</h2>
@@ -8502,7 +8502,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && agentKeyToDelete && canManageAgentSettings && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">
@@ -8548,7 +8548,7 @@ export default function GoalTracker() {
         document.body,
       )}
       {typeof document !== "undefined" && isEmptyBinModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.emptyBinTitle}</h2>
@@ -8882,7 +8882,7 @@ function TodoCalendarDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 px-4"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/40 px-4 backdrop-blur-sm"
       onPointerDown={onClose}
     >
       <section

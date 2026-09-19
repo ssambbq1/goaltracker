@@ -221,6 +221,18 @@ body.dark-mode .bg-white\/20,
   background-color: rgb(248 250 252 / 0.1) !important;
 }
 
+html.dark-mode .fixed.inset-0.bg-stone-950\/35,
+html.dark-mode .fixed.inset-0.bg-stone-950\/40,
+html.dark-mode .fixed.inset-0.bg-stone-950\/45,
+body.dark-mode .fixed.inset-0.bg-stone-950\/35,
+body.dark-mode .fixed.inset-0.bg-stone-950\/40,
+body.dark-mode .fixed.inset-0.bg-stone-950\/45,
+.app-dark .fixed.inset-0.bg-stone-950\/35,
+.app-dark .fixed.inset-0.bg-stone-950\/40,
+.app-dark .fixed.inset-0.bg-stone-950\/45 {
+  background-color: rgb(248 250 252 / 0.18) !important;
+}
+
 html.dark-mode .bg-stone-50,
 html.dark-mode .bg-stone-100,
 html.dark-mode .bg-stone-200,

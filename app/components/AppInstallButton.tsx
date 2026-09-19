@@ -121,7 +121,7 @@ export default function AppInstallButton({ language }: { language: AppLanguage }
       </button>
 
       {showHelp && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 px-4">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 backdrop-blur-sm">
           <section
             role="dialog"
             aria-modal="true"

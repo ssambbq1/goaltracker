@@ -548,8 +548,14 @@ export default function RoutineTracker({
   const suppressRoutineClickAfterDrag = useRef(false);
   const listReorderScrollLock = useRef<ScrollLockState | null>(null);
   const dragImageClone = useRef<HTMLElement | null>(null);
+  const latestRoutines = useRef<Routine[]>(routines);
   const pendingMarkSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
+  const inFlightMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
+
+  useEffect(() => {
+    latestRoutines.current = routines;
+  }, [routines]);
 
   useEffect(() => {
     let isActive = true;
@@ -943,20 +949,25 @@ export default function RoutineTracker({
     window.addEventListener("pointercancel", handlePointerUp);
   }
 
-  function setRoutineMark(routine: Routine, date: string, nextStatus: RoutineMarkStatus | null) {
-    const previous = routines;
-    const nextRoutines = applyRoutineMarkToRoutines(routines, routine.id, date, nextStatus);
+  function markDate(routine: Routine, date: string) {
+    const previous = latestRoutines.current;
+    const currentStatus = previous
+      .find((currentRoutine) => currentRoutine.id === routine.id)
+      ?.marks.find((mark) => mark.date === date)?.status;
+    const nextStatus = currentStatus === undefined ? "success" : currentStatus === "success" ? "failure" : null;
+    const nextRoutines = applyRoutineMarkToRoutines(previous, routine.id, date, nextStatus);
     const shouldShowTodayCompleteReaction =
       date === todayIso &&
       nextStatus === "success" &&
-      !areScheduledRoutinesSuccessfulOn(routines, todayIso) &&
+      !areScheduledRoutinesSuccessfulOn(previous, todayIso) &&
       areScheduledRoutinesSuccessfulOn(nextRoutines, todayIso);
     const shouldStopTodayCompleteReaction =
       date === todayIso &&
       nextStatus === "failure" &&
-      areScheduledRoutinesSuccessfulOn(routines, todayIso) &&
+      areScheduledRoutinesSuccessfulOn(previous, todayIso) &&
       !areScheduledRoutinesSuccessfulOn(nextRoutines, todayIso);
     const saveKey = `${routine.id}:${date}`;
+    latestRoutines.current = nextRoutines;
     setRoutines(nextRoutines);
     if (shouldShowTodayCompleteReaction) onTodayChecklistComplete?.();
     if (shouldStopTodayCompleteReaction) onTodayChecklistIncomplete?.();
@@ -974,32 +985,50 @@ export default function RoutineTracker({
     }, 500);
   }
 
-  function markDate(routine: Routine, date: string, currentStatus: RoutineMarkStatus | undefined) {
-    const nextStatus = currentStatus === undefined ? "success" : currentStatus === "success" ? "failure" : null;
-    setRoutineMark(routine, date, nextStatus);
-  }
-
   async function flushRoutineMarkSave(saveKey: string) {
+    if (inFlightMarkSaves.current[saveKey]) return;
+
     const pendingSave = pendingMarkSaves.current[saveKey];
     if (!pendingSave) return;
 
     delete pendingMarkSaves.current[saveKey];
     delete pendingMarkSaveTimers.current[saveKey];
+    inFlightMarkSaves.current[saveKey] = pendingSave;
 
     try {
-      setRoutines(applyPendingMarkSaves(await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status)));
+      const savedRoutines = await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status);
+      delete inFlightMarkSaves.current[saveKey];
+      const nextRoutines = applyOutstandingMarkSaves(savedRoutines);
+      latestRoutines.current = nextRoutines;
+      setRoutines(nextRoutines);
     } catch (error) {
-      setRoutines(applyPendingMarkSaves(pendingSave.previous));
+      delete inFlightMarkSaves.current[saveKey];
+      const previousStatus = pendingSave.previous
+        .find((routine) => routine.id === pendingSave.routineId)
+        ?.marks.find((mark) => mark.date === pendingSave.date)?.status ?? null;
+      const rolledBackRoutines = applyRoutineMarkToRoutines(
+        latestRoutines.current,
+        pendingSave.routineId,
+        pendingSave.date,
+        previousStatus,
+      );
+      const nextRoutines = applyOutstandingMarkSaves(rolledBackRoutines);
+      latestRoutines.current = nextRoutines;
+      setRoutines(nextRoutines);
       onError(error instanceof Error ? error.message : "Failed to update habit mark");
+    } finally {
+      if (pendingMarkSaves.current[saveKey]) void flushRoutineMarkSave(saveKey);
     }
   }
 
-  function applyPendingMarkSaves(savedRoutines: Routine[]) {
-    const pendingSaves = Object.values(pendingMarkSaves.current);
-    if (pendingSaves.length === 0) return savedRoutines;
+  function applyOutstandingMarkSaves(savedRoutines: Routine[]) {
+    const outstandingSaves = new Map<string, PendingRoutineMarkSave>();
+    Object.entries(inFlightMarkSaves.current).forEach(([saveKey, save]) => outstandingSaves.set(saveKey, save));
+    Object.entries(pendingMarkSaves.current).forEach(([saveKey, save]) => outstandingSaves.set(saveKey, save));
+    if (outstandingSaves.size === 0) return savedRoutines;
 
     return savedRoutines.map((routine) => {
-      const routinePendingSaves = pendingSaves.filter((save) => save.routineId === routine.id);
+      const routinePendingSaves = [...outstandingSaves.values()].filter((save) => save.routineId === routine.id);
       if (routinePendingSaves.length === 0) return routine;
 
       return routinePendingSaves.reduce<Routine>((nextRoutine, save) => {
@@ -1250,7 +1279,7 @@ export default function RoutineTracker({
       )}
 
       {typeof document !== "undefined" && isRoutineModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/40">
+        <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
           <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addRoutine}</h2>
