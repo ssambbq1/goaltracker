@@ -18,6 +18,7 @@ export type Goal = {
   createdAt: number;
   deletedAt?: number;
   archivedAt?: number;
+  focused: boolean;
   entries: ProgressEntry[];
 };
 
@@ -45,7 +46,7 @@ const ROUTINE_GOAL_UNIT = "__routine__";
 
 function applyGoalPatch(
   goal: Goal,
-  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>,
+  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt" | "focused">>,
 ) {
   return {
     ...goal,
@@ -55,6 +56,7 @@ function applyGoalPatch(
     unit: patch.unit !== undefined && patch.unit.trim() ? patch.unit.trim() : goal.unit,
     deadline: patch.deadline !== undefined ? patch.deadline : goal.deadline,
     createdAt: patch.createdAt !== undefined && Number.isFinite(patch.createdAt) ? patch.createdAt : goal.createdAt,
+    focused: patch.focused ?? goal.focused,
   };
 }
 
@@ -124,6 +126,7 @@ async function readStoredGoals() {
     createdAt: goal.created_at_ms,
     deletedAt: goal.deleted_at_ms ?? undefined,
     archivedAt: goal.archived_at_ms ?? undefined,
+    focused: Boolean(goal.focused),
     entries: entriesByGoal.get(goal.id) ?? [],
   }));
 }
@@ -154,6 +157,7 @@ export async function writeGoals(goals: Goal[]) {
     created_at_ms: goal.createdAt,
     deleted_at_ms: goal.deletedAt ?? null,
     archived_at_ms: goal.archivedAt ?? null,
+    focused: goal.focused,
     position: index,
   }));
   const entryRows = goals.flatMap((goal) =>
@@ -232,6 +236,7 @@ export async function addGoal(input: NewGoalInput) {
     unit: input.unit.trim() || "units",
     deadline: input.deadline,
     createdAt: typeof input.createdAt === "number" && Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
+    focused: false,
     entries: [],
   };
 
@@ -253,7 +258,7 @@ export async function addGoal(input: NewGoalInput) {
 
 export async function updateGoal(
   goalId: string,
-  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>,
+  patch: Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt" | "focused">>,
 ) {
   const loginId = await requireLoginId();
   const goal = (await readStoredGoals()).find((item) => item.id === goalId);
@@ -270,6 +275,7 @@ export async function updateGoal(
       unit: nextGoal.unit,
       deadline: nextGoal.deadline,
       created_at_ms: nextGoal.createdAt,
+      focused: nextGoal.focused,
     })
     .eq("id", goalId)
     .eq("user_id", loginId);

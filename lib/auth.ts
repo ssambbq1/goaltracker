@@ -234,6 +234,7 @@ export async function getAccountProfile(loginId: string) {
     const isAdmin = isAdminIdentity({ loginId, googleEmail: fallback.data?.google_email ?? null });
     return {
       loginId,
+      displayLoginId: fallback.data?.google_email ?? loginId,
       displayName: fallback.data?.display_name ?? null,
       isAdmin,
       aiEnabled: isAdmin,
@@ -244,6 +245,7 @@ export async function getAccountProfile(loginId: string) {
   const isAdmin = isAdminIdentity({ loginId, googleEmail: user?.google_email ?? null });
   return {
     loginId,
+    displayLoginId: user?.google_email ?? loginId,
     displayName: user?.display_name ?? null,
     isAdmin,
     aiEnabled: isAdmin || Boolean(user?.ai_enabled),
@@ -281,8 +283,8 @@ export async function signupWithId(rawLoginId: string, rawPassword: string, rawD
 
 export async function loginWithGoogleUser(user: User) {
   const googleUserId = user.id;
-  const loginId = `google_${googleUserId.replaceAll("-", "")}`;
   const googleEmail = user.email?.toLowerCase() ?? null;
+  const loginId = googleEmail || `google_${googleUserId.replaceAll("-", "")}`;
   const displayName =
     typeof user.user_metadata?.full_name === "string"
       ? user.user_metadata.full_name

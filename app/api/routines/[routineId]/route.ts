@@ -13,6 +13,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/routin
       memo: typeof body?.memo === "string" ? body.memo : undefined,
       startDate: typeof body?.startDate === "string" ? body.startDate : undefined,
       endDate: typeof body?.endDate === "string" ? body.endDate : undefined,
+      focused: typeof body?.focused === "boolean" ? body.focused : undefined,
     });
 
     return Response.json({ routines });

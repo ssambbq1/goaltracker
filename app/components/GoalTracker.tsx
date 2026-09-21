@@ -39,10 +39,11 @@ type Goal = {
   createdAt: number;
   deletedAt?: number;
   archivedAt?: number;
+  focused: boolean;
   entries: ProgressEntry[];
 };
 
-type GoalPatch = Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt">>;
+type GoalPatch = Partial<Pick<Goal, "title" | "memo" | "target" | "unit" | "deadline" | "createdAt" | "focused">>;
 
 type GoalDraft = {
   goalId: string;
@@ -61,6 +62,7 @@ type Todo = {
   createdAt: number;
   targetDate?: string;
   category: string;
+  focused: boolean;
   deletedAt?: number;
   archivedAt?: number;
 };
@@ -74,6 +76,7 @@ type RoutineSummary = {
   createdAt: number;
   deletedAt?: number;
   archivedAt?: number;
+  focused: boolean;
 };
 
 type FriendProfile = {
@@ -256,6 +259,7 @@ const AGENT_VOICE_ERROR_RESTART_DELAY_MS = 700;
 
 type Session = {
   loginId: string | null;
+  displayLoginId?: string | null;
   displayName: string | null;
   isAdmin?: boolean;
   aiEnabled?: boolean;
@@ -381,6 +385,7 @@ const TODO_DISPLAY_MODE_STORAGE_KEY = "boost-mastery.todo-display-mode";
 const TODO_CATEGORY_FILTER_STORAGE_KEY = "boost-mastery.todo-category-filter";
 const TODO_CATEGORY_ORDER_STORAGE_KEY = "boost-mastery.todo-category-order";
 const ADMIN_USER_LIST_EXPANDED_STORAGE_KEY = "boost-mastery.admin-user-list-expanded";
+const ADMIN_AGENT_SETTINGS_EXPANDED_STORAGE_KEY = "boost-mastery.admin-agent-settings-expanded";
 const DISMISSED_ANNOUNCEMENTS_STORAGE_KEY = "boost-mastery.dismissed-announcements";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
@@ -1378,6 +1383,23 @@ function writeStoredAdminUserListExpanded(isExpanded: boolean) {
   }
 }
 
+function readStoredAdminAgentSettingsExpanded() {
+  try {
+    const stored = window.localStorage.getItem(ADMIN_AGENT_SETTINGS_EXPANDED_STORAGE_KEY);
+    return stored === null ? true : stored === "true";
+  } catch {
+    return true;
+  }
+}
+
+function writeStoredAdminAgentSettingsExpanded(isExpanded: boolean) {
+  try {
+    window.localStorage.setItem(ADMIN_AGENT_SETTINGS_EXPANDED_STORAGE_KEY, isExpanded ? "true" : "false");
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
 function readStoredAgentEnabled() {
   try {
     const stored = window.localStorage.getItem(AGENT_ENABLED_STORAGE_KEY);
@@ -1762,7 +1784,7 @@ async function reorderTodoList(todoIds: string[]) {
   return Array.isArray(data.todos) ? data.todos : [];
 }
 
-async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category">>) {
+async function patchTodo(todoId: string, patch: Partial<Pick<Todo, "title" | "completed" | "targetDate" | "category" | "focused">>) {
   const response = await fetch(`/api/todos/${todoId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -1981,6 +2003,7 @@ async function fetchAssignmentDetail(assignmentId: string) {
 
 export default function GoalTracker() {
   const [loginId, setLoginId] = useState<string | null>(null);
+  const [displayLoginId, setDisplayLoginId] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState("");
   const [passwordForm, setPasswordForm] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -1991,6 +2014,9 @@ export default function GoalTracker() {
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isAdminUserListExpanded, setIsAdminUserListExpanded] = useState(() =>
     typeof window === "undefined" ? true : readStoredAdminUserListExpanded(),
+  );
+  const [isAdminAgentSettingsExpanded, setIsAdminAgentSettingsExpanded] = useState(() =>
+    typeof window === "undefined" ? true : readStoredAdminAgentSettingsExpanded(),
   );
   const [announcementQueue, setAnnouncementQueue] = useState<Announcement[]>([]);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
@@ -2257,6 +2283,7 @@ export default function GoalTracker() {
 
         if (!session.loginId) {
           setLoginId(null);
+          setDisplayLoginId(null);
           setDisplayName("");
           setDisplayNameDraft("");
           setIsAdmin(false);
@@ -2264,6 +2291,7 @@ export default function GoalTracker() {
           setAiAccessSchemaMissing(false);
           setAdminUsers([]);
           setIsAdminUserListExpanded(true);
+          setIsAdminAgentSettingsExpanded(true);
           setAnnouncementQueue([]);
           setActiveAnnouncement(null);
           setAnnouncementsSchemaMissing(false);
@@ -2273,6 +2301,7 @@ export default function GoalTracker() {
         }
 
         setLoginId(session.loginId);
+        setDisplayLoginId(session.displayLoginId ?? session.loginId);
         setLoginForm(session.loginId);
         setDisplayName(session.displayName ?? "");
         setDisplayNameDraft(session.displayName ?? "");
@@ -2452,6 +2481,10 @@ export default function GoalTracker() {
   useEffect(() => {
     writeStoredAdminUserListExpanded(isAdminUserListExpanded);
   }, [isAdminUserListExpanded]);
+
+  useEffect(() => {
+    writeStoredAdminAgentSettingsExpanded(isAdminAgentSettingsExpanded);
+  }, [isAdminAgentSettingsExpanded]);
 
   useEffect(() => {
     writeStoredAgentEnabled(isAgentEnabled);
@@ -2718,6 +2751,7 @@ export default function GoalTracker() {
     setAiAccessSchemaMissing(false);
     setAdminUsers([]);
     setIsAdminUserListExpanded(true);
+    setIsAdminAgentSettingsExpanded(true);
     setAnnouncementQueue([]);
     setActiveAnnouncement(null);
     setAnnouncementsSchemaMissing(false);
@@ -2858,6 +2892,7 @@ export default function GoalTracker() {
       const loggedInId = await login(nextLoginId, passwordForm);
       const session = await fetchSession();
       setLoginId(loggedInId);
+      setDisplayLoginId(session.displayLoginId ?? loggedInId);
       setLoginForm(loggedInId);
       setDisplayName(session.displayName ?? "");
       setDisplayNameDraft(session.displayName ?? "");
@@ -2898,6 +2933,7 @@ export default function GoalTracker() {
       const signedUpId = await signup(nextLoginId, passwordForm, displayNameDraft);
       const session = await fetchSession();
       setLoginId(signedUpId);
+      setDisplayLoginId(session.displayLoginId ?? signedUpId);
       setLoginForm(signedUpId);
       setDisplayName(displayNameDraft.trim());
       setDisplayNameDraft(displayNameDraft.trim());
@@ -2924,6 +2960,7 @@ export default function GoalTracker() {
     try {
       await logout();
       setLoginId(null);
+      setDisplayLoginId(null);
       setDisplayName("");
       setDisplayNameDraft("");
       setIsAdmin(false);
@@ -2931,6 +2968,7 @@ export default function GoalTracker() {
       setAiAccessSchemaMissing(false);
       setAdminUsers([]);
       setIsAdminUserListExpanded(true);
+      setIsAdminAgentSettingsExpanded(true);
       setAnnouncementQueue([]);
       setActiveAnnouncement(null);
       setAnnouncementsSchemaMissing(false);
@@ -2956,6 +2994,7 @@ export default function GoalTracker() {
     try {
       await deleteAccount(accountDeletePassword);
       setLoginId(null);
+      setDisplayLoginId(null);
       setLoginForm("");
       setDisplayName("");
       setDisplayNameDraft("");
@@ -2964,6 +3003,7 @@ export default function GoalTracker() {
       setAiAccessSchemaMissing(false);
       setAdminUsers([]);
       setIsAdminUserListExpanded(true);
+      setIsAdminAgentSettingsExpanded(true);
       setAnnouncementQueue([]);
       setActiveAnnouncement(null);
       setAnnouncementsSchemaMissing(false);
@@ -4280,6 +4320,40 @@ export default function GoalTracker() {
     setDetectedTodoDate(parsed);
     setTodoTitle(title);
     if (parsed) setTodoTargetDate(parsed.iso);
+  }
+
+  async function toggleGoalFocus(goal: Goal) {
+    const previousGoals = goals;
+    const focused = !goal.focused;
+    setGoals((current) => current.map((item) => (item.id === goal.id ? { ...item, focused } : item)));
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setGoals(await patchGoal(goal.id, { focused }));
+    } catch (updateError) {
+      setGoals(previousGoals);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update focus mark");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function toggleTodoFocus(todo: Todo) {
+    const previousTodos = todos;
+    const focused = !todo.focused;
+    setTodos((current) => current.map((item) => (item.id === todo.id ? { ...item, focused } : item)));
+    setIsSaving(true);
+    setError("");
+
+    try {
+      setTodos(await patchTodo(todo.id, { focused }));
+    } catch (updateError) {
+      setTodos(previousTodos);
+      setError(updateError instanceof Error ? updateError.message : "Failed to update focus mark");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function addTodoItem() {
@@ -6047,14 +6121,6 @@ export default function GoalTracker() {
               <div className="ml-auto flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsAccountDeleteOpen((open) => !open)}
-                  disabled={isSaving}
-                  className="flex h-8 shrink-0 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                >
-                  Delete
-                </button>
-                <button
-                  type="button"
                   onClick={submitLogout}
                   disabled={isSaving}
                   className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
@@ -6068,7 +6134,7 @@ export default function GoalTracker() {
               <div className="grid min-w-0 gap-1 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                 <span className="text-xs font-medium leading-none text-stone-500">Login ID</span>
                 <span className="min-w-0 overflow-x-auto whitespace-nowrap font-mono text-sm font-semibold text-stone-900 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {loginId}
+                  {displayLoginId || loginId}
                 </span>
               </div>
               <div className="grid gap-2 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
@@ -6120,6 +6186,34 @@ export default function GoalTracker() {
                   </div>
                 )}
               </div>
+              <label className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2 font-semibold text-stone-900">
+                    <RobotIcon />
+                    {language === "ko" ? "AI Agent 활성화" : "Enable AI Agent"}
+                  </span>
+                  <span className="mt-1 block text-xs text-stone-500">
+                    {!hasAiAccess
+                      ? !agentSettings.hasApiKey
+                        ? language === "ko"
+                          ? "관리자가 AI Agent key를 설정해야 사용할 수 있습니다."
+                          : "An admin must configure the AI Agent key before you can use this."
+                        : language === "ko"
+                          ? "관리자가 이 계정의 AI 사용을 허용해야 사용할 수 있습니다."
+                          : "An admin must enable AI access for this account."
+                      : language === "ko"
+                        ? "켜면 목록 화면에 AI Agent 입력 항목이 표시됩니다."
+                        : "Show the AI Agent input on list pages when enabled."}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={isAgentEnabled && hasAiAccess}
+                  onChange={(event) => toggleAgentEnabled(event.target.checked)}
+                  disabled={!hasAiAccess}
+                  className="h-5 w-5 accent-emerald-700"
+                />
+              </label>
             </section>
 
             {isAdmin && (
@@ -6180,15 +6274,15 @@ export default function GoalTracker() {
                       type="button"
                       aria-expanded={isAdminUserListExpanded}
                       onClick={() => setIsAdminUserListExpanded((expanded) => !expanded)}
-                      className="flex w-full items-center justify-between gap-2 rounded-md border border-stone-200 px-3 py-2 text-left text-sm font-semibold text-stone-900 hover:bg-stone-50"
+                      className="flex w-full items-center justify-between gap-2 rounded-md bg-stone-100 px-3 py-2.5 text-left text-sm font-semibold text-stone-900 transition-colors hover:bg-stone-200/70"
                     >
                       <span>
                         {language === "ko" ? "회원 목록" : "User list"} ({adminUsers.length})
                       </span>
-                      {isAdminUserListExpanded ? <ArrowUpIcon /> : <ArrowDownIcon />}
+                      <DisclosureChevronIcon isExpanded={isAdminUserListExpanded} />
                     </button>
                     {isAdminUserListExpanded && (
-                      <div className="grid gap-1.5">
+                      <div className="ml-2 grid gap-1.5 border-l-2 border-stone-200 py-1 pl-2 sm:ml-3 sm:pl-3">
                         {adminUsers.length === 0 ? (
                           <div className="rounded-md border border-dashed border-stone-300 px-3 py-3 text-stone-600">
                             {language === "ko" ? "회원 목록이 없습니다." : "No users found."}
@@ -6249,6 +6343,138 @@ export default function GoalTracker() {
                         </div>
                           ))
                         )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid gap-2">
+                    <button
+                      type="button"
+                      aria-expanded={isAdminAgentSettingsExpanded}
+                      onClick={() => setIsAdminAgentSettingsExpanded((expanded) => !expanded)}
+                      className="flex w-full items-center justify-between gap-2 rounded-md bg-stone-100 px-3 py-2.5 text-left text-sm font-semibold text-stone-900 transition-colors hover:bg-stone-200/70"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <RobotIcon />
+                        <span className="truncate">{language === "ko" ? "AI Agent Settings" : "AI Agent Settings"}</span>
+                      </span>
+                      <DisclosureChevronIcon isExpanded={isAdminAgentSettingsExpanded} />
+                    </button>
+                    {isAdminAgentSettingsExpanded && (
+                      <div className="ml-2 grid gap-3 border-l-2 border-stone-200 py-1 pl-2 sm:ml-3 sm:pl-3">
+                        <div className="grid gap-2 text-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-stone-900">
+                                {canManageAgentSettings
+                                  ? language === "ko"
+                                    ? "저장된 LLM keys"
+                                    : "Saved LLM keys"
+                                  : language === "ko"
+                                    ? "AI Agent 모델"
+                                    : "AI Agent model"}
+                              </div>
+                              <div className="truncate text-xs font-medium text-stone-500">
+                                {language === "ko" ? "현재 사용" : "Active"}: {agentSettings.llmModel}
+                              </div>
+                            </div>
+                            {canManageAgentSettings && (
+                              <button
+                                type="button"
+                                onClick={openAgentSettingsModal}
+                                disabled={isSaving}
+                                className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                              >
+                                {text.add}
+                              </button>
+                            )}
+                          </div>
+                          {agentSettings.keys.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-stone-300 bg-white px-3 py-3 text-sm text-stone-600">
+                              {canManageAgentSettings
+                                ? language === "ko"
+                                  ? "저장된 API key가 없습니다."
+                                  : "No API key is saved."
+                                : language === "ko"
+                                  ? "관리자가 아직 AI Agent key를 설정하지 않았습니다."
+                                  : "An admin has not configured the AI Agent key yet."}
+                            </div>
+                          ) : (
+                            <div className="grid gap-1.5">
+                              {agentSettings.keys.map((key) => (
+                                <div
+                                  key={key.id}
+                                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-white px-2 py-2 ${
+                                    key.isActive ? "border-emerald-300" : "border-stone-200"
+                                  }`}
+                                >
+                                  <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={key.isActive}
+                                      onChange={() => selectAgentApiKey(key.id, key.llmModel)}
+                                      disabled={isSaving || key.isActive || !canManageAgentSettings}
+                                      className="h-4 w-4 shrink-0 accent-emerald-700"
+                                    />
+                                    <span className="grid min-w-0 gap-0.5">
+                                      <span className="truncate font-semibold text-stone-900">{key.llmModel}</span>
+                                      <span className="truncate font-mono text-[11px] text-stone-600">{key.apiKeyPreview}</span>
+                                      <span className="truncate text-[11px] text-stone-500">
+                                        {formatSavedAt(key.updatedAt, language)}
+                                      </span>
+                                    </span>
+                                  </label>
+                                  {canManageAgentSettings && (
+                                    <div className="flex shrink-0 items-center justify-end gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => openAgentKeyEditModal(key)}
+                                        disabled={isSaving}
+                                        aria-label={`Edit ${key.llmModel}`}
+                                        title={text.edit}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+                                      >
+                                        <EditIcon />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAgentKeyToDelete(key)}
+                                        disabled={isSaving}
+                                        aria-label={`Delete ${key.llmModel}`}
+                                        title={text.delete}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                                      >
+                                        <BinIcon />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <span className="text-sm text-stone-600">
+                            {agentSettings.hasApiKey
+                              ? !hasAiAccess
+                                ? language === "ko"
+                                  ? "AI 사용 권한이 필요합니다."
+                                  : "AI access is required."
+                                : !canManageAgentSettings
+                                ? language === "ko"
+                                  ? "관리자가 설정한 key로 AI Agent가 실행됩니다."
+                                  : "AI Agent runs with the key configured by an admin."
+                                : language === "ko"
+                                ? "체크된 key가 AI Agent에서 사용됩니다."
+                                : "The checked key is used by AI Agent."
+                              : agentSettings.schemaMissing
+                                ? language === "ko"
+                                  ? "Supabase에 최신 agent_settings migration을 먼저 적용해야 합니다."
+                                  : "Apply the latest agent_settings migration in Supabase before saving."
+                              : language === "ko"
+                                ? "저장된 API key가 없습니다."
+                                : "No API key is saved."}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -6435,155 +6661,6 @@ export default function GoalTracker() {
               </div>
             </section>
 
-            <section className="grid gap-2">
-              <div className="flex items-center gap-2 px-1 pb-1 pt-1">
-                <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <RobotIcon />
-                  {language === "ko" ? "AI Agent Settings" : "AI Agent Settings"}
-                </h2>
-              </div>
-              <label className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
-                <span className="min-w-0">
-                  <span className="block font-semibold text-stone-900">
-                    {language === "ko" ? "AI Agent 활성화" : "Enable AI Agent"}
-                  </span>
-                  <span className="block text-xs text-stone-500">
-                    {!hasAiAccess
-                      ? !agentSettings.hasApiKey
-                        ? language === "ko"
-                          ? "관리자가 AI Agent key를 설정해야 사용할 수 있습니다."
-                          : "An admin must configure the AI Agent key before you can use this."
-                        : language === "ko"
-                          ? "관리자가 이 계정의 AI 사용을 허용해야 사용할 수 있습니다."
-                          : "An admin must enable AI access for this account."
-                      : language === "ko"
-                        ? "켜면 목록 화면에 AI Agent 입력 항목이 표시됩니다."
-                        : "Show the AI Agent input on list pages when enabled."}
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={isAgentEnabled && hasAiAccess}
-                  onChange={(event) => toggleAgentEnabled(event.target.checked)}
-                  disabled={!hasAiAccess}
-                  className="h-5 w-5 accent-emerald-700"
-                />
-              </label>
-              <div className="grid gap-2 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-semibold text-stone-900">
-                      {canManageAgentSettings
-                        ? language === "ko"
-                          ? "저장된 LLM keys"
-                          : "Saved LLM keys"
-                        : language === "ko"
-                          ? "AI Agent 모델"
-                          : "AI Agent model"}
-                    </div>
-                    <div className="truncate text-xs font-medium text-stone-500">
-                      {language === "ko" ? "현재 사용" : "Active"}: {agentSettings.llmModel}
-                    </div>
-                  </div>
-                  {canManageAgentSettings && (
-                    <button
-                      type="button"
-                      onClick={openAgentSettingsModal}
-                      disabled={isSaving}
-                      className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {text.add}
-                    </button>
-                  )}
-                </div>
-                {agentSettings.keys.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-stone-300 bg-white px-3 py-3 text-sm text-stone-600">
-                    {canManageAgentSettings
-                      ? language === "ko"
-                        ? "저장된 API key가 없습니다."
-                        : "No API key is saved."
-                      : language === "ko"
-                        ? "관리자가 아직 AI Agent key를 설정하지 않았습니다."
-                        : "An admin has not configured the AI Agent key yet."}
-                  </div>
-                ) : (
-                  <div className="grid gap-1.5">
-                    {agentSettings.keys.map((key) => (
-                      <div
-                        key={key.id}
-                        className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-white px-2 py-2 ${
-                          key.isActive ? "border-emerald-300" : "border-stone-200"
-                        }`}
-                      >
-                        <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={key.isActive}
-                            onChange={() => selectAgentApiKey(key.id, key.llmModel)}
-                            disabled={isSaving || key.isActive || !canManageAgentSettings}
-                            className="h-4 w-4 shrink-0 accent-emerald-700"
-                          />
-                          <span className="grid min-w-0 gap-0.5">
-                            <span className="truncate font-semibold text-stone-900">{key.llmModel}</span>
-                            <span className="truncate font-mono text-[11px] text-stone-600">{key.apiKeyPreview}</span>
-                            <span className="truncate text-[11px] text-stone-500">
-                              {formatSavedAt(key.updatedAt, language)}
-                            </span>
-                          </span>
-                        </label>
-                        {canManageAgentSettings && (
-                          <div className="flex shrink-0 items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => openAgentKeyEditModal(key)}
-                              disabled={isSaving}
-                              aria-label={`Edit ${key.llmModel}`}
-                              title={text.edit}
-                              className="flex h-7 w-7 items-center justify-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <EditIcon />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAgentKeyToDelete(key)}
-                              disabled={isSaving}
-                              aria-label={`Delete ${key.llmModel}`}
-                              title={text.delete}
-                              className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <BinIcon />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm text-stone-600">
-                  {agentSettings.hasApiKey
-                    ? !hasAiAccess
-                      ? language === "ko"
-                        ? "AI 사용 권한이 필요합니다."
-                        : "AI access is required."
-                      : !canManageAgentSettings
-                      ? language === "ko"
-                        ? "관리자가 설정한 key로 AI Agent가 실행됩니다."
-                        : "AI Agent runs with the key configured by an admin."
-                      : language === "ko"
-                      ? "체크된 key가 AI Agent에서 사용됩니다."
-                      : "The checked key is used by AI Agent."
-                    : agentSettings.schemaMissing
-                      ? language === "ko"
-                        ? "Supabase에 최신 agent_settings migration을 먼저 적용해야 합니다."
-                        : "Apply the latest agent_settings migration in Supabase before saving."
-                    : language === "ko"
-                      ? "저장된 API key가 없습니다."
-                      : "No API key is saved."}
-                </span>
-              </div>
-            </section>
           </div>
         </section>
 
@@ -6640,6 +6717,30 @@ export default function GoalTracker() {
                 </button>
               </div>
             </div>
+          </section>
+        )}
+
+        {currentView === "user" && (
+          <section className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-red-200 bg-white px-3 py-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-red-800">
+                {language === "ko" ? "계정 삭제" : "Delete account"}
+              </h2>
+              <p className="mt-1 text-xs text-stone-600">
+                {language === "ko"
+                  ? "이 계정을 삭제하면 아이디와 모든 관련 데이터가 영구적으로 삭제됩니다."
+                  : "Deleting this account permanently removes the ID and all related data."}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-expanded={isAccountDeleteOpen}
+              onClick={() => setIsAccountDeleteOpen((open) => !open)}
+              disabled={isSaving}
+              className="flex h-8 shrink-0 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              Delete
+            </button>
           </section>
         )}
 
@@ -6757,7 +6858,9 @@ export default function GoalTracker() {
                                 ? "border-emerald-500 bg-white shadow-sm"
                               : draggingGoalId === goal.id
                                   ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
-                              : "border-stone-200 bg-white hover:border-stone-400"
+                              : goal.focused
+                                ? "border-amber-400 bg-amber-50 shadow-sm hover:border-amber-500"
+                                : "border-stone-200 bg-white hover:border-stone-400"
                           } ${draggingGoalId === goal.id ? "pt-9" : ""}`}
                         >
                           {draggingGoalId === goal.id && (
@@ -6769,6 +6872,25 @@ export default function GoalTracker() {
                             <div className="min-w-0">
                               <div className="flex min-w-0 items-center justify-between gap-1.5">
                                 <span className="min-w-0 break-words font-medium">{goal.title}</span>
+                                <button
+                                  type="button"
+                                  aria-pressed={goal.focused}
+                                  aria-label={language === "ko" ? `${goal.title} 집중 표시` : `Focus ${goal.title}`}
+                                  title={language === "ko" ? "집중 표시" : "Focus mark"}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void toggleGoalFocus(goal);
+                                  }}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  disabled={isSaving}
+                                  className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+                                    goal.focused
+                                      ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
+                                      : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+                                  }`}
+                                >
+                                  <FocusRibbonIcon filled={goal.focused} />
+                                </button>
                                 <MiniGoalProgressChart
                                   goal={goal}
                                   mode={getGoalChartMode(goal.id)}
@@ -6963,7 +7085,9 @@ export default function GoalTracker() {
                               ? "border-emerald-500 bg-white shadow-sm"
                             : draggingTodoId === todo.id
                                 ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
-                              : "border-stone-200 bg-white"
+                              : todo.focused
+                                ? "border-amber-400 bg-amber-50 shadow-sm"
+                                : "border-stone-200 bg-white"
                         } ${draggingTodoId === todo.id ? "pt-9" : ""}`}
                       >
                         {draggingTodoId === todo.id && (
@@ -7127,7 +7251,26 @@ export default function GoalTracker() {
                             </button>
                           </div>
                         ) : selectedTodoCount === 0 ? (
-                          <div data-todo-action-menu>
+                          <div data-todo-action-menu className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              aria-pressed={todo.focused}
+                              aria-label={language === "ko" ? `${todo.title} 집중 표시` : `Focus ${todo.title}`}
+                              title={language === "ko" ? "집중 표시" : "Focus mark"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void toggleTodoFocus(todo);
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              disabled={isSaving}
+                              className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+                                todo.focused
+                                  ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
+                                  : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+                              }`}
+                            >
+                              <FocusRibbonIcon filled={todo.focused} />
+                            </button>
                             <button
                               type="button"
                               aria-expanded={todoActionMenuId === todo.id}
@@ -9448,7 +9591,7 @@ function LoginScreen({
               autoCapitalize="none"
               autoComplete="username"
               className="rounded-md border border-stone-300 px-3 py-2.5 font-normal outline-none focus:border-emerald-600"
-              placeholder="my-id"
+              placeholder={isKorean ? "E-mail 주소" : "E-mail address"}
             />
           </label>
           {mode === "signup" && (
@@ -9559,6 +9702,40 @@ function ArrowDownIcon() {
       strokeWidth="2"
     >
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function DisclosureChevronIcon({ isExpanded }: { isExpanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className={`h-4 w-4 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function FocusRibbonIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5 shrink-0"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M6 4.75A1.75 1.75 0 0 1 7.75 3h8.5A1.75 1.75 0 0 1 18 4.75V21l-6-3.75L6 21V4.75Z" />
     </svg>
   );
 }

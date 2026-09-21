@@ -41,6 +41,7 @@ export type Database = {
           created_at_ms: number;
           deleted_at_ms: number | null;
           archived_at_ms: number | null;
+          focused: boolean;
           position: number;
         };
         Insert: {
@@ -54,6 +55,7 @@ export type Database = {
           created_at_ms: number;
           deleted_at_ms?: number | null;
           archived_at_ms?: number | null;
+          focused?: boolean;
           position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["goals"]["Insert"]>;
@@ -94,6 +96,7 @@ export type Database = {
           created_at_ms: number;
           target_date: string | null;
           category: string;
+          focused: boolean;
           position: number;
         };
         Insert: {
@@ -104,6 +107,7 @@ export type Database = {
           created_at_ms: number;
           target_date?: string | null;
           category?: string;
+          focused?: boolean;
           position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["todos"]["Insert"]>;
@@ -126,6 +130,7 @@ export type Database = {
           start_date: string;
           end_date: string;
           created_at_ms: number;
+          focused: boolean;
           position: number;
         };
         Insert: {
@@ -136,6 +141,7 @@ export type Database = {
           start_date: string;
           end_date: string;
           created_at_ms: number;
+          focused?: boolean;
           position?: number;
         };
         Update: Partial<Database["public"]["Tables"]["routines"]["Insert"]>;

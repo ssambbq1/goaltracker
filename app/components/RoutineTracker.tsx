@@ -32,6 +32,7 @@ type Routine = {
   startDate: string;
   endDate: string;
   createdAt: number;
+  focused: boolean;
   marks: RoutineMark[];
 };
 
@@ -450,7 +451,7 @@ async function reorderRoutineList(routineIds: string[]) {
   return Array.isArray(data.routines) ? data.routines : [];
 }
 
-async function patchRoutine(routineId: string, patch: Partial<Pick<Routine, "title" | "memo" | "startDate" | "endDate">>) {
+async function patchRoutine(routineId: string, patch: Partial<Pick<Routine, "title" | "memo" | "startDate" | "endDate" | "focused">>) {
   const response = await fetch(`/api/routines/${routineId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -985,6 +986,28 @@ export default function RoutineTracker({
     }, 500);
   }
 
+  async function toggleRoutineFocus(routine: Routine) {
+    const previous = latestRoutines.current;
+    const focused = !routine.focused;
+    const optimistic = previous.map((item) => (item.id === routine.id ? { ...item, focused } : item));
+    latestRoutines.current = optimistic;
+    setRoutines(optimistic);
+    onSavingChange(true);
+    onError("");
+
+    try {
+      const savedRoutines = await patchRoutine(routine.id, { focused });
+      latestRoutines.current = savedRoutines;
+      setRoutines(savedRoutines);
+    } catch (error) {
+      latestRoutines.current = previous;
+      setRoutines(previous);
+      onError(error instanceof Error ? error.message : "Failed to update focus mark");
+    } finally {
+      onSavingChange(false);
+    }
+  }
+
   async function flushRoutineMarkSave(saveKey: string) {
     if (inFlightMarkSaves.current[saveKey]) return;
 
@@ -1210,6 +1233,7 @@ export default function RoutineTracker({
                     onPointerUp={endRoutineReorderLongPress}
                     onPointerCancel={endRoutineReorderLongPress}
                     onMark={markDate}
+                    onFocus={() => void toggleRoutineFocus(routine)}
                   />
                 ))}
               </div>
@@ -1391,6 +1415,7 @@ function RoutineListItem({
   onPointerUp,
   onPointerCancel,
   onMark,
+  onFocus,
 }: {
   routine: Routine;
   language: AppLanguage;
@@ -1404,6 +1429,7 @@ function RoutineListItem({
   onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onMark: (routine: Routine, date: string, status: RoutineMarkStatus | undefined) => void;
+  onFocus: () => void;
 }) {
   const recentWeekDates = getRecentWeekDates();
   const markByDate = new Map(routine.marks.map((mark) => [mark.date, mark.status]));
@@ -1435,7 +1461,9 @@ function RoutineListItem({
             ? "border-emerald-500 bg-white shadow-sm"
             : isDragging
               ? "pointer-events-none border-stone-400 bg-white opacity-0 shadow-sm"
-              : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
+              : routine.focused
+                ? "border-amber-400 bg-amber-50 shadow-sm hover:border-amber-500"
+                : "border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50"
       } ${isDragging ? "pt-9" : ""}`}
     >
       {isDragging && (
@@ -1443,10 +1471,29 @@ function RoutineListItem({
           {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
-      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1">
+      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-1">
         <div className="min-w-0">
           <div className="truncate font-medium text-stone-950">{routine.title}</div>
         </div>
+        <button
+          type="button"
+          aria-pressed={routine.focused}
+          aria-label={language === "ko" ? `${routine.title} 집중 표시` : `Focus ${routine.title}`}
+          title={language === "ko" ? "집중 표시" : "Focus mark"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFocus();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          disabled={isSaving}
+          className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+            routine.focused
+              ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
+              : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+          }`}
+        >
+          <FocusRibbonIcon filled={routine.focused} />
+        </button>
         <span
           className="justify-self-end whitespace-nowrap text-right text-xs font-semibold text-emerald-700"
           title={`${ROUTINE_TEXT[language].successRate}: ${stats.rate}%`}
@@ -2034,6 +2081,23 @@ function BinIcon() {
       <path d="M19 6l-1 14H6L5 6" />
       <path d="M10 11v5" />
       <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function FocusRibbonIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5 shrink-0"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <path d="M6 4.75A1.75 1.75 0 0 1 7.75 3h8.5A1.75 1.75 0 0 1 18 4.75V21l-6-3.75L6 21V4.75Z" />
     </svg>
   );
 }

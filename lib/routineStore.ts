@@ -20,6 +20,7 @@ export type Routine = {
   createdAt: number;
   deletedAt?: number;
   archivedAt?: number;
+  focused: boolean;
   marks: RoutineMark[];
 };
 
@@ -30,7 +31,7 @@ export type NewRoutineInput = {
   endDate: string;
 };
 
-export type RoutinePatchInput = Partial<Pick<Routine, "title" | "memo" | "startDate" | "endDate">>;
+export type RoutinePatchInput = Partial<Pick<Routine, "title" | "memo" | "startDate" | "endDate" | "focused">>;
 
 const ROUTINE_GOAL_UNIT = "__routine__";
 const ROUTINE_GOAL_MEMO_PREFIX = "__boostmaster_routine__:";
@@ -131,7 +132,7 @@ async function readRoutinesFromGoalRows(loginId: string) {
   const supabase = getSupabaseServerClient();
   const { data: routineRows, error: routinesError } = await supabase
     .from("goals")
-    .select("id,title,memo,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
+    .select("id,title,memo,deadline,created_at_ms,deleted_at_ms,archived_at_ms,focused")
     .eq("user_id", loginId)
     .eq("unit", ROUTINE_GOAL_UNIT)
     .is("deleted_at_ms", null)
@@ -176,6 +177,7 @@ async function readRoutinesFromGoalRows(loginId: string) {
       createdAt: routine.created_at_ms,
       deletedAt: routine.deleted_at_ms ?? undefined,
       archivedAt: routine.archived_at_ms ?? undefined,
+      focused: Boolean(routine.focused),
       marks: marksByRoutine.get(routine.id) ?? [],
     };
   });
@@ -185,7 +187,7 @@ async function readStoredRoutineGoalRows(loginId: string, kind: "archived" | "de
   const supabase = getSupabaseServerClient();
   const query = supabase
     .from("goals")
-    .select("id,title,memo,deadline,created_at_ms,deleted_at_ms,archived_at_ms")
+    .select("id,title,memo,deadline,created_at_ms,deleted_at_ms,archived_at_ms,focused")
     .eq("user_id", loginId)
     .eq("unit", ROUTINE_GOAL_UNIT);
 
@@ -208,6 +210,7 @@ async function readStoredRoutineGoalRows(loginId: string, kind: "archived" | "de
       createdAt: routine.created_at_ms,
       deletedAt: routine.deleted_at_ms ?? undefined,
       archivedAt: routine.archived_at_ms ?? undefined,
+      focused: Boolean(routine.focused),
       marks: [],
     };
   });
@@ -225,6 +228,7 @@ async function addRoutineToGoalRows(loginId: string, routine: Routine) {
     created_at_ms: routine.createdAt,
     deleted_at_ms: routine.deletedAt ?? null,
     archived_at_ms: routine.archivedAt ?? null,
+    focused: routine.focused,
     position: -1,
   });
 
@@ -279,7 +283,7 @@ async function moveRoutineFromRoutineRowsToGoalRows(
   const supabase = getSupabaseServerClient();
   const { data: routine, error: readError } = await supabase
     .from("routines")
-    .select("id,title,memo,start_date,end_date,created_at_ms")
+    .select("id,title,memo,start_date,end_date,created_at_ms,focused")
     .eq("id", routineId)
     .eq("user_id", loginId)
     .maybeSingle();
@@ -338,6 +342,7 @@ async function moveRoutineFromRoutineRowsToGoalRows(
     unit: ROUTINE_GOAL_UNIT,
     deadline: routine.end_date,
     created_at_ms: routine.created_at_ms,
+    focused: Boolean(routine.focused),
     archived_at_ms: destination === "archive" ? movedAt : null,
     deleted_at_ms: destination === "bin" ? movedAt : null,
     position: -1,
@@ -371,6 +376,7 @@ async function updateRoutineInGoalRows(loginId: string, routineId: string, patch
       title,
       memo: encodeRoutineMemo(memo, ordered.startDate),
       deadline: ordered.endDate,
+      focused: patch.focused ?? current.focused,
     })
     .eq("id", routineId)
     .eq("user_id", loginId)
@@ -394,7 +400,7 @@ async function restoreRoutineFromGoalRows(loginId: string, routineId: string) {
   const supabase = getSupabaseServerClient();
   const { data: routine, error: readError } = await supabase
     .from("goals")
-    .select("id,title,memo,deadline,created_at_ms")
+    .select("id,title,memo,deadline,created_at_ms,focused")
     .eq("id", routineId)
     .eq("user_id", loginId)
     .eq("unit", ROUTINE_GOAL_UNIT)
@@ -414,6 +420,7 @@ async function restoreRoutineFromGoalRows(loginId: string, routineId: string) {
     start_date: startDate,
     end_date: endDate,
     created_at_ms: routine.created_at_ms,
+    focused: Boolean(routine.focused),
     position: -1,
   });
 
@@ -533,6 +540,7 @@ async function readStoredRoutines() {
     startDate: routine.start_date,
     endDate: routine.end_date,
     createdAt: routine.created_at_ms,
+    focused: Boolean(routine.focused),
     marks: marksByRoutine.get(routine.id) ?? [],
   }));
 }
@@ -599,6 +607,7 @@ export async function addRoutine(input: NewRoutineInput) {
     startDate,
     endDate,
     createdAt: Date.now(),
+    focused: false,
     marks: [],
   };
 
@@ -637,6 +646,7 @@ export async function updateRoutine(routineId: string, patch: RoutinePatchInput)
     memo: patch.memo !== undefined ? patch.memo.trim() : current.memo,
     start_date: ordered.startDate,
     end_date: ordered.endDate,
+    focused: patch.focused ?? current.focused,
   };
 
   const supabase = getSupabaseServerClient();

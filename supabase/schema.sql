@@ -31,11 +31,13 @@ create table if not exists public.goals (
   created_at_ms bigint not null,
   deleted_at_ms bigint,
   archived_at_ms bigint,
+  focused boolean not null default false,
   position integer not null default 0
 );
 
 alter table public.goals
-  add column if not exists user_id text references public.app_users(login_id) on delete cascade;
+  add column if not exists user_id text references public.app_users(login_id) on delete cascade,
+  add column if not exists focused boolean not null default false;
 
 create table if not exists public.progress_entries (
   id text primary key,
@@ -53,13 +55,15 @@ create table if not exists public.todos (
   created_at_ms bigint not null,
   target_date date,
   category text not null default '',
+  focused boolean not null default false,
   position integer not null default 0
 );
 
 alter table public.todos
   add column if not exists position integer not null default 0,
   add column if not exists target_date date,
-  add column if not exists category text not null default '';
+  add column if not exists category text not null default '',
+  add column if not exists focused boolean not null default false;
 
 create table if not exists public.routines (
   id text primary key,
@@ -69,9 +73,13 @@ create table if not exists public.routines (
   start_date date not null,
   end_date date not null,
   created_at_ms bigint not null,
+  focused boolean not null default false,
   position integer not null default 0,
   check (start_date <= end_date)
 );
+
+alter table public.routines
+  add column if not exists focused boolean not null default false;
 
 create table if not exists public.routine_marks (
   id text primary key,
