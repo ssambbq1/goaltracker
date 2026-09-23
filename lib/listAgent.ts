@@ -15,14 +15,17 @@ import {
 import {
   addRoutine,
   archiveRoutine,
+  clearRoutineMark,
   deleteRoutine,
   permanentlyDeleteRoutine,
   readArchivedRoutines,
   readDeletedRoutines,
   readRoutines,
   restoreRoutine,
+  setRoutineMark,
   updateRoutine,
 } from "@/lib/routineStore";
+import { summarizeRoutineForAgent } from "@/lib/routineAgentSummary";
 import {
   addTodo,
   archiveTodo,
@@ -35,16 +38,17 @@ import {
   updateTodo,
 } from "@/lib/todoStore";
 import { readAgentCredentials } from "@/lib/agentSettingsStore";
+import { getTaskOverdueDays } from "@/lib/taskQueryFilters";
 
 type AgentAction =
   | { type: "add_todo"; title: string; targetDate: string; category?: string }
-  | { type: "update_todo"; id: string; title?: string; targetDate?: string; category?: string; completed?: boolean }
+  | { type: "update_todo"; id: string; title?: string; targetDate?: string; category?: string; completed?: boolean; focused?: boolean }
   | { type: "delete_todo"; id: string }
   | { type: "archive_todo"; id: string }
   | { type: "restore_todo"; id: string }
   | { type: "permanently_delete_todo"; id: string }
   | { type: "add_goal"; title: string; memo?: string; target?: number; unit?: string; deadline?: string; createdAt?: number }
-  | { type: "update_goal"; id: string; title?: string; memo?: string; target?: number; unit?: string; deadline?: string; createdAt?: number }
+  | { type: "update_goal"; id: string; title?: string; memo?: string; target?: number; unit?: string; deadline?: string; createdAt?: number; focused?: boolean }
   | { type: "delete_goal"; id: string }
   | { type: "archive_goal"; id: string }
   | { type: "restore_goal"; id: string }
@@ -53,7 +57,9 @@ type AgentAction =
   | { type: "update_goal_entry"; goalId: string; entryId: string; value?: number; memo?: string; createdAt?: number }
   | { type: "delete_goal_entry"; goalId: string; entryId: string }
   | { type: "add_routine"; title: string; memo?: string; startDate: string; endDate: string }
-  | { type: "update_routine"; id: string; title?: string; memo?: string; startDate?: string; endDate?: string }
+  | { type: "update_routine"; id: string; title?: string; memo?: string; startDate?: string; endDate?: string; focused?: boolean }
+  | { type: "set_routine_mark"; routineId: string; date: string; status: "success" | "failure" }
+  | { type: "clear_routine_mark"; routineId: string; date: string }
   | { type: "delete_routine"; id: string }
   | { type: "archive_routine"; id: string }
   | { type: "restore_routine"; id: string }
@@ -150,88 +156,6 @@ function addDays(date: Date, days: number) {
   next.setHours(12, 0, 0, 0);
   next.setDate(next.getDate() + days);
   return next;
-}
-
-function startOfWeek(date: Date) {
-  const next = new Date(date);
-  next.setHours(12, 0, 0, 0);
-  next.setDate(next.getDate() - next.getDay());
-  return next;
-}
-
-function resolveTaskQueryRange(request: string, today = new Date()) {
-  const text = request.toLowerCase();
-  const todayAtNoon = new Date(today);
-  todayAtNoon.setHours(12, 0, 0, 0);
-
-  if (/today|\uC624\uB298/.test(text)) {
-    const date = toLocalDateInputValue(todayAtNoon);
-    return { label: date, endDate: date };
-  }
-
-  if (/tomorrow|\uB0B4\uC77C/.test(text)) {
-    const date = toLocalDateInputValue(addDays(todayAtNoon, 1));
-    return { label: date, endDate: date };
-  }
-
-  if (/next\s*week|\uB2E4\uC74C\s*\uC8FC/.test(text)) {
-    const endDate = toLocalDateInputValue(addDays(startOfWeek(todayAtNoon), 13));
-    return { label: `through ${endDate}`, endDate };
-  }
-
-  if (/this\s*week|\uC774\uBC88\s*\uC8FC/.test(text)) {
-    const endDate = toLocalDateInputValue(addDays(startOfWeek(todayAtNoon), 6));
-    return { label: `through ${endDate}`, endDate };
-  }
-
-  const explicitDate = request.match(/\d{4}-\d{2}-\d{2}/)?.[0];
-  if (explicitDate) return { label: `through ${explicitDate}`, endDate: explicitDate };
-
-  return null;
-}
-
-function isReadOnlyTaskQuery(request: string, selectedList: AgentSelectedList | null = null) {
-  const text = request.toLowerCase();
-  const asksForTasks = /\b(tasks?|todos?|to-?dos?)\b|\uD560\s*\uC77C|\uB2E8\uC21C\s*\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5/.test(text);
-  const asksToList = /show|list|tell|what|which|\uC54C\uB824\s*\uC918|\uBCF4\uC5EC\s*\uC918|\uC870\uD68C|\uBB50/.test(text);
-  return (selectedList === "todo" || asksForTasks) && asksToList && !looksLikeMutationRequest(request);
-}
-
-function buildTaskQueryMessage(
-  todos: Awaited<ReturnType<typeof readTodos>>,
-  request: string,
-  today = new Date(),
-) {
-  const isKorean = /[\u3131-\uD79D]/.test(request);
-  const range = resolveTaskQueryRange(request, today);
-  const targetTodos = todos
-    .filter((todo) => !todo.completed)
-    .filter((todo) => {
-      if (!range) return true;
-      const targetDate = todo.targetDate;
-      return typeof targetDate === "string" && targetDate <= range.endDate;
-    })
-    .sort((a, b) => (a.targetDate ?? "9999-12-31").localeCompare(b.targetDate ?? "9999-12-31"));
-
-  const rangeLabel = range && isKorean ? range.label.replace(/^through\s+/, "") : range?.label;
-  const heading = range
-    ? isKorean
-      ? `${rangeLabel}까지 해야 할 tasks`
-      : `Tasks due ${rangeLabel}`
-    : isKorean
-      ? "미완료 tasks"
-      : "Open tasks";
-  if (!targetTodos.length) {
-    return isKorean ? `${heading}: 해당하는 미완료 task가 없습니다.` : `${heading}: no matching open tasks.`;
-  }
-
-  const lines = targetTodos.map((todo, index) => {
-    const date = todo.targetDate ?? (isKorean ? "목표일 없음" : "no target date");
-    const category = todo.category.trim() ? ` · ${todo.category.trim()}` : "";
-    return `${index + 1}. ${todo.title} (${date}${category})`;
-  });
-
-  return `${heading}:\n${lines.join("\n")}`;
 }
 
 function asOptionalTimestamp(value: unknown) {
@@ -370,7 +294,7 @@ function getRequestedListKind(request: string): ListKind | null {
 
 function actionListKind(action: AgentAction): ListKind {
   if (action.type.endsWith("_todo")) return "todo";
-  if (action.type.endsWith("_routine")) return "routine";
+  if (action.type.endsWith("_routine") || action.type.endsWith("_routine_mark")) return "routine";
   return "goal";
 }
 
@@ -571,6 +495,7 @@ function coerceAction(value: unknown): AgentAction | null {
           : normalizeActionDate(value, ["targetDate", "dueDate", "deadline", "date"]),
       category: asOptionalString(value.category),
       completed: asOptionalBoolean(value.completed),
+      focused: asOptionalBoolean(value.focused),
     };
   }
 
@@ -613,6 +538,7 @@ function coerceAction(value: unknown): AgentAction | null {
         value.createdAt === undefined && value.startDate === undefined && value.date === undefined
           ? undefined
           : asOptionalTimestamp(value.createdAt) ?? asOptionalTimestamp(value.startDate) ?? asOptionalTimestamp(value.date),
+      focused: asOptionalBoolean(value.focused),
     };
   }
 
@@ -680,7 +606,23 @@ function coerceAction(value: unknown): AgentAction | null {
       memo: asOptionalString(value.memo),
       startDate: value.startDate === undefined ? undefined : normalizeDate(value.startDate),
       endDate: value.endDate === undefined ? undefined : normalizeDate(value.endDate),
+      focused: asOptionalBoolean(value.focused),
     };
+  }
+
+  if (type === "set_routine_mark") {
+    const routineId = firstIdField(value, ["routineId", "routine_id", "habitId", "habit_id", "id", "title", "habit", "routine"]);
+    const date = normalizeActionDate(value, ["date"]);
+    const status = asString(value.status).toLowerCase();
+    return routineId && date && (status === "success" || status === "failure")
+      ? { type, routineId, date, status }
+      : null;
+  }
+
+  if (type === "clear_routine_mark") {
+    const routineId = firstIdField(value, ["routineId", "routine_id", "habitId", "habit_id", "id", "title", "habit", "routine"]);
+    const date = normalizeActionDate(value, ["date"]);
+    return routineId && date ? { type, routineId, date } : null;
   }
 
   if (type === "delete_routine") {
@@ -986,7 +928,7 @@ function resolveActionItemIds(
   return actions.map((action) => {
     if ("id" in action) {
       if (action.type.endsWith("_todo")) {
-        const source =
+        const source: Array<{ id: string; title: string }> =
           action.type === "restore_todo" || targetList === "archive"
             ? context.archive.todos
             : action.type === "permanently_delete_todo" || targetList === "bin"
@@ -1008,7 +950,7 @@ function resolveActionItemIds(
       }
 
       if (action.type.endsWith("_routine")) {
-        const source =
+        const source: Array<{ id: string; title: string }> =
           action.type === "restore_routine" || targetList === "archive"
             ? context.archive.routines
             : action.type === "permanently_delete_routine" || targetList === "bin"
@@ -1024,6 +966,13 @@ function resolveActionItemIds(
         ? action.goalId
         : findClosestItemId(context.goals, action.goalId);
       return goalId ? { ...action, goalId } : action;
+    }
+
+    if ("routineId" in action) {
+      const routineId = context.routines.some((routine) => routine.id === action.routineId)
+        ? action.routineId
+        : findClosestItemId(context.routines, action.routineId);
+      return routineId ? { ...action, routineId } : action;
     }
 
     return action;
@@ -1050,6 +999,7 @@ function parseAgentResponse(content: string) {
 }
 
 export async function readAgentListContext() {
+  const today = toLocalDateInputValue();
   const [
     goals,
     todos,
@@ -1096,8 +1046,17 @@ export async function readAgentListContext() {
 
   return {
     goals,
-    todos,
-    routines: summarizeRoutines(routines),
+    todos: todos.map((todo) => {
+      const daysOverdue = todo.completed ? 0 : getTaskOverdueDays(todo.targetDate, today);
+      return {
+        ...todo,
+        timing: {
+          isOverdue: daysOverdue > 0,
+          daysOverdue,
+        },
+      };
+    }),
+    routines: routines.map((routine) => summarizeRoutineForAgent(routine, today)),
     archive: {
       goals: archivedGoals,
       todos: archivedTodos,
@@ -1248,6 +1207,180 @@ function completeBulkScheduleActions(actions: AgentAction[], request: string, co
   return actions;
 }
 
+type AgentRecordQuery = {
+  collection: "todo" | "goal" | "routine" | "goal_entry" | "routine_mark" | "archive" | "bin";
+  recordType: ListKind | null;
+  search: string | null;
+  status: "all" | "open" | "completed" | "success" | "failure" | "unmarked";
+  focused: boolean | null;
+  overdue: boolean | null;
+  dateFrom: string | null;
+  dateTo: string | null;
+  sortBy: "relevance" | "title" | "created_at" | "target_date" | "deadline" | "days_overdue" | "progress" | "date";
+  direction: "asc" | "desc";
+  limit: number | null;
+};
+
+const QUERY_RECORDS_TOOL = {
+  type: "function",
+  name: "query_records",
+  description:
+    "Query the user's current tasks, goals, habits, goal progress entries, habit marks, archive, or bin. Combine filters, sorting, and limit exactly as requested. Always use this before making claims about stored records or proposing changes to existing records.",
+  strict: true,
+  parameters: {
+    type: "object",
+    properties: {
+      collection: {
+        type: "string",
+        enum: ["todo", "goal", "routine", "goal_entry", "routine_mark", "archive", "bin"],
+      },
+      recordType: {
+        type: ["string", "null"],
+        enum: ["todo", "goal", "routine", null],
+        description: "Optional item type filter, especially for archive or bin queries.",
+      },
+      search: { type: ["string", "null"], description: "Case-insensitive text to find in titles, memos, or categories." },
+      status: {
+        type: "string",
+        enum: ["all", "open", "completed", "success", "failure", "unmarked"],
+      },
+      focused: { type: ["boolean", "null"], description: "true means bookmark/important mark is enabled." },
+      overdue: { type: ["boolean", "null"], description: "Filter tasks by computed overdue state." },
+      dateFrom: { type: ["string", "null"], description: "Inclusive YYYY-MM-DD lower date bound." },
+      dateTo: { type: ["string", "null"], description: "Inclusive YYYY-MM-DD upper date bound." },
+      sortBy: {
+        type: "string",
+        enum: ["relevance", "title", "created_at", "target_date", "deadline", "days_overdue", "progress", "date"],
+      },
+      direction: { type: "string", enum: ["asc", "desc"] },
+      limit: { type: ["integer", "null"], minimum: 1, maximum: 100 },
+    },
+    required: ["collection", "recordType", "search", "status", "focused", "overdue", "dateFrom", "dateTo", "sortBy", "direction", "limit"],
+    additionalProperties: false,
+  },
+} as const;
+
+function parseAgentRecordQuery(value: unknown): AgentRecordQuery | null {
+  if (!isRecord(value)) return null;
+  const collection = asString(value.collection) as AgentRecordQuery["collection"];
+  const status = asString(value.status) as AgentRecordQuery["status"];
+  const sortBy = asString(value.sortBy) as AgentRecordQuery["sortBy"];
+  const direction = asString(value.direction) as AgentRecordQuery["direction"];
+  if (!QUERY_RECORDS_TOOL.parameters.properties.collection.enum.includes(collection)) return null;
+  if (!QUERY_RECORDS_TOOL.parameters.properties.status.enum.includes(status)) return null;
+  if (!QUERY_RECORDS_TOOL.parameters.properties.sortBy.enum.includes(sortBy)) return null;
+  if (!QUERY_RECORDS_TOOL.parameters.properties.direction.enum.includes(direction)) return null;
+
+  return {
+    collection,
+    recordType: value.recordType === "todo" || value.recordType === "goal" || value.recordType === "routine" ? value.recordType : null,
+    search: typeof value.search === "string" ? value.search.trim() : null,
+    status,
+    focused: typeof value.focused === "boolean" ? value.focused : null,
+    overdue: typeof value.overdue === "boolean" ? value.overdue : null,
+    dateFrom: normalizeDate(value.dateFrom) || null,
+    dateTo: normalizeDate(value.dateTo) || null,
+    sortBy,
+    direction,
+    limit: typeof value.limit === "number" && Number.isInteger(value.limit) ? Math.max(1, Math.min(100, value.limit)) : null,
+  };
+}
+
+function queryAgentRecords(query: AgentRecordQuery, context: AgentListContext) {
+  const withType = (recordType: ListKind, item: object) => ({ recordType, ...item });
+  let records: Array<Record<string, unknown>>;
+
+  if (query.collection === "todo") records = context.todos.map((item) => withType("todo", item));
+  else if (query.collection === "goal") records = context.goals.map((item) => withType("goal", item));
+  else if (query.collection === "routine") records = context.routines.map((item) => withType("routine", item));
+  else if (query.collection === "goal_entry") {
+    records = context.goals.flatMap((goal) =>
+      goal.entries.map((entry) => ({
+        recordType: "goal_entry",
+        goalId: goal.id,
+        goalTitle: goal.title,
+        ...entry,
+        date: toLocalDateInputValue(new Date(entry.createdAt)),
+      })),
+    );
+  } else if (query.collection === "routine_mark") {
+    records = context.routines.flatMap((routine) =>
+      routine.marks.map((mark) => ({ recordType: "routine_mark", routineId: routine.id, routineTitle: routine.title, ...mark })),
+    );
+  } else {
+    const source = query.collection === "archive" ? context.archive : context.bin;
+    records = [
+      ...source.todos.map((item) => withType("todo", item)),
+      ...source.goals.map((item) => withType("goal", item)),
+      ...source.routines.map((item) => withType("routine", item)),
+    ];
+  }
+
+  records = records.filter((record) => {
+    if (query.recordType && record.recordType !== query.recordType) return false;
+    if (query.search) {
+      const haystack = [record.title, record.goalTitle, record.routineTitle, record.memo, record.category]
+        .filter((value): value is string => typeof value === "string")
+        .join(" ")
+        .toLocaleLowerCase();
+      if (!haystack.includes(query.search.toLocaleLowerCase())) return false;
+    }
+    if (query.status === "open" && record.completed !== false) return false;
+    if (query.status === "completed" && record.completed !== true) return false;
+    if (query.status === "success" || query.status === "failure") {
+      const progress = isRecord(record.progress) ? record.progress : null;
+      if (record.status !== query.status && progress?.todayStatus !== query.status) return false;
+    }
+    if (query.status === "unmarked") {
+      const progress = isRecord(record.progress) ? record.progress : null;
+      if (progress?.todayStatus !== "unmarked") return false;
+    }
+    if (query.focused !== null && record.focused !== query.focused) return false;
+    if (query.overdue !== null) {
+      const timing = isRecord(record.timing) ? record.timing : null;
+      if (timing?.isOverdue !== query.overdue) return false;
+    }
+    const recordDate = [record.targetDate, record.deadline, record.date, record.startDate]
+      .find((value): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
+    if (query.dateFrom && (!recordDate || recordDate < query.dateFrom)) return false;
+    if (query.dateTo && (!recordDate || recordDate > query.dateTo)) return false;
+    return true;
+  });
+
+  const sortValue = (record: Record<string, unknown>) => {
+    if (query.sortBy === "title") return String(record.title ?? record.goalTitle ?? record.routineTitle ?? "").toLocaleLowerCase();
+    if (query.sortBy === "created_at") return Number(record.createdAt ?? 0);
+    if (query.sortBy === "target_date") return String(record.targetDate ?? "9999-12-31");
+    if (query.sortBy === "deadline") return String(record.deadline ?? "9999-12-31");
+    if (query.sortBy === "date") return String(record.date ?? record.targetDate ?? record.deadline ?? "9999-12-31");
+    if (query.sortBy === "days_overdue") {
+      return isRecord(record.timing) ? Number(record.timing.daysOverdue ?? 0) : 0;
+    }
+    if (query.sortBy === "progress") {
+      if (isRecord(record.progress)) return Number(record.progress.successRateAmongMarked ?? 0);
+      if (typeof record.target === "number" && Array.isArray(record.entries)) {
+        const latest = record.entries.at(-1);
+        return isRecord(latest) && typeof latest.value === "number" && record.target !== 0 ? (latest.value / record.target) * 100 : 0;
+      }
+    }
+    return 0;
+  };
+  if (query.sortBy !== "relevance") {
+    const multiplier = query.direction === "asc" ? 1 : -1;
+    records.sort((left, right) => {
+      const leftValue = sortValue(left);
+      const rightValue = sortValue(right);
+      return (typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue))) * multiplier;
+    });
+  }
+
+  const total = records.length;
+  const limit = query.limit ?? 50;
+  return { total, returned: Math.min(total, limit), records: records.slice(0, limit) };
+}
+
 async function callOpenAiCompatibleChat(input: {
   apiKey: string;
   model: string;
@@ -1264,7 +1397,6 @@ async function callOpenAiCompatibleChat(input: {
     },
     body: JSON.stringify({
       model: input.model,
-      temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -1297,7 +1429,11 @@ async function callOpenAiCompatibleChat(input: {
             "add_goal_entry, update_goal_entry, delete_goal_entry, " +
             "add_routine, update_routine, delete_routine, archive_routine, restore_routine, permanently_delete_routine. " +
             "For a task/todo add request, return {\"type\":\"add_todo\",\"title\":\"...\",\"targetDate\":\"YYYY-MM-DD\",\"category\":\"...\"}. If the user did not specify a date for a new task/todo, use today's date. " +
+            "Each todo has a focused boolean. focused=true means its bookmark/focus ribbon (also called the important mark) is checked; focused=false means it is not bookmarked. When the user asks for bookmarked, starred, pinned, focused, important, 책갈피, 북마크, 즐겨찾기, 집중 표시, 중요, 중요 마크, 중요 표시, or 중요 체크 tasks, include only todos whose focused value is true. Do not treat completed as the bookmark state. " +
+            "Each active todo also has timing.isOverdue and timing.daysOverdue, calculated relative to today. A task is overdue only when it is incomplete and its targetDate is earlier than today; tasks due today, future tasks, completed tasks, and tasks without a targetDate are not overdue. When the user asks for overdue, delayed, late, past-due, 지연, 연체, 늦은, 밀린, 기한 초과, or 마감이 지난 tasks, include only tasks whose timing.isOverdue is true and report timing.daysOverdue when relevant. " +
+            "When the user asks for the single most overdue task using expressions such as most overdue, longest delayed, 가장 늦은, 제일 늦은, 가장 오래 지연된, or 최장 지연, return only the one incomplete task with the greatest timing.daysOverdue. Do not return the full overdue list. " +
             "For a habit/routine add request, return add_routine actions with title, memo, startDate, and endDate. If the user did not specify dates, use today as startDate and one year after today as endDate; do not merely say you will add habits. " +
+            "Each active routine includes marks and progress. A mark status of success means achieved on that date, failure means explicitly not achieved, and no mark means unrecorded rather than failure. progress.todayStatus is success, failure, unmarked, or not_scheduled. progress.successCount is the achievement count through today, and successRateAmongMarked excludes unrecorded days. Use these fields when answering questions about habit completion, counts, or rates. " +
             "When the user asks to add several recommended habits, famous people's habits, or successful people's habits, create that many add_routine actions with practical habit titles and short memo explanations. " +
             "For adding a new item to the Goals list, always use add_goal with title/memo/target/unit/deadline; never use add_goal_entry for that. " +
             "Use add_goal_entry, update_goal_entry, or delete_goal_entry only when the user explicitly asks to add/update/delete a progress record, record, entry, log, value, amount, 기록, 진행, 진척, 달성량, 실적, 수치, or 값 for an existing goal. " +
@@ -1355,6 +1491,129 @@ async function callOpenAiCompatibleChat(input: {
   return parseAgentResponse(content);
 }
 
+type ResponsesApiItem = {
+  type?: string;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  content?: Array<{ type?: string; text?: string }>;
+  [key: string]: unknown;
+};
+
+type ResponsesApiResult = {
+  id?: string;
+  output?: ResponsesApiItem[];
+  error?: { message?: string };
+};
+
+function getResponsesOutputText(data: ResponsesApiResult) {
+  return (data.output ?? [])
+    .filter((item) => item.type === "message")
+    .flatMap((item) => item.content ?? [])
+    .filter((content) => content.type === "output_text" && typeof content.text === "string")
+    .map((content) => content.text ?? "")
+    .join("");
+}
+
+async function callOpenAiResponsesAgent(input: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  context: AgentListContext;
+  selectedList: AgentSelectedList | null;
+  conversationHistory: AgentConversationMessage[];
+}) {
+  const instructions =
+    "You are the conversational agent for a personal planning app. Understand natural language compositionally instead of matching fixed phrases. " +
+    "Return only a JSON object with targetList, message, actions, and optional clarificationQuestion. targetList is todo, goal, routine, archive, bin, or unknown. " +
+    "Use query_records before answering any question about stored records or before changing an existing record. Combine every requested filter, sort, direction, and count in one query when possible. " +
+    "For comparisons or relationship analysis across record types, call query_records once for each relevant collection, retain all returned results, and compare their titles, memos, dates, categories, and progress before answering. " +
+    "Examples: 'three most overdue tasks' means collection=todo, status=open, overdue=true, sortBy=days_overdue, direction=desc, limit=3. 'important tasks due this week' means focused=true plus the requested date range. Never silently replace a requested count with one. " +
+    "The selected list is the default only when the user does not name a list. Use tool-returned ids for updates and deletes. Treat focused=true as bookmark/important mark. Treat timing.isOverdue and timing.daysOverdue as authoritative. " +
+    "Allowed actions are add_todo, update_todo, delete_todo, archive_todo, restore_todo, permanently_delete_todo, add_goal, update_goal, delete_goal, archive_goal, restore_goal, permanently_delete_goal, add_goal_entry, update_goal_entry, delete_goal_entry, add_routine, update_routine, delete_routine, archive_routine, restore_routine, permanently_delete_routine, set_routine_mark, clear_routine_mark. " +
+    "Todo fields: id, title, targetDate, category, completed, focused. Goal fields: id, title, memo, target, unit, deadline, createdAt, focused. Goal entry fields: goalId, entryId, value, memo, createdAt. Routine fields: id, title, memo, startDate, endDate, focused. Routine mark fields: routineId, date, status where status is success or failure. " +
+    "For new todos without a date use today. For new routines without dates use today through one year after today. Use YYYY-MM-DD. For analysis or read-only requests return no actions. " +
+    "For mutations, return one action per concrete change and say they are proposed for review; never claim they were applied. Permanent deletion is only for bin records. Ask one concise clarification only when a required detail cannot be resolved by querying. " +
+    "Write message and clarificationQuestion in Korean for Korean requests and English for English requests.";
+
+  const requestContext = {
+    today: toLocalDateInputValue(),
+    selectedList: input.selectedList,
+    request: input.prompt,
+  };
+  let responseInput: unknown[] = [
+    ...input.conversationHistory.map((message) => ({
+      role: message.role === "agent" ? "assistant" : "user",
+      content: message.content,
+    })),
+    {
+      role: "user",
+      content:
+        "Process the following request context and return the final answer as a JSON object matching the required response fields.\n" +
+        JSON.stringify(requestContext),
+    },
+  ];
+
+  for (let turn = 0; turn < 6; turn += 1) {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: input.model,
+        store: false,
+        instructions,
+        input: responseInput,
+        tools: [QUERY_RECORDS_TOOL],
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+        text: { format: { type: "json_object" } },
+      }),
+    });
+    const data = (await response.json().catch(() => null)) as ResponsesApiResult | null;
+    if (!response.ok || !data) {
+      const message = data?.error?.message || "LLM request failed";
+      if (response.status === 404 && turn === 0) return callOpenAiCompatibleChat(input);
+      if (response.status === 401 || /incorrect api key|invalid api key/i.test(message)) {
+        throw new Error("Saved OpenAI API key is invalid. Open Settings and replace it with a full key that starts with sk-.");
+      }
+      throw new Error(message);
+    }
+
+    const toolCalls = (data.output ?? []).filter(
+      (item) => item.type === "function_call" && item.name === "query_records" && typeof item.call_id === "string",
+    );
+    if (toolCalls.length === 0) {
+      const content = getResponsesOutputText(data);
+      if (!content) throw new Error("LLM did not return content");
+      return parseAgentResponse(content);
+    }
+
+    const toolOutputs = toolCalls.map((toolCall) => {
+      let parsedArguments: unknown = null;
+      try {
+        parsedArguments = JSON.parse(toolCall.arguments ?? "{}");
+      } catch {
+        parsedArguments = null;
+      }
+      const query = parseAgentRecordQuery(parsedArguments);
+      const output = query
+        ? queryAgentRecords(query, input.context)
+        : { error: "Invalid query_records arguments. Use the declared schema." };
+      return {
+        type: "function_call_output",
+        call_id: toolCall.call_id,
+        output: JSON.stringify(output),
+      };
+    });
+    responseInput = [...responseInput, ...(data.output ?? []), ...toolOutputs];
+  }
+
+  throw new Error("Agent used too many tool calls without completing the request.");
+}
+
 async function applyAction(action: AgentAction) {
   if (action.type === "add_todo") {
     await addTodo(action.title, action.targetDate, action.category ?? "");
@@ -1367,6 +1626,7 @@ async function applyAction(action: AgentAction) {
       targetDate: action.targetDate,
       category: action.category,
       completed: action.completed,
+      focused: action.focused,
     });
     return;
   }
@@ -1411,6 +1671,7 @@ async function applyAction(action: AgentAction) {
       unit: action.unit,
       deadline: action.deadline,
       createdAt: action.createdAt,
+      focused: action.focused,
     });
     return;
   }
@@ -1468,6 +1729,16 @@ async function applyAction(action: AgentAction) {
     return;
   }
 
+  if (action.type === "set_routine_mark") {
+    await setRoutineMark(action.routineId, action.date, action.status);
+    return;
+  }
+
+  if (action.type === "clear_routine_mark") {
+    await clearRoutineMark(action.routineId, action.date);
+    return;
+  }
+
   if (action.type === "delete_routine") {
     await deleteRoutine(action.id);
     return;
@@ -1497,6 +1768,7 @@ async function applyAction(action: AgentAction) {
     memo: action.memo,
     startDate: action.startDate,
     endDate: action.endDate,
+    focused: action.focused,
   });
 }
 
@@ -1515,16 +1787,6 @@ export async function runListAgent(
   const requestedKinds = getRequestedListKinds(request);
   const requestTargetList = getRequestTargetList(request, selectedList);
   const defaultActiveListKind = getDefaultActiveListKind(request, selectedList);
-  if (isReadOnlyTaskQuery(request, selectedList)) {
-    return {
-      message: buildTaskQueryMessage(context.todos, request),
-      actions: [],
-      applied: false,
-      targetList: "todo",
-      data: context,
-    };
-  }
-
   if (isEmptyBinRequest(request, selectedList)) {
     const actions = buildEmptyBinActions(context, requestedKinds);
     const shouldApply = shouldApplyActionsImmediately(apply, actions);
@@ -1662,7 +1924,7 @@ export async function runListAgent(
   }
 
   const credentials = await readAgentCredentials();
-  let agentResponse = await callOpenAiCompatibleChat({
+  let agentResponse = await callOpenAiResponsesAgent({
     apiKey: credentials.apiKey,
     model: credentials.model,
     prompt: request,
@@ -1676,7 +1938,7 @@ export async function runListAgent(
     !agentResponse.clarificationQuestion &&
     looksLikeAlreadySatisfiedAgentMessage(agentResponse.message)
   ) {
-    agentResponse = await callOpenAiCompatibleChat({
+    agentResponse = await callOpenAiResponsesAgent({
       apiKey: credentials.apiKey,
       model: credentials.model,
       prompt: buildFreshRunRetryPrompt(request),

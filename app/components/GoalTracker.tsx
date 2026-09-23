@@ -160,12 +160,16 @@ type AgentAction = {
   targetDate?: string;
   category?: string;
   completed?: boolean;
+  focused?: boolean;
   memo?: string;
   target?: number;
   value?: number;
   unit?: string;
   goalId?: string;
+  routineId?: string;
   entryId?: string;
+  date?: string;
+  status?: "success" | "failure";
   deadline?: string;
   startDate?: string;
   endDate?: string;
@@ -674,22 +678,6 @@ async function applyAgentActionRequest(actions: AgentAction[]) {
     throw new Error(data.error || "Failed to apply agent actions");
   }
   return data as AgentResponse;
-}
-
-function isLocalTaskQuery(prompt: string, selectedList?: AgentSelectedList) {
-  const text = prompt.toLowerCase();
-  const mentionsTasks =
-    /\b(tasks?|todos?|to-?dos?)\b|\uD560\s*\uC77C|\uB2E8\uC21C\s*\uD560\s*\uC77C|\uD0DC\uC2A4\uD06C|\uC791\uC5C5/.test(
-      text,
-    );
-  const asksToRead =
-    /show|list|tell|what|which|\uC54C\uB824\s*\uC918|\uBCF4\uC5EC\s*\uC918|\uC870\uD68C|\uBB50/.test(text);
-  const mutates =
-    /add|create|update|edit|delete|remove|complete|\uCD94\uAC00|\uB9CC\uB4E4|\uC218\uC815|\uBC14\uAFFF|\uC0AD\uC81C|\uC9C0\uC6CC|\uC644\uB8CC/.test(
-      text,
-    );
-
-  return (selectedList === "todo" || mentionsTasks) && asksToRead && !mutates;
 }
 
 function normalizeAgentSpeechTranscript(transcript: string) {
@@ -2218,9 +2206,7 @@ export default function GoalTracker() {
   const text = UI_TEXT[language];
   const currentAgentSelectedList = getAgentSelectedList(currentView);
   const canManageAgentSettings = isAdmin && agentSettings.canManage;
-  const canRunAgentRequest =
-    hasAiAccess &&
-    (agentSettings.hasApiKey || (!pendingAgentClarification && isLocalTaskQuery(agentPrompt, currentAgentSelectedList)));
+  const canRunAgentRequest = hasAiAccess && agentSettings.hasApiKey;
   const agentVoiceButtonTitle = isSpeechRecognitionAvailable
     ? isAgentListening
       ? language === "ko"
@@ -3277,7 +3263,7 @@ export default function GoalTracker() {
       );
       return;
     }
-    if (!agentSettings.hasApiKey && !isLocalTaskQuery(agentRequest, currentAgentSelectedList)) {
+    if (!agentSettings.hasApiKey) {
       setError(
         language === "ko"
           ? "Agent를 실행하려면 Settings에서 API key를 저장해야 합니다."
@@ -3776,6 +3762,13 @@ export default function GoalTracker() {
         (item) => item.id === action.goalId,
       );
       return goal ? `${goal.title} ${language === "ko" ? "기록" : "record"}` : "";
+    }
+
+    if (action.routineId) {
+      const routine = [...archivedRoutines, ...deletedRoutines, ...(response?.data.routines ?? [])].find(
+        (item) => item.id === action.routineId,
+      );
+      return routine ? `${routine.title} ${action.date ?? ""}`.trim() : "";
     }
 
     return "";
@@ -5826,7 +5819,7 @@ export default function GoalTracker() {
             />
             <section
               data-swipe-ignore
-              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-[110] flex max-h-[min(82vh,42rem)] w-[calc(100vw-1.5rem)] max-w-xl flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:right-5 sm:p-4"
+              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-[110] flex max-h-[min(82vh,42rem)] min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:left-auto sm:right-5 sm:w-[calc(100vw-2.5rem)] sm:max-w-xl sm:p-4"
             >
             <div className="grid shrink-0 gap-2">
               <div className="flex min-w-0 items-center gap-2">
@@ -5954,21 +5947,23 @@ export default function GoalTracker() {
                 {agentChatMessages.length > 0 && (
                   <div
                     ref={agentChatScrollRef}
-                    className="grid min-h-0 flex-1 gap-3 overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm"
+                    className="grid min-h-0 min-w-0 w-full max-w-full flex-1 gap-3 overflow-x-hidden overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm [overflow-wrap:anywhere]"
                   >
                     {agentChatMessages.map((message) =>
                       message.role === "user" ? (
-                        <div key={message.id} className="flex justify-end">
-                          <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-md bg-emerald-700 px-3 py-2 text-white">
+                        <div key={message.id} className="flex min-w-0 justify-end">
+                          <div className="min-w-0 max-w-[86%] whitespace-pre-wrap break-words rounded-md bg-emerald-700 px-3 py-2 text-white">
                             {message.content}
                           </div>
                         </div>
                       ) : (
-                        <div key={message.id} className="flex justify-start">
-                          <div className="grid max-w-[92%] gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-stone-800">
-                            <p className="whitespace-pre-wrap break-words">{message.response.message}</p>
+                        <div key={message.id} className="flex min-w-0 w-full max-w-full justify-start">
+                          <div className="grid min-w-0 w-full max-w-full overflow-hidden gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-stone-800">
+                            <p className="min-w-0 max-w-full whitespace-pre-wrap break-all [overflow-wrap:anywhere]">
+                              {message.response.message}
+                            </p>
                             {message.response.actions.length > 0 && (
-                              <div className="grid gap-2">
+                              <div className="grid min-w-0 gap-2">
                                 <div className="text-xs font-semibold uppercase text-stone-500">
                                   {message.response.applied
                                     ? language === "ko"
@@ -5978,11 +5973,11 @@ export default function GoalTracker() {
                                       ? "제안된 작업"
                                       : "Proposed actions"}
                                 </div>
-                                <ul className="grid gap-1">
+                                <ul className="grid min-w-0 max-w-full gap-1 overflow-hidden">
                                   {message.response.actions.map((action, index) => (
                                     <li
                                       key={`${message.id}-${action.type}-${index}`}
-                                      className="rounded border border-stone-200 bg-stone-50 px-2 py-1"
+                                      className="min-w-0 max-w-full whitespace-normal break-all rounded border border-stone-200 bg-stone-50 px-2 py-1 [overflow-wrap:anywhere]"
                                     >
                                       {formatAgentAction(action, message.response)}
                                     </li>
@@ -6028,7 +6023,7 @@ export default function GoalTracker() {
                 )}
                 <div className="grid shrink-0 min-w-0 gap-2">
                   {pendingAgentClarification && (
-                    <div className="grid max-h-28 gap-1 overflow-y-auto rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <div className="grid min-w-0 max-h-28 gap-1 overflow-x-hidden overflow-y-auto rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 [overflow-wrap:anywhere]">
                       <div className="font-semibold">{language === "ko" ? "Agent 확인 질문" : "Agent clarification"}</div>
                       <p className="whitespace-pre-wrap break-words">{pendingAgentClarification.question}</p>
                     </div>
@@ -6851,7 +6846,7 @@ export default function GoalTracker() {
                               selectGoal(goal);
                             }
                           }}
-                          className={`relative min-h-20 w-full cursor-pointer overflow-hidden rounded-md border py-1.5 pl-2.5 pr-1.5 text-left transition-all duration-500 sm:py-2 sm:pl-3 sm:pr-2 ${
+                          className={`relative min-h-20 w-full cursor-pointer overflow-visible rounded-md border py-1.5 pl-2.5 pr-1.5 text-left transition-all duration-500 sm:py-2 sm:pl-3 sm:pr-2 ${
                             highlightedGoalId === goal.id
                               ? "border-emerald-500 bg-emerald-100 shadow-sm"
                               : goalDropTargetId === goal.id && draggingGoalId !== goal.id
@@ -6868,9 +6863,9 @@ export default function GoalTracker() {
                               {language === "ko" ? "이동 중" : "Moving"}
                             </div>
                           )}
-                          <div className="relative min-w-0">
+                          <div className="min-w-0">
                             <div className="min-w-0">
-                              <div className="flex min-w-0 items-center justify-between gap-1.5">
+                              <div className="flex min-w-0 items-center justify-between gap-1.5 pl-9">
                                 <span className="min-w-0 break-words font-medium">{goal.title}</span>
                                 <button
                                   type="button"
@@ -6883,10 +6878,10 @@ export default function GoalTracker() {
                                   }}
                                   onPointerDown={(event) => event.stopPropagation()}
                                   disabled={isSaving}
-                                  className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+                                  className={`absolute -top-2.5 left-3 z-10 grid h-8 w-7 place-items-center transition disabled:cursor-wait disabled:opacity-50 ${
                                     goal.focused
-                                      ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
-                                      : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+                                      ? "text-amber-500 hover:text-amber-600"
+                                      : "text-stone-300 hover:text-amber-500"
                                   }`}
                                 >
                                   <FocusRibbonIcon filled={goal.focused} />
@@ -7263,10 +7258,10 @@ export default function GoalTracker() {
                               }}
                               onPointerDown={(event) => event.stopPropagation()}
                               disabled={isSaving}
-                              className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+                              className={`absolute -top-2.5 left-3 z-10 grid h-8 w-7 place-items-center transition disabled:cursor-wait disabled:opacity-50 ${
                                 todo.focused
-                                  ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
-                                  : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+                                  ? "text-amber-500 hover:text-amber-600"
+                                  : "text-stone-300 hover:text-amber-500"
                               }`}
                             >
                               <FocusRibbonIcon filled={todo.focused} />
@@ -9733,7 +9728,7 @@ function FocusRibbonIcon({ filled }: { filled: boolean }) {
       stroke="currentColor"
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth="2"
+      strokeWidth={filled ? 2 : 1.5}
     >
       <path d="M6 4.75A1.75 1.75 0 0 1 7.75 3h8.5A1.75 1.75 0 0 1 18 4.75V21l-6-3.75L6 21V4.75Z" />
     </svg>

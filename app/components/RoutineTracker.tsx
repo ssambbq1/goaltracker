@@ -1454,7 +1454,7 @@ function RoutineListItem({
           onSelect();
         }
       }}
-      className={`relative w-full cursor-pointer overflow-hidden rounded-md border p-3 text-left transition-all duration-500 ${
+      className={`relative w-full cursor-pointer overflow-visible rounded-md border p-3 text-left transition-all duration-500 ${
         isHighlighted
           ? "border-emerald-500 bg-emerald-100 shadow-sm"
           : isDropTarget
@@ -1471,7 +1471,7 @@ function RoutineListItem({
           {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
-      <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-1">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 pl-9">
         <div className="min-w-0">
           <div className="truncate font-medium text-stone-950">{routine.title}</div>
         </div>
@@ -1486,10 +1486,10 @@ function RoutineListItem({
           }}
           onPointerDown={(event) => event.stopPropagation()}
           disabled={isSaving}
-          className={`grid h-8 w-7 shrink-0 place-items-center rounded-md transition disabled:cursor-wait disabled:opacity-50 ${
+          className={`absolute -top-2.5 left-3 z-10 grid h-8 w-7 place-items-center transition disabled:cursor-wait disabled:opacity-50 ${
             routine.focused
-              ? "bg-amber-400 text-amber-950 hover:bg-amber-500"
-              : "text-stone-400 hover:bg-amber-50 hover:text-amber-600"
+              ? "text-amber-500 hover:text-amber-600"
+              : "text-stone-300 hover:text-amber-500"
           }`}
         >
           <FocusRibbonIcon filled={routine.focused} />
@@ -1527,11 +1527,11 @@ function RoutineListItem({
                 } disabled:cursor-not-allowed disabled:opacity-60`}
                 >
                 {(status === "success" || status === "failure") && (
-                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-lg font-black leading-none text-white/35">
-                    {status === "success" ? <ThumbsUpMark /> : "X"}
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-lg font-black leading-none text-white/80">
+                    {status === "success" ? <ThumbsUpMark /> : <FailureMark />}
                   </span>
                 )}
-                <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
+                <span className={`relative z-10 ${status ? "text-white/50" : ""}`}>{parseLocalDate(date).getDate()}</span>
                 </button>
               );
             })}
@@ -1904,11 +1904,11 @@ function ChainCalendar({
                             } disabled:cursor-not-allowed`}
                           >
                             {(status === "success" || status === "failure") && (
-                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[clamp(2rem,9vw,4.5rem)] font-black leading-none text-white/35">
-                                {status === "success" ? <ThumbsUpMark /> : "X"}
+                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[clamp(2rem,9vw,4.5rem)] font-black leading-none text-white/40">
+                                {status === "success" ? <ThumbsUpMark /> : <FailureMark />}
                               </span>
                             )}
-                            <span className="relative z-10">{parseLocalDate(date).getDate()}</span>
+                            <span className={`relative z-10 ${status ? "text-white/90" : ""}`}>{parseLocalDate(date).getDate()}</span>
                           </button>
                         );
                       })}
@@ -2085,6 +2085,21 @@ function BinIcon() {
   );
 }
 
+function FailureMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 64 64"
+      className="h-[88%] w-[88%]"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+    >
+      <path d="M9 9 55 55M55 9 9 55" strokeWidth="7" />
+    </svg>
+  );
+}
+
 function FocusRibbonIcon({ filled }: { filled: boolean }) {
   return (
     <svg
@@ -2095,7 +2110,7 @@ function FocusRibbonIcon({ filled }: { filled: boolean }) {
       stroke="currentColor"
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth="2"
+      strokeWidth={filled ? 2 : 1.5}
     >
       <path d="M6 4.75A1.75 1.75 0 0 1 7.75 3h8.5A1.75 1.75 0 0 1 18 4.75V21l-6-3.75L6 21V4.75Z" />
     </svg>
