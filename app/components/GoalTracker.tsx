@@ -404,7 +404,7 @@ const LIST_REORDER_LONG_PRESS_MS = 450;
 const LIST_REORDER_DRAG_CANCEL_DISTANCE = 10;
 const SWIPE_MIN_DISTANCE = 72;
 const SWIPE_MAX_VERTICAL_DRIFT = 56;
-const confettiColors = ["#047857", "#f59e0b", "#ef4444", "#0ea5e9", "#84cc16"];
+const confettiColors = ["#32684b", "#f59e0b", "#ef4444", "#0ea5e9", "#98c6a8"];
 
 const UI_TEXT = {
   en: {
