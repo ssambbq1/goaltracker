@@ -200,7 +200,7 @@ export default function Head({
           }
           className={`relative flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition sm:h-10 sm:w-10 ${
             isUserView
-              ? "border-emerald-700 bg-emerald-700 text-white"
+              ? "soft-selected-control"
               : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
           }`}
         >

@@ -66,6 +66,71 @@ main:not(.app-dark).bg-\[\#f6f7f4\] {
     linear-gradient(180deg, #f8faf6 0%, var(--background) 48%, #eff5f2 100%);
 }
 
+.loading-icon-frame {
+  display: block;
+  background: transparent;
+  filter: drop-shadow(0 10px 18px rgb(41 37 36 / 0.12));
+}
+
+.loading-gauge-track {
+  border: 1px solid rgb(6 78 59 / 0.12);
+  background: rgb(255 255 255 / 0.82);
+  box-shadow: inset 0 1px 2px rgb(15 23 42 / 0.08);
+}
+
+.loading-gauge-fill {
+  animation: loading-gauge-slide 1.25s ease-in-out infinite;
+  background: linear-gradient(90deg, #10b981, #14b8a6, #84cc16);
+  transform-origin: left center;
+}
+
+.loading-gauge-label {
+  color: #78716c;
+}
+
+.app-dark .loading-icon-frame,
+html.dark-mode .loading-icon-frame {
+  filter: drop-shadow(0 10px 20px rgb(0 0 0 / 0.38));
+}
+
+.app-dark .loading-gauge-track,
+html.dark-mode .loading-gauge-track {
+  border-color: rgb(71 85 105 / 0.55);
+  background: rgb(15 23 42 / 0.88);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.45);
+}
+
+.app-dark .loading-gauge-fill,
+html.dark-mode .loading-gauge-fill {
+  background: linear-gradient(90deg, #065f46, #0f766e, #3f6212);
+}
+
+.app-dark .loading-gauge-label,
+html.dark-mode .loading-gauge-label {
+  color: #94a3b8;
+}
+
+@keyframes loading-gauge-slide {
+  0% {
+    transform: translateX(-110%) scaleX(0.7);
+  }
+
+  50% {
+    transform: translateX(75%) scaleX(1.25);
+  }
+
+  100% {
+    transform: translateX(260%) scaleX(0.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-gauge-fill {
+    animation: none;
+    transform: translateX(75%);
+  }
+}
+
 main:not(.app-dark) .bg-white,
 main:not(.app-dark) .bg-white\/95,
 main:not(.app-dark) .bg-white\/70 {
@@ -110,6 +175,33 @@ main:not(.app-dark) .border-emerald-200,
 main:not(.app-dark) .border-emerald-300,
 main:not(.app-dark) .border-emerald-500 {
   border-color: rgb(4 120 87 / 0.32);
+}
+
+.soft-selected-control {
+  border-color: #afd0bd;
+  background-color: #e3f1e8;
+  color: #356b53;
+  box-shadow: none;
+}
+
+.soft-selected-control:hover {
+  background-color: #d8ebdf;
+}
+
+.soft-selected-count {
+  background-color: rgb(53 107 83 / 0.1);
+  color: #356b53;
+}
+
+.soft-agent-button {
+  border-color: #afd0bd;
+  background-color: #e3f1e8;
+  color: #356b53;
+  box-shadow: 0 10px 28px rgb(28 63 48 / 0.14);
+}
+
+.soft-agent-button:hover {
+  background-color: #d3e8db;
 }
 
 main:not(.app-dark) .shadow-sm {
@@ -296,6 +388,43 @@ html.dark-mode .agent-run-button:hover,
 body.dark-mode .agent-run-button:hover,
 .app-dark .agent-run-button:hover {
   background-color: #0b4a3b !important;
+}
+
+html.dark-mode .soft-selected-control,
+body.dark-mode .soft-selected-control,
+.app-dark .soft-selected-control {
+  border-color: rgb(52 211 153 / 0.28) !important;
+  background-color: rgb(6 78 59 / 0.3) !important;
+  color: #a7d8c0 !important;
+  box-shadow: none !important;
+}
+
+html.dark-mode .soft-selected-control:hover,
+body.dark-mode .soft-selected-control:hover,
+.app-dark .soft-selected-control:hover {
+  background-color: rgb(6 78 59 / 0.4) !important;
+}
+
+html.dark-mode .soft-selected-count,
+body.dark-mode .soft-selected-count,
+.app-dark .soft-selected-count {
+  background-color: rgb(167 216 192 / 0.1) !important;
+  color: #a7d8c0 !important;
+}
+
+html.dark-mode .soft-agent-button,
+body.dark-mode .soft-agent-button,
+.app-dark .soft-agent-button {
+  border-color: rgb(52 211 153 / 0.26) !important;
+  background-color: #17362c !important;
+  color: #a7d8c0 !important;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.28) !important;
+}
+
+html.dark-mode .soft-agent-button:hover,
+body.dark-mode .soft-agent-button:hover,
+.app-dark .soft-agent-button:hover {
+  background-color: #1c4034 !important;
 }
 
 html.dark-mode .bg-red-50,

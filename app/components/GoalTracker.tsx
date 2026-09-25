@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
+import appIcon from "../icon3.png";
 import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,
@@ -5202,7 +5203,7 @@ export default function GoalTracker() {
   }
 
   if (isLoading) {
-    return <LoadingScreen />;
+    return <LoadingScreen isDarkMode={isDarkMode} />;
   }
 
   if (!loginId) {
@@ -5755,7 +5756,7 @@ export default function GoalTracker() {
                   : navItemDropTargetId === item.id
                     ? "border-emerald-500 bg-white text-emerald-800 shadow-sm"
                     : currentView === item.id
-                      ? "border-emerald-700 bg-emerald-700 text-white shadow-sm"
+                      ? "soft-selected-control"
                       : "border-transparent text-stone-700 hover:bg-stone-100"
               }`}
             >
@@ -5768,7 +5769,7 @@ export default function GoalTracker() {
               {item.count !== null && (
                 <span
                   className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
-                    currentView === item.id ? "bg-white/20 text-white" : "bg-stone-100 text-stone-600"
+                    currentView === item.id ? "soft-selected-count" : "bg-stone-100 text-stone-600"
                   }`}
                 >
                   {item.count}
@@ -5796,7 +5797,7 @@ export default function GoalTracker() {
             aria-label={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
             title={language === "ko" ? "드래그해서 위치 이동" : "Drag to move"}
             style={agentButtonPosition ? { left: agentButtonPosition.x, top: agentButtonPosition.y } : undefined}
-            className={`fixed z-[95] grid h-14 w-14 touch-none place-items-center rounded-full border border-emerald-500/40 bg-emerald-700 text-white shadow-xl shadow-emerald-950/20 transition hover:bg-emerald-800 active:cursor-grabbing [&_svg]:h-9 [&_svg]:w-9 ${
+            className={`soft-agent-button fixed z-[95] grid h-14 w-14 touch-none place-items-center rounded-full border transition active:cursor-grabbing [&_svg]:h-9 [&_svg]:w-9 ${
               agentButtonPosition ? "cursor-grab" : "bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 cursor-grab hover:-translate-y-0.5 sm:bottom-5"
             }`}
           >
@@ -6919,8 +6920,8 @@ export default function GoalTracker() {
                     aria-label={text.listView}
                     title={text.listView}
                     onClick={() => setTodoDisplayMode("list")}
-                    className={`grid h-6 w-7 place-items-center rounded text-stone-700 transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
-                      todoDisplayMode === "list" ? "bg-emerald-700 text-white" : "hover:bg-stone-100"
+                    className={`grid h-6 w-7 place-items-center rounded transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
+                      todoDisplayMode === "list" ? "soft-selected-control" : "text-stone-700 hover:bg-stone-100"
                     }`}
                   >
                     <ListIcon />
@@ -6931,8 +6932,8 @@ export default function GoalTracker() {
                     aria-label={text.calendarView}
                     title={text.calendarView}
                     onClick={() => setTodoDisplayMode("calendar")}
-                    className={`grid h-6 w-7 place-items-center rounded text-stone-700 transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
-                      todoDisplayMode === "calendar" ? "bg-emerald-700 text-white" : "hover:bg-stone-100"
+                    className={`grid h-6 w-7 place-items-center rounded transition [&_svg]:h-3.5 [&_svg]:w-3.5 ${
+                      todoDisplayMode === "calendar" ? "soft-selected-control" : "text-stone-700 hover:bg-stone-100"
                     }`}
                   >
                     <CalendarIcon />
@@ -6993,7 +6994,7 @@ export default function GoalTracker() {
                           onClick={() => setSelectedTodoCategories([])}
                           className={`h-8 rounded-md border px-2.5 text-xs font-semibold transition ${
                             activeSelectedTodoCategories.length === 0
-                              ? "border-emerald-700 bg-emerald-700 text-white"
+                              ? "soft-selected-control"
                               : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
                           }`}
                         >
@@ -7009,7 +7010,7 @@ export default function GoalTracker() {
                               onClick={() => toggleTodoCategoryFilter(categoryKey)}
                               className={`h-8 min-w-0 rounded-md border px-2.5 text-xs font-semibold transition ${
                                 isSelected
-                                  ? "border-emerald-700 bg-emerald-700 text-white"
+                                  ? "soft-selected-control"
                                   : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
                               }`}
                             >
@@ -8751,7 +8752,7 @@ export default function GoalTracker() {
                 : navItemDropTargetId === item.id
                   ? "border-emerald-500 bg-white text-emerald-800 shadow-sm"
                   : currentView === item.id
-                    ? "border-emerald-700 bg-emerald-700 text-white shadow-sm"
+                    ? "soft-selected-control"
                     : "border-transparent text-stone-700 hover:bg-stone-100"
             }`}
           >
@@ -8765,7 +8766,7 @@ export default function GoalTracker() {
             {item.count !== null && (
               <span
                 className={`hidden h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] sm:inline-flex ${
-                  currentView === item.id ? "bg-white/20 text-white" : "bg-stone-100 text-stone-600"
+                  currentView === item.id ? "soft-selected-count" : "bg-stone-100 text-stone-600"
                 }`}
               >
                 {item.count}
@@ -9257,19 +9258,34 @@ function DatePhraseSticker({
   );
 }
 
-function LoadingScreen() {
+function LoadingScreen({ isDarkMode }: { isDarkMode: boolean }) {
   return (
     <main
-      className="flex min-h-screen items-center justify-center bg-[#f6f7f4] text-stone-950"
+      className={`flex min-h-screen items-center justify-center bg-[#f6f7f4] text-stone-950 ${
+        isDarkMode ? "app-dark" : ""
+      }`}
       aria-busy="true"
       aria-live="polite"
     >
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex flex-col items-center gap-3">
+        <span className="loading-icon-frame h-20 w-20 sm:h-24 sm:w-24">
+          <span className="block h-full w-full overflow-hidden rounded-md">
+            <Image
+              src={appIcon}
+              alt="BoostMaster"
+              className="h-full w-full object-cover"
+              preload
+            />
+          </span>
+        </span>
         <div
-          className="h-12 w-12 animate-spin rounded-full border-4 border-stone-300 border-t-emerald-700"
-          aria-hidden="true"
-        />
-        <p className="text-sm font-medium text-stone-600">Loading data...</p>
+          className="loading-gauge-track h-1.5 w-20 overflow-hidden rounded-full sm:w-24"
+          role="progressbar"
+          aria-label="Loading data"
+        >
+          <div className="loading-gauge-fill h-full w-2/5 rounded-full" />
+        </div>
+        <p className="loading-gauge-label text-xs font-medium">Data loading...</p>
       </div>
     </main>
   );
