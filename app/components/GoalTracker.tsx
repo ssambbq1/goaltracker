@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import bestIcon from "../BEST-transparent.png";
 import appIcon from "../icon3.png";
 import youIcon from "../YOU-transparent.png";
@@ -20,8 +21,11 @@ import { createPortal } from "react-dom";
 import AppInstallButton from "./AppInstallButton";
 import Head from "./head";
 import ProgressChart, { type ProgressChartMode } from "./ProgressChart";
-import RoutineTracker from "./RoutineTracker";
 import parseKoreanDatePhrase, { removeParsedDatePhrase, type ParsedDatePhrase } from "../../lib/parseDatePhrase";
+
+const RoutineTracker = dynamic(() => import("./RoutineTracker"), {
+  loading: () => <div className="h-72 animate-pulse rounded-md bg-stone-100" aria-label="Loading habits" />,
+});
 
 type ProgressEntry = {
   id: string;
@@ -565,6 +569,55 @@ async function fetchSession() {
   const response = await fetch("/api/auth/session", { cache: "no-store" });
   if (!response.ok) throw new Error("Failed to load session");
   return (await response.json()) as Session;
+}
+
+async function fetchBootstrap() {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 6000);
+
+  try {
+    const response = await fetch("/api/bootstrap", {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      session?: Session;
+      goals?: Goal[];
+      todos?: Todo[];
+    };
+    if (!response.ok || !data.session) throw new Error(data.error || "Failed to load app data");
+    return {
+      session: data.session,
+      goals: Array.isArray(data.goals) ? data.goals : [],
+      todos: Array.isArray(data.todos) ? data.todos : [],
+    };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fetchInitialData() {
+  try {
+    return await fetchBootstrap();
+  } catch {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        (async () => {
+          const session = await fetchSession();
+          if (!session.loginId) return { session, goals: [], todos: [] };
+          const [goals, todos] = await Promise.all([fetchGoals(), fetchTodos()]);
+          return { session, goals, todos };
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Initial data request timed out")), 6000);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
 }
 
 async function fetchAgentSettings() {
@@ -2256,6 +2309,8 @@ export default function GoalTracker() {
 
   useEffect(() => {
     let isActive = true;
+    let secondaryLoadHandle: number | null = null;
+    let usesIdleCallback = false;
 
     async function loadInitialData() {
       try {
@@ -2265,7 +2320,8 @@ export default function GoalTracker() {
           window.history.replaceState(null, "", window.location.pathname);
         }
 
-        const session = await fetchSession();
+        const bootstrap = await fetchInitialData();
+        const { session } = bootstrap;
         if (!isActive) return;
 
         if (!session.loginId) {
@@ -2319,29 +2375,8 @@ export default function GoalTracker() {
             if (!isActive) return;
             setError(settingsError instanceof Error ? settingsError.message : "Failed to load agent settings");
           });
-        const [
-          loadedGoals,
-          loadedDeletedGoals,
-          loadedArchivedGoals,
-          loadedDeletedTodos,
-          loadedArchivedTodos,
-          loadedRoutines,
-          loadedDeletedRoutines,
-          loadedArchivedRoutines,
-          loadedFriendships,
-          loadedAssignments,
-        ] = await Promise.all([
-          fetchGoals(),
-          fetchDeletedGoals(),
-          fetchArchivedGoals(),
-          fetchDeletedTodos(),
-          fetchArchivedTodos(),
-          fetchRoutines(),
-          fetchDeletedRoutines(),
-          fetchArchivedRoutines(),
-          fetchFriendships(),
-          fetchAssignments(),
-        ]);
+        const loadedGoals = bootstrap.goals;
+        const loadedTodos = bootstrap.todos;
         const firstGoal = loadedGoals[0] ?? null;
         const storedNavigation = readStoredNavigationState();
         const storedGoalId =
@@ -2356,15 +2391,7 @@ export default function GoalTracker() {
         const nextLatestEntry = nextGoal ? getLatestEntry(nextGoal.entries) : null;
         if (!isActive) return;
         setGoals(loadedGoals);
-        setDeletedGoals(loadedDeletedGoals);
-        setArchivedGoals(loadedArchivedGoals);
-        setDeletedTodos(loadedDeletedTodos);
-        setArchivedTodos(loadedArchivedTodos);
-        setRoutines(loadedRoutines);
-        setDeletedRoutines(loadedDeletedRoutines);
-        setArchivedRoutines(loadedArchivedRoutines);
-        setFriendships(loadedFriendships);
-        setAssignments(loadedAssignments);
+        setTodos(loadedTodos);
         setActiveGoalId(nextGoal?.id ?? null);
         setCurrentView(nextView);
         previousView.current = nextView;
@@ -2372,14 +2399,42 @@ export default function GoalTracker() {
         setGoalDraft(nextGoal ? toGoalDraft(nextGoal) : null);
         setEntryValue(String(nextLatestEntry?.value ?? 0));
 
-        try {
-          const loadedTodos = await fetchTodos();
-          if (!isActive) return;
-          setTodos(loadedTodos);
-        } catch (todoError) {
-          if (!isActive) return;
-          setTodos([]);
-          setError(todoError instanceof Error ? todoError.message : "Failed to load tasks");
+        const loadSecondaryData = () => {
+          void Promise.allSettled([
+            fetchDeletedGoals(),
+            fetchArchivedGoals(),
+            fetchDeletedTodos(),
+            fetchArchivedTodos(),
+            fetchRoutines(),
+            fetchDeletedRoutines(),
+            fetchArchivedRoutines(),
+            fetchFriendships(),
+            fetchAssignments(),
+          ]).then((results) => {
+            if (!isActive) return;
+            const value = <T,>(index: number, fallback: T): T =>
+              results[index].status === "fulfilled" ? (results[index] as PromiseFulfilledResult<T>).value : fallback;
+            setDeletedGoals(value(0, []));
+            setArchivedGoals(value(1, []));
+            setDeletedTodos(value(2, []));
+            setArchivedTodos(value(3, []));
+            setRoutines(value(4, []));
+            setDeletedRoutines(value(5, []));
+            setArchivedRoutines(value(6, []));
+            setFriendships(value(7, []));
+            setAssignments(value(8, []));
+          });
+        };
+
+        const idleWindow = window as Window & {
+          requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+          cancelIdleCallback?: (handle: number) => void;
+        };
+        if (typeof idleWindow.requestIdleCallback === "function") {
+          usesIdleCallback = true;
+          secondaryLoadHandle = idleWindow.requestIdleCallback(loadSecondaryData, { timeout: 1200 });
+        } else {
+          secondaryLoadHandle = window.setTimeout(loadSecondaryData, 200);
         }
       } catch (loadError) {
         if (!isActive) return;
@@ -2394,8 +2449,23 @@ export default function GoalTracker() {
 
     return () => {
       isActive = false;
+      if (secondaryLoadHandle !== null) {
+        if (usesIdleCallback) window.cancelIdleCallback?.(secondaryLoadHandle);
+        else window.clearTimeout(secondaryLoadHandle);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const loadingWatchdog = window.setTimeout(() => {
+      setIsLoading(false);
+      setError((currentError) => currentError || "Loading took too long. Please try again.");
+    }, 8000);
+
+    return () => window.clearTimeout(loadingWatchdog);
+  }, [isLoading]);
 
   useEffect(() => {
     const timers = goalSaveTimers.current;
@@ -7337,7 +7407,8 @@ export default function GoalTracker() {
               )}
             </div>
 
-            <div className={currentView === "routine" ? "" : "hidden"}>
+            {currentView === "routine" && (
+            <div>
                 <RoutineTracker
                 language={language}
                 isSaving={isSaving}
@@ -7349,6 +7420,7 @@ export default function GoalTracker() {
                 onTodayChecklistIncomplete={stopTodayChecklistCompleteReaction}
               />
             </div>
+            )}
 
             <div
               className={`border border-transparent bg-transparent p-0 ${

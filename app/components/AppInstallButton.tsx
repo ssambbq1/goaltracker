@@ -62,11 +62,28 @@ export default function AppInstallButton({ language }: { language: AppLanguage }
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then(() => navigator.serviceWorker.ready)
-        .then(() => setIsServiceWorkerReady(true))
-        .catch(() => setIsServiceWorkerReady(false));
+      if (process.env.NODE_ENV === "development") {
+        void Promise.all([
+          navigator.serviceWorker.getRegistrations().then((registrations) =>
+            Promise.all(registrations.map((registration) => registration.unregister())),
+          ),
+          window.caches
+            ? caches.keys().then((keys) =>
+                Promise.all(keys.filter((key) => key.startsWith("boostmaster-")).map((key) => caches.delete(key))),
+              )
+            : Promise.resolve([]),
+        ]).finally(() => setIsServiceWorkerReady(false));
+      } else {
+        navigator.serviceWorker
+          .register("/sw.js", { updateViaCache: "none" })
+          .then(async (registration) => {
+            await registration.update();
+            return registration;
+          })
+          .then(() => navigator.serviceWorker.ready)
+          .then(() => setIsServiceWorkerReady(true))
+          .catch(() => setIsServiceWorkerReady(false));
+      }
     }
 
     function handleBeforeInstallPrompt(event: Event) {
