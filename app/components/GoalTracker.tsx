@@ -6943,7 +6943,7 @@ export default function GoalTracker() {
                           )}
                           <div className="min-w-0">
                             <div className="min-w-0">
-                              <div className="flex min-w-0 items-center justify-between gap-1.5 pl-9">
+                              <div className="flex min-w-0 items-center justify-between gap-1.5">
                                 <span className="min-w-0 break-words font-medium">{goal.title}</span>
                                 <button
                                   type="button"
@@ -9819,7 +9819,7 @@ function FocusRibbonIcon({ filled }: { filled: boolean }) {
       aria-hidden="true"
       viewBox="0 0 24 24"
       className="h-5 w-5 shrink-0"
-      fill={filled ? "currentColor" : "none"}
+      fill={filled ? "currentColor" : "var(--focus-ribbon-card-background)"}
       stroke="currentColor"
       strokeLinecap="round"
       strokeLinejoin="round"

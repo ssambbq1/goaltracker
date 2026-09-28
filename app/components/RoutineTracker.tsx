@@ -1487,7 +1487,7 @@ function RoutineListItem({
           {language === "ko" ? "이동 중" : "Moving"}
         </div>
       )}
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 pl-9">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1">
         <div className="min-w-0">
           <div className="truncate font-medium text-stone-950">{routine.title}</div>
         </div>
@@ -2122,7 +2122,7 @@ function FocusRibbonIcon({ filled }: { filled: boolean }) {
       aria-hidden="true"
       viewBox="0 0 24 24"
       className="h-5 w-5 shrink-0"
-      fill={filled ? "currentColor" : "none"}
+      fill={filled ? "currentColor" : "var(--focus-ribbon-card-background)"}
       stroke="currentColor"
       strokeLinecap="round"
       strokeLinejoin="round"

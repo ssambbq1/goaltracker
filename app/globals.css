@@ -4,6 +4,7 @@
   --background: #f4f7f3;
   --foreground: #1c1917;
   --surface: #fffefc;
+  --focus-ribbon-card-background: rgb(255 254 252 / 0.94);
   --surface-muted: #eef3ed;
   --surface-subtle: #f7f8f5;
   --border-soft: #e0e6dc;
@@ -296,6 +297,7 @@ body.dark-mode,
   --panel: #0d131a;
   --panel-muted: #121922;
   --panel-elevated: #151f29;
+  --focus-ribbon-card-background: rgb(13 19 26 / 0.96);
   --border-muted: #26323d;
   --text-muted: #c4cbd4;
   --text-faint: #8894a3;
