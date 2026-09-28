@@ -1,5 +1,6 @@
 import { getAccountProfile, getSessionLoginId, getErrorMessage } from "@/lib/auth";
 import { readGoals } from "@/lib/goalStore";
+import { readRoutines } from "@/lib/routineStore";
 import { readTodos } from "@/lib/todoStore";
 
 export const runtime = "nodejs";
@@ -12,18 +13,20 @@ export async function GET() {
       return Response.json({
         session: { loginId: null, displayName: null },
         goals: [],
+        routines: [],
         todos: [],
       });
     }
 
-    const [session, goals, todos] = await Promise.all([
+    const [session, goals, todos, routines] = await Promise.all([
       getAccountProfile(loginId),
       readGoals(),
       readTodos(),
+      readRoutines(),
     ]);
 
     return Response.json(
-      { session, goals, todos },
+      { session, goals, todos, routines },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {

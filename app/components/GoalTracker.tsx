@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import Image from "next/image";
-import dynamic from "next/dynamic";
 import bestIcon from "../BEST-transparent.png";
 import appIcon from "../icon3.png";
 import youIcon from "../YOU-transparent.png";
@@ -21,11 +20,8 @@ import { createPortal } from "react-dom";
 import AppInstallButton from "./AppInstallButton";
 import Head from "./head";
 import ProgressChart, { type ProgressChartMode } from "./ProgressChart";
+import RoutineTracker from "./RoutineTracker";
 import parseKoreanDatePhrase, { removeParsedDatePhrase, type ParsedDatePhrase } from "../../lib/parseDatePhrase";
-
-const RoutineTracker = dynamic(() => import("./RoutineTracker"), {
-  loading: () => <div className="h-72 animate-pulse rounded-md bg-stone-100" aria-label="Loading habits" />,
-});
 
 type ProgressEntry = {
   id: string;
@@ -72,6 +68,14 @@ type Todo = {
   archivedAt?: number;
 };
 
+type RoutineMark = {
+  id: string;
+  routineId: string;
+  date: string;
+  status: "success" | "failure";
+  createdAt: number;
+};
+
 type RoutineSummary = {
   id: string;
   title: string;
@@ -82,6 +86,7 @@ type RoutineSummary = {
   deletedAt?: number;
   archivedAt?: number;
   focused: boolean;
+  marks: RoutineMark[];
 };
 
 type FriendProfile = {
@@ -136,7 +141,7 @@ type AssignmentDetail = Assignment & {
   detail:
     | { kind: "goal"; item: Goal }
     | { kind: "todo"; item: Todo }
-    | { kind: "routine"; item: RoutineSummary & { marks: Array<{ id: string; routineId: string; date: string; status: "success" | "failure"; createdAt: number }> } };
+    | { kind: "routine"; item: RoutineSummary };
 };
 
 type AgentSettings = {
@@ -585,12 +590,14 @@ async function fetchBootstrap() {
       session?: Session;
       goals?: Goal[];
       todos?: Todo[];
+      routines?: RoutineSummary[];
     };
     if (!response.ok || !data.session) throw new Error(data.error || "Failed to load app data");
     return {
       session: data.session,
       goals: Array.isArray(data.goals) ? data.goals : [],
       todos: Array.isArray(data.todos) ? data.todos : [],
+      routines: Array.isArray(data.routines) ? data.routines : [],
     };
   } finally {
     window.clearTimeout(timeout);
@@ -606,9 +613,9 @@ async function fetchInitialData() {
       return await Promise.race([
         (async () => {
           const session = await fetchSession();
-          if (!session.loginId) return { session, goals: [], todos: [] };
-          const [goals, todos] = await Promise.all([fetchGoals(), fetchTodos()]);
-          return { session, goals, todos };
+          if (!session.loginId) return { session, goals: [], todos: [], routines: [] };
+          const [goals, todos, routines] = await Promise.all([fetchGoals(), fetchTodos(), fetchRoutines()]);
+          return { session, goals, todos, routines };
         })(),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error("Initial data request timed out")), 6000);
@@ -2079,7 +2086,7 @@ export default function GoalTracker() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [deletedTodos, setDeletedTodos] = useState<Todo[]>([]);
   const [archivedTodos, setArchivedTodos] = useState<Todo[]>([]);
-  const [, setRoutines] = useState<RoutineSummary[]>([]);
+  const [routines, setRoutines] = useState<RoutineSummary[]>([]);
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
@@ -2377,6 +2384,7 @@ export default function GoalTracker() {
           });
         const loadedGoals = bootstrap.goals;
         const loadedTodos = bootstrap.todos;
+        const loadedRoutines = bootstrap.routines;
         const firstGoal = loadedGoals[0] ?? null;
         const storedNavigation = readStoredNavigationState();
         const storedGoalId =
@@ -2392,6 +2400,7 @@ export default function GoalTracker() {
         if (!isActive) return;
         setGoals(loadedGoals);
         setTodos(loadedTodos);
+        setRoutines(loadedRoutines);
         setActiveGoalId(nextGoal?.id ?? null);
         setCurrentView(nextView);
         previousView.current = nextView;
@@ -2405,7 +2414,6 @@ export default function GoalTracker() {
             fetchArchivedGoals(),
             fetchDeletedTodos(),
             fetchArchivedTodos(),
-            fetchRoutines(),
             fetchDeletedRoutines(),
             fetchArchivedRoutines(),
             fetchFriendships(),
@@ -2418,11 +2426,10 @@ export default function GoalTracker() {
             setArchivedGoals(value(1, []));
             setDeletedTodos(value(2, []));
             setArchivedTodos(value(3, []));
-            setRoutines(value(4, []));
-            setDeletedRoutines(value(5, []));
-            setArchivedRoutines(value(6, []));
-            setFriendships(value(7, []));
-            setAssignments(value(8, []));
+            setDeletedRoutines(value(4, []));
+            setArchivedRoutines(value(5, []));
+            setFriendships(value(6, []));
+            setAssignments(value(7, []));
           });
         };
 
@@ -7407,20 +7414,20 @@ export default function GoalTracker() {
               )}
             </div>
 
-            {currentView === "routine" && (
-            <div>
-                <RoutineTracker
+            <div className={currentView === "routine" ? "" : "hidden"}>
+              <RoutineTracker
                 language={language}
+                initialRoutines={routines}
                 isSaving={isSaving}
                 resetSignal={routineListResetKey}
                 reloadSignal={routineReloadKey}
                 onSavingChange={setIsSaving}
+                onRoutinesChange={setRoutines}
                 onError={setError}
                 onTodayChecklistComplete={triggerTodayChecklistCompleteReaction}
                 onTodayChecklistIncomplete={stopTodayChecklistCompleteReaction}
               />
             </div>
-            )}
 
             <div
               className={`border border-transparent bg-transparent p-0 ${

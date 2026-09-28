@@ -504,25 +504,30 @@ function preventListReorderScrollEvent(event: Event) {
 
 export default function RoutineTracker({
   language = "en",
+  initialRoutines,
   isSaving,
   resetSignal,
   reloadSignal,
   onSavingChange,
+  onRoutinesChange,
   onError,
   onTodayChecklistComplete,
   onTodayChecklistIncomplete,
 }: {
   language?: AppLanguage;
+  initialRoutines?: Routine[];
   isSaving: boolean;
   resetSignal: number;
   reloadSignal: number;
   onSavingChange: (isSaving: boolean) => void;
+  onRoutinesChange?: (routines: Routine[]) => void;
   onError: (error: string) => void;
   onTodayChecklistComplete?: () => void;
   onTodayChecklistIncomplete?: () => void;
 }) {
   const text = ROUTINE_TEXT[language];
-  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [lastInitialRoutines, setLastInitialRoutines] = useState(initialRoutines);
+  const [routines, setRoutines] = useState<Routine[]>(() => initialRoutines ?? []);
   const [form, setForm] = useState(emptyRoutineForm);
   const [detectedPhrase, setDetectedPhrase] = useState<ParsedDatePhrase | null>(null);
   const [activeRoutineId, setActiveRoutineId] = useState<string | null>(null);
@@ -531,7 +536,7 @@ export default function RoutineTracker({
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyRoutineForm);
   const [schemaMissing, setSchemaMissing] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => initialRoutines === undefined);
   const [highlightedRoutineId, setHighlightedRoutineId] = useState<string | null>(null);
   const [draggingRoutineId, setDraggingRoutineId] = useState<string | null>(null);
   const [routineDropTargetId, setRoutineDropTargetId] = useState<string | null>(null);
@@ -554,11 +559,21 @@ export default function RoutineTracker({
   const pendingMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
   const inFlightMarkSaves = useRef<Record<string, PendingRoutineMarkSave>>({});
 
+  if (initialRoutines !== undefined && initialRoutines !== lastInitialRoutines) {
+    setLastInitialRoutines(initialRoutines);
+    setRoutines(initialRoutines);
+    setIsLoading(false);
+  }
+
   useEffect(() => {
     latestRoutines.current = routines;
   }, [routines]);
 
   useEffect(() => {
+    if (initialRoutines !== undefined) {
+      return;
+    }
+
     let isActive = true;
 
     async function loadRoutines() {
@@ -566,6 +581,7 @@ export default function RoutineTracker({
         const result = await fetchRoutines();
         if (!isActive) return;
         setRoutines(result.routines);
+        onRoutinesChange?.(result.routines);
         setSchemaMissing(result.schemaMissing);
         if (result.error) onError(result.error);
       } catch (error) {
@@ -580,7 +596,7 @@ export default function RoutineTracker({
     return () => {
       isActive = false;
     };
-  }, [onError, reloadSignal]);
+  }, [initialRoutines, onError, onRoutinesChange, reloadSignal]);
 
   useEffect(() => {
     const markSaveTimers = pendingMarkSaveTimers.current;
@@ -613,6 +629,12 @@ export default function RoutineTracker({
   const displayedCheckScore = useMemo(() => getDisplayedCheckScore(visibleRoutines), [visibleRoutines]);
   const displayedScoreFeedback = getTodayScoreFeedback(displayedCheckScore.score, language);
 
+  function commitRoutineState(nextRoutines: Routine[]) {
+    latestRoutines.current = nextRoutines;
+    setRoutines(nextRoutines);
+    onRoutinesChange?.(nextRoutines);
+  }
+
   function updateRoutineTitleInput(title: string) {
     const parsed = parseKoreanDatePhrase(title);
     setForm((current) => ({ ...current, title, endDate: parsed?.iso ?? current.endDate }));
@@ -628,7 +650,7 @@ export default function RoutineTracker({
     onError("");
     try {
       const result = await createRoutine({ ...form, title, endDate: parsedDate?.iso ?? form.endDate });
-      setRoutines(result.routines);
+      commitRoutineState(result.routines);
       setActiveRoutineId(result.routine.id);
       setActiveRoutineResetSignal(resetSignal);
       setIsRoutineModalOpen(false);
@@ -666,7 +688,7 @@ export default function RoutineTracker({
     onSavingChange(true);
     onError("");
     try {
-      setRoutines(await patchRoutine(routineId, { ...editForm, title, endDate: parsedDate?.iso ?? editForm.endDate }));
+      commitRoutineState(await patchRoutine(routineId, { ...editForm, title, endDate: parsedDate?.iso ?? editForm.endDate }));
       setEditingRoutineId(null);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Failed to update habit");
@@ -677,7 +699,7 @@ export default function RoutineTracker({
 
   async function deleteRoutine(routineId: string) {
     const previous = routines;
-    setRoutines((current) => current.filter((routine) => routine.id !== routineId));
+    commitRoutineState(routines.filter((routine) => routine.id !== routineId));
     if (activeRoutineId === routineId) {
       setActiveRoutineId(null);
       setEditingRoutineId(null);
@@ -685,9 +707,9 @@ export default function RoutineTracker({
     onSavingChange(true);
     onError("");
     try {
-      setRoutines(await removeRoutine(routineId));
+      commitRoutineState(await removeRoutine(routineId));
     } catch (error) {
-      setRoutines(previous);
+      commitRoutineState(previous);
       onError(error instanceof Error ? error.message : "Failed to delete habit");
     } finally {
       onSavingChange(false);
@@ -696,7 +718,7 @@ export default function RoutineTracker({
 
   async function archiveRoutine(routineId: string) {
     const previous = routines;
-    setRoutines((current) => current.filter((routine) => routine.id !== routineId));
+    commitRoutineState(routines.filter((routine) => routine.id !== routineId));
     if (activeRoutineId === routineId) {
       setActiveRoutineId(null);
       setEditingRoutineId(null);
@@ -704,9 +726,9 @@ export default function RoutineTracker({
     onSavingChange(true);
     onError("");
     try {
-      setRoutines(await archiveExistingRoutine(routineId));
+      commitRoutineState(await archiveExistingRoutine(routineId));
     } catch (error) {
-      setRoutines(previous);
+      commitRoutineState(previous);
       onError(error instanceof Error ? error.message : "Failed to archive habit");
     } finally {
       onSavingChange(false);
@@ -731,10 +753,10 @@ export default function RoutineTracker({
     onError("");
 
     try {
-      setRoutines(await reorderRoutineList(nextRoutines.map((routine) => routine.id)));
+      commitRoutineState(await reorderRoutineList(nextRoutines.map((routine) => routine.id)));
       flashMovedRoutine(movedRoutineId);
     } catch (error) {
-      setRoutines(previousRoutines);
+      commitRoutineState(previousRoutines);
       setHighlightedRoutineId(null);
       onError(error instanceof Error ? error.message : "Failed to reorder habits");
     } finally {
@@ -968,8 +990,7 @@ export default function RoutineTracker({
       areScheduledRoutinesSuccessfulOn(previous, todayIso) &&
       !areScheduledRoutinesSuccessfulOn(nextRoutines, todayIso);
     const saveKey = `${routine.id}:${date}`;
-    latestRoutines.current = nextRoutines;
-    setRoutines(nextRoutines);
+    commitRoutineState(nextRoutines);
     if (shouldShowTodayCompleteReaction) onTodayChecklistComplete?.();
     if (shouldStopTodayCompleteReaction) onTodayChecklistIncomplete?.();
 
@@ -990,18 +1011,15 @@ export default function RoutineTracker({
     const previous = latestRoutines.current;
     const focused = !routine.focused;
     const optimistic = previous.map((item) => (item.id === routine.id ? { ...item, focused } : item));
-    latestRoutines.current = optimistic;
-    setRoutines(optimistic);
+    commitRoutineState(optimistic);
     onSavingChange(true);
     onError("");
 
     try {
       const savedRoutines = await patchRoutine(routine.id, { focused });
-      latestRoutines.current = savedRoutines;
-      setRoutines(savedRoutines);
+      commitRoutineState(savedRoutines);
     } catch (error) {
-      latestRoutines.current = previous;
-      setRoutines(previous);
+      commitRoutineState(previous);
       onError(error instanceof Error ? error.message : "Failed to update focus mark");
     } finally {
       onSavingChange(false);
@@ -1022,8 +1040,7 @@ export default function RoutineTracker({
       const savedRoutines = await saveRoutineMark(pendingSave.routineId, pendingSave.date, pendingSave.status);
       delete inFlightMarkSaves.current[saveKey];
       const nextRoutines = applyOutstandingMarkSaves(savedRoutines);
-      latestRoutines.current = nextRoutines;
-      setRoutines(nextRoutines);
+      commitRoutineState(nextRoutines);
     } catch (error) {
       delete inFlightMarkSaves.current[saveKey];
       const previousStatus = pendingSave.previous
@@ -1036,8 +1053,7 @@ export default function RoutineTracker({
         previousStatus,
       );
       const nextRoutines = applyOutstandingMarkSaves(rolledBackRoutines);
-      latestRoutines.current = nextRoutines;
-      setRoutines(nextRoutines);
+      commitRoutineState(nextRoutines);
       onError(error instanceof Error ? error.message : "Failed to update habit mark");
     } finally {
       if (pendingMarkSaves.current[saveKey]) void flushRoutineMarkSave(saveKey);

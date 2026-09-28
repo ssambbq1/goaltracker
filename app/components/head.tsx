@@ -122,7 +122,7 @@ export default function Head({
           <h1
             ref={wordmarkRef}
             aria-label={text.appName}
-            className="boostmaster-wordmark relative mt-1 block max-w-full whitespace-nowrap bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text font-semibold leading-[0.95] text-transparent"
+            className="boostmaster-wordmark relative mt-1 block max-w-full whitespace-nowrap font-semibold leading-[0.95]"
             style={{ fontSize: wordmarkFontSize ? `${wordmarkFontSize}px` : undefined }}
           >
             <WordmarkText appName={text.appName} />
@@ -220,10 +220,10 @@ export default function Head({
 }
 
 function WordmarkText({ appName }: { appName: string }) {
-  if (appName === "BoostMaster") {
-    const gradientTextClass =
-      "boostmaster-wordmark-letter bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text text-transparent";
+  const gradientTextClass =
+    "boostmaster-wordmark-letter bg-gradient-to-r from-emerald-800 via-stone-950 to-teal-700 bg-clip-text text-transparent";
 
+  if (appName === "BoostMaster") {
     return (
       <span aria-hidden="true" className="inline-flex origin-left scale-x-[0.92] items-baseline">
         <span className={gradientTextClass}>B</span>
@@ -234,10 +234,12 @@ function WordmarkText({ appName }: { appName: string }) {
     );
   }
 
-  if (appName !== "부스트마스터") return appName;
+  if (appName !== "부스트마스터") {
+    return <span className={gradientTextClass}>{appName}</span>;
+  }
 
   return (
-    <span aria-hidden="true" className="inline-flex items-baseline">
+    <span aria-hidden="true" className={`${gradientTextClass} inline-flex items-baseline`}>
       <span>부</span>
       <span className="text-[0.56em]">스트</span>
       <span>마</span>
