@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import bestIcon from "../BEST-transparent.png";
-import appIcon from "../icon3.png";
+import appIcon from "../icon3-gradient.png";
 import youIcon from "../YOU-transparent.png";
 import {
   type CSSProperties,

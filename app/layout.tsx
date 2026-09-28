@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import AppDisplayMode from "./components/AppDisplayMode";
+import loadingIcon from "./icon3-gradient.png";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,9 +26,9 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: "/icon2.png",
-    shortcut: "/icon2.png",
-    apple: "/apple-icon.png",
+    icon: loadingIcon.src,
+    shortcut: loadingIcon.src,
+    apple: loadingIcon.src,
   },
 };
 

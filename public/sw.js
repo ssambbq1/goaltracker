@@ -1,5 +1,5 @@
-const CACHE_NAME = "boostmaster-v4";
-const APP_SHELL = ["/manifest.webmanifest", "/icon.png", "/apple-icon.png"];
+const CACHE_NAME = "boostmaster-v5";
+const APP_SHELL = ["/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

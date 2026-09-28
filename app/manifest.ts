@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import loadingIcon from "./icon3-gradient.png";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -12,27 +13,16 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#4f936f",
     icons: [
       {
-        src: "/icon2.png",
-        sizes: "1408x768",
+        src: loadingIcon.src,
+        sizes: "1254x1254",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/icon.png",
-        sizes: "512x512",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icon.png",
-        sizes: "512x512",
+        src: loadingIcon.src,
+        sizes: "1254x1254",
         type: "image/png",
         purpose: "maskable",
-      },
-      {
-        src: "/apple-icon.png",
-        sizes: "180x180",
-        type: "image/png",
       },
     ],
   };
