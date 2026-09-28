@@ -1,4 +1,4 @@
-const CACHE_NAME = "boostmaster-v5";
+const CACHE_NAME = "boostmaster-v6";
 const APP_SHELL = ["/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

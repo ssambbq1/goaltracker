@@ -18,12 +18,6 @@ export default function manifest(): MetadataRoute.Manifest {
         type: "image/png",
         purpose: "any",
       },
-      {
-        src: loadingIcon.src,
-        sizes: "1254x1254",
-        type: "image/png",
-        purpose: "maskable",
-      },
     ],
   };
 }

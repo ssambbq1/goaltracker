@@ -9340,23 +9340,23 @@ function DatePhraseSticker({
 function LoadingScreen({ isDarkMode }: { isDarkMode: boolean }) {
   return (
     <main
-      className={`flex min-h-screen items-center justify-center bg-[#f6f7f4] text-stone-950 ${
+      className={`relative min-h-[100dvh] overflow-hidden bg-[#f6f7f4] text-stone-950 ${
         isDarkMode ? "app-dark" : ""
       }`}
       aria-busy="true"
       aria-live="polite"
     >
-      <div className="flex flex-col items-center gap-3">
-        <span className="loading-icon-frame h-20 w-20 sm:h-24 sm:w-24">
-          <span className="block h-full w-full overflow-hidden rounded-md">
-            <Image
-              src={appIcon}
-              alt="BoostMaster"
-              className="h-full w-full object-cover"
-              preload
-            />
-          </span>
+      <span className="loading-icon-frame absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 sm:h-24 sm:w-24">
+        <span className="block h-full w-full overflow-hidden rounded-md">
+          <Image
+            src={appIcon}
+            alt="BoostMaster"
+            className="h-full w-full object-cover"
+            preload
+          />
         </span>
+      </span>
+      <div className="absolute left-1/2 top-[calc(50%+3.25rem)] flex -translate-x-1/2 flex-col items-center gap-3 sm:top-[calc(50%+3.75rem)]">
         <div
           className="loading-gauge-track h-1.5 w-20 overflow-hidden rounded-full sm:w-24"
           role="progressbar"
