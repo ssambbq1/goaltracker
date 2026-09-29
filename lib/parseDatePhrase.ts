@@ -9,9 +9,21 @@ function escapeRegExp(value: string) {
 
 export function removeParsedDatePhrase(text: string, parsed: ParsedDatePhrase | null) {
   if (!parsed?.phrase) return text;
-  return text
-    .replace(new RegExp(`(^|\\s)${escapeRegExp(parsed.phrase)}(?=\\s|$)`), " ")
-    .replace(/\s+/g, " ")
+
+  const normalizedText = text.replace(/\r\n?/g, "\n");
+  const withoutDatePhrase = normalizedText.replace(
+    new RegExp(`(^|\\s)${escapeRegExp(parsed.phrase)}(?=\\s|$)`),
+    (match, leadingWhitespace: string, offset: number, source: string) => {
+      const nextCharacter = source[offset + match.length] ?? "";
+      if (leadingWhitespace === "\n") return nextCharacter === "\n" ? "" : "\n";
+      return " ";
+    },
+  );
+
+  return withoutDatePhrase
+    .split("\n")
+    .map((line) => line.replace(/[^\S\n]+/g, " ").trim())
+    .join("\n")
     .trim();
 }
 

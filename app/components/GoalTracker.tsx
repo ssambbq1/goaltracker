@@ -2093,6 +2093,7 @@ export default function GoalTracker() {
   const [friendSearchQuery, setFriendSearchQuery] = useState("");
   const [friendSearchResults, setFriendSearchResults] = useState<FriendProfile[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [isSentAssignmentsExpanded, setIsSentAssignmentsExpanded] = useState(false);
   const [assignmentDetail, setAssignmentDetail] = useState<AssignmentDetail | null>(null);
   const [assignmentKind, setAssignmentKind] = useState<AssignmentKind>("todo");
   const [assignmentAssigneeId, setAssignmentAssigneeId] = useState("");
@@ -6691,44 +6692,58 @@ export default function GoalTracker() {
                 </div>
 
                 <div className="grid content-start gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
-                  <div className="font-semibold text-stone-900">{language === "ko" ? "내가 부여한 항목 관찰" : "Assigned by me"}</div>
-                  {sentAssignments.length === 0 ? (
-                    <div className="text-stone-600">{language === "ko" ? "아직 부여한 항목이 없습니다." : "No sent assignments."}</div>
-                  ) : (
-                    sentAssignments.map((assignment) => (
-                      <button
-                        key={assignment.id}
-                        type="button"
-                        onClick={() => openAssignmentDetail(assignment)}
-                        disabled={isSaving || assignment.status !== "accepted" || !assignment.appliedItemId}
-                        className="grid gap-1 rounded-md border border-stone-200 px-2 py-2 text-left transition hover:border-emerald-300 hover:bg-emerald-50/40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:bg-transparent"
-                      >
-                        <div className="flex min-w-0 items-center justify-between gap-2">
-                          <span className="truncate font-semibold">{assignment.title}</span>
-                          <span className="shrink-0 rounded border border-stone-200 px-1.5 py-0.5 text-[11px] font-semibold text-stone-600">
-                            {assignment.status}
-                          </span>
-                        </div>
-                        <div className="truncate text-xs text-stone-500">
-                          {assignment.assignee?.displayName || assignment.assigneeId} · {assignment.kind}
-                        </div>
-                        {assignment.observed ? (
-                          <div className="text-xs text-stone-700">
-                            <span className="font-semibold">{assignment.observed.statusText}</span> · {assignment.observed.progressText}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-stone-500">
-                            {assignment.status === "pending"
-                              ? language === "ko"
-                                ? "상대가 아직 수락하지 않았습니다."
-                                : "Waiting for acceptance."
-                              : language === "ko"
-                                ? "관찰 가능한 적용 항목이 없습니다."
-                            : "No applied item to observe."}
-                          </div>
-                        )}
-                      </button>
-                    ))
+                  <button
+                    type="button"
+                    aria-expanded={isSentAssignmentsExpanded}
+                    onClick={() => setIsSentAssignmentsExpanded((expanded) => !expanded)}
+                    className="flex w-full items-center justify-between gap-2 text-left font-semibold text-stone-900"
+                  >
+                    <span>
+                      {language === "ko" ? "내가 부여한 항목" : "Assigned by me"} ({sentAssignments.length})
+                    </span>
+                    <DisclosureChevronIcon isExpanded={isSentAssignmentsExpanded} />
+                  </button>
+                  {isSentAssignmentsExpanded && (
+                    <div className="grid gap-1.5">
+                      {sentAssignments.length === 0 ? (
+                        <div className="text-stone-600">{language === "ko" ? "아직 부여한 항목이 없습니다." : "No sent assignments."}</div>
+                      ) : (
+                        sentAssignments.map((assignment) => (
+                          <button
+                            key={assignment.id}
+                            type="button"
+                            onClick={() => openAssignmentDetail(assignment)}
+                            disabled={isSaving || assignment.status !== "accepted" || !assignment.appliedItemId}
+                            className="grid gap-1 rounded-md border border-stone-200 px-2 py-2 text-left transition hover:border-emerald-300 hover:bg-emerald-50/40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:bg-transparent"
+                          >
+                            <div className="flex min-w-0 items-center justify-between gap-2">
+                              <span className="truncate font-semibold">{assignment.title}</span>
+                              <span className="shrink-0 rounded border border-stone-200 px-1.5 py-0.5 text-[11px] font-semibold text-stone-600">
+                                {assignment.status}
+                              </span>
+                            </div>
+                            <div className="truncate text-xs text-stone-500">
+                              {assignment.assignee?.displayName || assignment.assigneeId} · {assignment.kind}
+                            </div>
+                            {assignment.observed ? (
+                              <div className="text-xs text-stone-700">
+                                <span className="font-semibold">{assignment.observed.statusText}</span> · {assignment.observed.progressText}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-stone-500">
+                                {assignment.status === "pending"
+                                  ? language === "ko"
+                                    ? "상대가 아직 수락하지 않았습니다."
+                                    : "Waiting for acceptance."
+                                  : language === "ko"
+                                    ? "관찰 가능한 적용 항목이 없습니다."
+                                : "No applied item to observe."}
+                              </div>
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -8694,7 +8709,7 @@ export default function GoalTracker() {
                 <CloseIcon />
               </button>
             </div>
-            <div className="mt-4 rounded-md bg-stone-100 p-3 text-sm text-stone-800">
+            <div className="mt-4 whitespace-pre-wrap break-words rounded-md bg-stone-100 p-3 text-sm text-stone-800">
               {todoToDelete.title}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
@@ -9020,7 +9035,7 @@ function TodoCalendar({
                       }`}
                     >
                       <span
-                        className="todo-calendar-task-title block overflow-hidden whitespace-normal break-words"
+                        className="todo-calendar-task-title block overflow-hidden whitespace-pre-wrap break-words"
                         style={{ fontSize: "11px", lineHeight: "1.15" }}
                       >
                         {formatTodoCalendarTitle(todo.title)}
@@ -9280,7 +9295,7 @@ function StoredItemCard({
 }) {
   return (
     <div data-screen-swipe-surface className="rounded-md border border-stone-200 bg-white p-3">
-      <div className="font-medium">{title}</div>
+      <div className="whitespace-pre-wrap break-words font-medium">{title}</div>
       <div className="mt-1 text-xs text-stone-600">{meta}</div>
       <div className="mt-1 text-xs text-stone-600">{detail}</div>
       <div className="mt-3 flex flex-wrap gap-2">

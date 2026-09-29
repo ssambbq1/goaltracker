@@ -115,6 +115,12 @@ describe('parseKoreanDatePhrase', () => {
     expect(removeParsedDatePhrase('문서 정리 3일 뒤까지', parsed)).toBe('문서 정리');
   });
 
+  it('preserves title line breaks while removing a detected date phrase', () => {
+    const title = '문서 초안 작성\n담당자에게 전달 내일까지';
+    const parsed = parseKoreanDatePhrase(title);
+    expect(removeParsedDatePhrase(title, parsed)).toBe('문서 초안 작성\n담당자에게 전달');
+  });
+
   it('parses 2주 후', () => {
     const expected = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14));
     const res = parseKoreanDatePhrase('2주 후');
