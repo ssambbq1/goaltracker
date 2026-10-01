@@ -1,0 +1,4 @@
+interface:
+  display_name: "BoostMaster Development"
+  short_description: "Develop BoostMaster with storage and permission checks"
+  default_prompt: "Use $boostmaster-development to implement this change in BoostMaster and verify the affected behavior."

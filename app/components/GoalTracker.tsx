@@ -18,6 +18,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import AppInstallButton from "./AppInstallButton";
+import FriendRelationshipDiagram from "./FriendRelationshipDiagram";
 import Head from "./head";
 import ProgressChart, { type ProgressChartMode } from "./ProgressChart";
 import RoutineTracker from "./RoutineTracker";
@@ -402,7 +403,7 @@ const ADMIN_USER_LIST_EXPANDED_STORAGE_KEY = "boost-mastery.admin-user-list-expa
 const ADMIN_AGENT_SETTINGS_EXPANDED_STORAGE_KEY = "boost-mastery.admin-agent-settings-expanded";
 const DISMISSED_ANNOUNCEMENTS_STORAGE_KEY = "boost-mastery.dismissed-announcements";
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
-const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine", "archive", "bin"];
+const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
 const AGENT_BUTTON_SIZE = 56;
 const AGENT_BUTTON_EDGE_PADDING = 12;
@@ -2090,9 +2091,12 @@ export default function GoalTracker() {
   const [deletedRoutines, setDeletedRoutines] = useState<RoutineSummary[]>([]);
   const [archivedRoutines, setArchivedRoutines] = useState<RoutineSummary[]>([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
+  const [isRelationshipDiagramOpen, setIsRelationshipDiagramOpen] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState("");
   const [friendSearchResults, setFriendSearchResults] = useState<FriendProfile[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [startupAssignmentIds, setStartupAssignmentIds] = useState<string[]>([]);
+  const [assignmentResponseError, setAssignmentResponseError] = useState("");
   const [isSentAssignmentsExpanded, setIsSentAssignmentsExpanded] = useState(false);
   const [assignmentDetail, setAssignmentDetail] = useState<AssignmentDetail | null>(null);
   const [assignmentKind, setAssignmentKind] = useState<AssignmentKind>("todo");
@@ -2291,8 +2295,6 @@ export default function GoalTracker() {
       { id: "list", label: text.goalList, shortLabel: text.goalShort, count: null },
       { id: "todo", label: text.todoList, shortLabel: text.todoShort, count: null },
       { id: "routine", label: text.routineList, shortLabel: text.routineShort, count: null },
-      { id: "archive", label: text.archive, shortLabel: text.archive, count: null },
-      { id: "bin", label: text.bin, shortLabel: text.bin, count: null },
       ];
       const order = normalizeNavMenuOrder(navMenuOrder);
       return order
@@ -2430,7 +2432,13 @@ export default function GoalTracker() {
             setDeletedRoutines(value(4, []));
             setArchivedRoutines(value(5, []));
             setFriendships(value(6, []));
-            setAssignments(value(7, []));
+            const loadedAssignments = value<Assignment[]>(7, []);
+            setAssignments(loadedAssignments);
+            setStartupAssignmentIds(
+              loadedAssignments
+                .filter((assignment) => assignment.assigneeId === session.loginId && assignment.status === "pending")
+                .map((assignment) => assignment.id),
+            );
           });
         };
 
@@ -2735,6 +2743,20 @@ export default function GoalTracker() {
     () => normalizeTodoCategoryOrder(todoCategoryOrder, todoCategoryKeys),
     [todoCategoryKeys, todoCategoryOrder],
   );
+  const relationshipFriends = useMemo(
+    () => acceptedFriends.map((friendship) => ({
+      id: friendship.friend.loginId,
+      name: friendship.friend.displayName || friendship.friend.loginId,
+      sent: assignments.filter(
+        (assignment) => assignment.assignerId === loginId && assignment.assigneeId === friendship.friend.loginId,
+      ),
+      received: assignments.filter(
+        (assignment) => assignment.assignerId === friendship.friend.loginId && assignment.assigneeId === loginId,
+      ),
+    })),
+    [acceptedFriends, assignments, loginId],
+  );
+  const activeStartupAssignment = receivedAssignments.find((assignment) => startupAssignmentIds.includes(assignment.id)) ?? null;
 
   const activeSelectedTodoCategories = useMemo(
     () => selectedTodoCategories.filter((category) => todoCategoryKeys.includes(category)),
@@ -2827,9 +2849,12 @@ export default function GoalTracker() {
     setDeletedRoutines([]);
     setArchivedRoutines([]);
     setFriendships([]);
+    setIsRelationshipDiagramOpen(false);
     setFriendSearchQuery("");
     setFriendSearchResults([]);
     setAssignments([]);
+    setStartupAssignmentIds([]);
+    setAssignmentResponseError("");
     setAssignmentDetail(null);
     setAssignmentKind("todo");
     setAssignmentAssigneeId("");
@@ -2890,7 +2915,7 @@ export default function GoalTracker() {
     setEntryValue(String(firstLatestEntry?.value ?? 0));
   }
 
-  async function loadGoalData() {
+  async function loadGoalData(userId: string) {
     const [
       loadedGoals,
       loadedDeletedGoals,
@@ -2922,6 +2947,11 @@ export default function GoalTracker() {
     setArchivedRoutines(loadedArchivedRoutines);
     setFriendships(loadedFriendships);
     setAssignments(loadedAssignments);
+    setStartupAssignmentIds(
+      loadedAssignments
+        .filter((assignment) => assignment.assigneeId === userId && assignment.status === "pending")
+        .map((assignment) => assignment.id),
+    );
 
     try {
       setTodos(await fetchTodos());
@@ -2975,7 +3005,7 @@ export default function GoalTracker() {
       void loadAnnouncements();
       setIsEditingDisplayName(false);
       setPasswordForm("");
-      await loadGoalData();
+      await loadGoalData(loggedInId);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Failed to login");
     } finally {
@@ -3010,7 +3040,7 @@ export default function GoalTracker() {
       void loadAnnouncements();
       setIsEditingDisplayName(false);
       setPasswordForm("");
-      await loadGoalData();
+      await loadGoalData(signedUpId);
     } catch (signupError) {
       setError(signupError instanceof Error ? signupError.message : "Failed to sign up");
     } finally {
@@ -3522,9 +3552,11 @@ export default function GoalTracker() {
   async function respondAssignmentRequest(assignmentId: string, status: "accepted" | "declined") {
     setIsSaving(true);
     setError("");
+    setAssignmentResponseError("");
 
     try {
       setAssignments(await updateAssignment(assignmentId, status));
+      setStartupAssignmentIds((ids) => ids.filter((id) => id !== assignmentId));
       if (status === "accepted") {
         const [loadedGoals, loadedTodos, loadedRoutines] = await Promise.all([fetchGoals(), fetchTodos(), fetchRoutines()]);
         setGoals(loadedGoals);
@@ -3533,7 +3565,9 @@ export default function GoalTracker() {
         setRoutineReloadKey((key) => key + 1);
       }
     } catch (assignmentError) {
-      setError(assignmentError instanceof Error ? assignmentError.message : "Failed to update assignment");
+      const message = assignmentError instanceof Error ? assignmentError.message : "Failed to update assignment";
+      setError(message);
+      setAssignmentResponseError(message);
     } finally {
       setIsSaving(false);
     }
@@ -6204,6 +6238,25 @@ export default function GoalTracker() {
               </div>
             </div>
 
+            <button
+              type="button"
+              onClick={() => navigateToView("archive")}
+              className="flex w-full items-center gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-left text-sm font-semibold text-stone-900 transition hover:border-emerald-300 hover:bg-emerald-50/40"
+            >
+              <ArchiveIcon />
+              <span>{text.archive}</span>
+              <span className="ml-auto text-stone-400"><ChevronRightIcon /></span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToView("bin")}
+              className="flex w-full items-center gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-left text-sm font-semibold text-stone-900 transition hover:border-emerald-300 hover:bg-emerald-50/40"
+            >
+              <BinIcon />
+              <span>{text.bin}</span>
+              <span className="ml-auto text-stone-400"><ChevronRightIcon /></span>
+            </button>
+
             <section className="grid gap-2">
               <div className="grid min-w-0 gap-1 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm">
                 <span className="text-xs font-medium leading-none text-stone-500">Login ID</span>
@@ -6562,6 +6615,31 @@ export default function GoalTracker() {
                   <UsersIcon />
                   {language === "ko" ? "친구와 부여" : "Friends and Assignments"}
                 </h2>
+              </div>
+
+              <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
+                <button
+                  type="button"
+                  aria-expanded={isRelationshipDiagramOpen}
+                  onClick={() => setIsRelationshipDiagramOpen((open) => !open)}
+                  className="flex w-full items-center gap-3 px-3 py-3 text-left text-sm font-semibold text-stone-900 hover:bg-stone-50"
+                >
+                  <UsersIcon />
+                  <span>{language === "ko" ? "친구 관계도" : "Friend diagram"}</span>
+                  <span className="ml-auto text-xs font-medium text-stone-500">{relationshipFriends.length}</span>
+                  <DisclosureChevronIcon isExpanded={isRelationshipDiagramOpen} />
+                </button>
+                {isRelationshipDiagramOpen && (
+                  <FriendRelationshipDiagram
+                    me={displayName || displayLoginId || loginId || ""}
+                    friends={relationshipFriends}
+                    language={language}
+                    onOpenAccepted={(assignmentId) => {
+                      const assignment = assignments.find((item) => item.id === assignmentId);
+                      if (assignment) void openAssignmentDetail(assignment);
+                    }}
+                  />
+                )}
               </div>
 
               <div className="grid gap-3 rounded-md border border-stone-200 bg-white px-3 py-3 text-sm">
@@ -8196,6 +8274,63 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && assignmentFormModal && createPortal(
         assignmentFormModal,
+        document.body,
+      )}
+      {typeof document !== "undefined" && activeStartupAssignment && !activeAnnouncement && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/45 px-4 py-6 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assignment-request-title"
+            className="w-full max-w-md rounded-lg border border-stone-200 bg-white p-5 text-stone-950 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="assignment-request-title" className="text-lg font-semibold">
+                {language === "ko" ? "새 임무 요청" : "New assignment request"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setStartupAssignmentIds((ids) => ids.filter((id) => id !== activeStartupAssignment.id));
+                  setAssignmentResponseError("");
+                }}
+                aria-label={language === "ko" ? "임무 알림 닫기" : "Close assignment notification"}
+                disabled={isSaving}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-stone-300 text-stone-700 hover:bg-stone-100 disabled:opacity-60"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <p className="mt-4 break-words text-base font-semibold">{activeStartupAssignment.title}</p>
+            <p className="mt-1 text-sm text-stone-600">
+              {activeStartupAssignment.assigner?.displayName || activeStartupAssignment.assignerId} · {activeStartupAssignment.kind}
+            </p>
+            {activeStartupAssignment.memo && (
+              <p className="mt-3 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm text-stone-700">
+                {activeStartupAssignment.memo}
+              </p>
+            )}
+            {assignmentResponseError && <p role="alert" className="mt-3 text-sm text-red-700">{assignmentResponseError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => respondAssignmentRequest(activeStartupAssignment.id, "declined")}
+                disabled={isSaving}
+                className="h-9 rounded-md border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:opacity-60"
+              >
+                {language === "ko" ? "거절" : "Decline"}
+              </button>
+              <button
+                type="button"
+                onClick={() => respondAssignmentRequest(activeStartupAssignment.id, "accepted")}
+                disabled={isSaving}
+                className="h-9 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+              >
+                {language === "ko" ? "수락" : "Accept"}
+              </button>
+            </div>
+          </section>
+        </div>,
         document.body,
       )}
       {typeof document !== "undefined" && activeAnnouncement && createPortal(
