@@ -37,7 +37,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   minimumScale: 1,
   viewportFit: "cover",
-  themeColor: "#4f936f",
+  themeColor: "#266a4a",
 };
 
 export default function RootLayout({
@@ -50,7 +50,7 @@ export default function RootLayout({
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="material-design min-h-full flex flex-col">
         <AppDisplayMode />
         {children}
       </body>

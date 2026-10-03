@@ -98,7 +98,7 @@ export default function Head({
   }, [text.appName, text.tagline]);
 
   return (
-    <header className="flex items-end justify-between gap-2 border-b border-stone-300 pb-5 sm:gap-4 sm:pb-6">
+    <header className="md-top-app-bar flex items-end justify-between gap-2 border-b border-stone-300 pb-5 sm:gap-4 sm:pb-6">
       <button
         type="button"
         onClick={onHomeOpen}

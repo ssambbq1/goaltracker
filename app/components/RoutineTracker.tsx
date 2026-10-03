@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import AddIcon from "./AddIcon";
 import parseKoreanDatePhrase, { removeParsedDatePhrase, type ParsedDatePhrase } from "../../lib/parseDatePhrase";
 
 type RoutineMarkStatus = "success" | "failure";
@@ -503,6 +504,7 @@ function preventListReorderScrollEvent(event: Event) {
 }
 
 export default function RoutineTracker({
+  isActive,
   language = "en",
   initialRoutines,
   isSaving,
@@ -514,6 +516,7 @@ export default function RoutineTracker({
   onTodayChecklistComplete,
   onTodayChecklistIncomplete,
 }: {
+  isActive: boolean;
   language?: AppLanguage;
   initialRoutines?: Routine[];
   isSaving: boolean;
@@ -1134,7 +1137,7 @@ export default function RoutineTracker({
         <section className="grid gap-0">
           {routines.length === 0 ? (
             <section className="border border-transparent bg-transparent p-0">
-              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
+              <div className="md-toolbar flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <HabitIcon />
                   {text.routineList}
@@ -1165,16 +1168,21 @@ export default function RoutineTracker({
                     {routineSortDirection === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
                   </button>
                 </div>
-                <button
-                  type="button"
-                  aria-expanded={isRoutineModalOpen}
-                  aria-label="Add habit"
-                  onClick={() => setIsRoutineModalOpen(true)}
-                  disabled={schemaMissing}
-                  className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {text.add}
-                </button>
+                {typeof document !== "undefined" && isActive && createPortal(
+                  <button
+                    type="button"
+                    aria-expanded={isRoutineModalOpen}
+                    aria-label={text.addRoutine}
+                    onClick={() => setIsRoutineModalOpen(true)}
+                    disabled={schemaMissing}
+                    data-swipe-ignore
+                    title={text.addRoutine}
+                    className="soft-agent-button floating-list-button floating-list-button-right text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AddIcon />
+                  </button>,
+                  document.body,
+                )}
               </div>
               <div className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                 {text.noRoutines}
@@ -1182,7 +1190,7 @@ export default function RoutineTracker({
             </section>
           ) : (
             <section className="border border-transparent bg-transparent p-0">
-              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
+              <div className="md-toolbar flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <HabitIcon />
                   {text.routineList}
@@ -1214,16 +1222,21 @@ export default function RoutineTracker({
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    aria-expanded={isRoutineModalOpen}
-                    aria-label="Add habit"
-                    onClick={() => setIsRoutineModalOpen(true)}
-                    disabled={schemaMissing}
-                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {text.add}
-                  </button>
+                  {typeof document !== "undefined" && isActive && createPortal(
+                    <button
+                      type="button"
+                      aria-expanded={isRoutineModalOpen}
+                      aria-label={text.addRoutine}
+                      onClick={() => setIsRoutineModalOpen(true)}
+                      disabled={schemaMissing}
+                      data-swipe-ignore
+                    title={text.addRoutine}
+                    className="soft-agent-button floating-list-button floating-list-button-right text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <AddIcon />
+                    </button>,
+                    document.body,
+                  )}
                 </div>
               </div>
               <div className="space-y-2">
@@ -1320,7 +1333,7 @@ export default function RoutineTracker({
 
       {typeof document !== "undefined" && isRoutineModalOpen && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addRoutine}</h2>
               <button

@@ -1,14 +1,15 @@
 @import "tailwindcss";
+@import "./material.css";
 
 :root {
-  --background: #f4f7f3;
-  --foreground: #1c1917;
-  --surface: #fffefc;
-  --focus-ribbon-card-background: rgb(255 254 252 / 0.94);
-  --surface-muted: #eef3ed;
-  --surface-subtle: #f7f8f5;
-  --border-soft: #e0e6dc;
-  --border-strong: #cbd5c7;
+  --background: var(--md-sys-color-surface);
+  --foreground: var(--md-sys-color-on-surface);
+  --surface: var(--md-sys-color-surface-container-lowest);
+  --focus-ribbon-card-background: var(--md-sys-color-surface-container-lowest);
+  --surface-muted: var(--md-sys-color-surface-container);
+  --surface-subtle: var(--md-sys-color-surface-container-low);
+  --border-soft: var(--md-sys-color-outline-variant);
+  --border-strong: var(--md-sys-color-outline);
   --brand-50: #f1f7f3;
   --brand-100: #dcece2;
   --brand-200: #bfdcc9;
@@ -22,17 +23,17 @@
   --brand: var(--brand-500);
   --brand-strong: var(--brand-700);
   --brand-soft: var(--brand-100);
-  --danger: #b91c1c;
+  --danger: var(--md-sys-color-error);
   --warning: #b45309;
-  --chart-plot-bg: #fafaf9;
-  --chart-grid-line: #e7e5e4;
-  --chart-primary: var(--brand-600);
-  --chart-primary-fill-start: rgb(63 127 93 / 0.24);
-  --chart-primary-fill-end: rgb(63 127 93 / 0.04);
+  --chart-plot-bg: var(--md-sys-color-surface-container-lowest);
+  --chart-grid-line: var(--md-sys-color-outline-variant);
+  --chart-primary: var(--md-sys-color-primary);
+  --chart-primary-fill-start: color-mix(in srgb, var(--md-sys-color-primary) 24%, transparent);
+  --chart-primary-fill-end: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
   --chart-target: #b45309;
   --chart-deadline: #dc2626;
-  --chart-today: var(--brand-500);
-  --chart-muted-text: #78716c;
+  --chart-today: var(--md-sys-color-primary);
+  --chart-muted-text: var(--md-sys-color-on-surface-variant);
 }
 
 @theme inline {
@@ -227,6 +228,38 @@ main:not(.app-dark) .border-emerald-500 {
   color: #fff !important;
 }
 
+.floating-list-button {
+  position: fixed;
+  bottom: calc(4.75rem + env(safe-area-inset-bottom));
+  z-index: 95;
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background-color 150ms, transform 150ms;
+}
+
+.floating-list-button:hover {
+  transform: translateY(-2px);
+}
+
+.floating-list-button-left {
+  left: max(1rem, env(safe-area-inset-left));
+}
+
+.floating-list-button-right {
+  right: max(1rem, env(safe-area-inset-right));
+}
+
+@media (min-width: 640px) {
+  .floating-list-button {
+    bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
+}
+
 .soft-agent-button {
   border-color: transparent !important;
   background-color: #4f936f !important;
@@ -292,25 +325,25 @@ main:not(.app-dark) select {
 html.dark-mode,
 body.dark-mode,
 .app-dark {
-  --background: #070b10;
-  --foreground: #f8fafc;
-  --panel: #0d131a;
-  --panel-muted: #121922;
-  --panel-elevated: #151f29;
-  --focus-ribbon-card-background: rgb(13 19 26 / 0.96);
-  --border-muted: #26323d;
-  --text-muted: #c4cbd4;
+  --background: var(--md-sys-color-surface);
+  --foreground: var(--md-sys-color-on-surface);
+  --panel: var(--md-sys-color-surface-container-lowest);
+  --panel-muted: var(--md-sys-color-surface-container);
+  --panel-elevated: var(--md-sys-color-surface-container-high);
+  --focus-ribbon-card-background: var(--md-sys-color-surface-container-low);
+  --border-muted: var(--md-sys-color-outline-variant);
+  --text-muted: var(--md-sys-color-on-surface-variant);
   --text-faint: #8894a3;
-  --accent: var(--brand-300);
-  --chart-plot-bg: #080d13;
-  --chart-grid-line: #26323d;
-  --chart-primary: var(--brand-300);
-  --chart-primary-fill-start: rgb(152 198 168 / 0.2);
-  --chart-primary-fill-end: rgb(152 198 168 / 0.05);
+  --accent: var(--md-sys-color-primary);
+  --chart-plot-bg: var(--md-sys-color-surface-container-lowest);
+  --chart-grid-line: var(--md-sys-color-outline-variant);
+  --chart-primary: var(--md-sys-color-primary);
+  --chart-primary-fill-start: color-mix(in srgb, var(--md-sys-color-primary) 24%, transparent);
+  --chart-primary-fill-end: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
   --chart-target: #fbbf24;
   --chart-deadline: #f87171;
-  --chart-today: var(--brand-400);
-  --chart-muted-text: #94a3b8;
+  --chart-today: var(--md-sys-color-primary);
+  --chart-muted-text: var(--md-sys-color-on-surface-variant);
   color-scheme: dark;
 }
 
@@ -987,73 +1020,4 @@ body.dark-mode .routine-celebration-image,
     opacity: 0;
     transform: scale(1.8);
   }
-}
-
-html.dark-mode .login-screen,
-body.dark-mode .login-screen,
-.login-screen {
-  background:
-    radial-gradient(circle at 50% 0%, rgb(225 242 234 / 0.9), transparent 34rem),
-    #eef4ee !important;
-  color: #0c1512 !important;
-  color-scheme: light;
-}
-
-html.dark-mode .login-screen .bg-white,
-body.dark-mode .login-screen .bg-white,
-.login-screen .bg-white {
-  background-color: #ffffff !important;
-}
-
-html.dark-mode .login-screen .bg-\[\#f7faf6\],
-body.dark-mode .login-screen .bg-\[\#f7faf6\],
-.login-screen .bg-\[\#f7faf6\] {
-  background-color: #f7faf6 !important;
-}
-
-html.dark-mode .login-screen .bg-stone-100,
-body.dark-mode .login-screen .bg-stone-100,
-.login-screen .bg-stone-100 {
-  background-color: #f5f5f4 !important;
-}
-
-html.dark-mode .login-screen .text-stone-950,
-html.dark-mode .login-screen .text-stone-900,
-html.dark-mode .login-screen .text-stone-800,
-body.dark-mode .login-screen .text-stone-950,
-body.dark-mode .login-screen .text-stone-900,
-body.dark-mode .login-screen .text-stone-800,
-.login-screen .text-stone-950,
-.login-screen .text-stone-900,
-.login-screen .text-stone-800 {
-  color: #0c1512 !important;
-}
-
-html.dark-mode .login-screen .text-stone-700,
-html.dark-mode .login-screen .text-stone-600,
-html.dark-mode .login-screen .text-stone-500,
-html.dark-mode .login-screen .text-stone-400,
-body.dark-mode .login-screen .text-stone-700,
-body.dark-mode .login-screen .text-stone-600,
-body.dark-mode .login-screen .text-stone-500,
-body.dark-mode .login-screen .text-stone-400,
-.login-screen .text-stone-700,
-.login-screen .text-stone-600,
-.login-screen .text-stone-500,
-.login-screen .text-stone-400 {
-  color: #57534e !important;
-}
-
-html.dark-mode .login-screen input,
-body.dark-mode .login-screen input,
-.login-screen input {
-  background-color: #ffffff !important;
-  color: #0c1512 !important;
-  border-color: #d6d3d1 !important;
-}
-
-html.dark-mode .login-screen input::placeholder,
-body.dark-mode .login-screen input::placeholder,
-.login-screen input::placeholder {
-  color: #78716c !important;
 }

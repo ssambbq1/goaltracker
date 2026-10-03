@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import AddIcon from "./AddIcon";
 import AppInstallButton from "./AppInstallButton";
 import FriendRelationshipDiagram from "./FriendRelationshipDiagram";
 import Head from "./head";
@@ -349,22 +350,6 @@ type ScreenSwipeState = {
   didSwipe: boolean;
 };
 
-type AgentButtonPosition = {
-  x: number;
-  y: number;
-};
-
-type AgentButtonDragState = {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  buttonStartX: number;
-  buttonStartY: number;
-  latestX: number;
-  latestY: number;
-  didMove: boolean;
-};
-
 type ConfettiParticle = {
   id: string;
   left: number;
@@ -390,7 +375,6 @@ const NAV_MENU_ORDER_STORAGE_KEY = "boost-mastery.nav-menu-order";
 const THEME_STORAGE_KEY = "boost-mastery.theme";
 const LANGUAGE_STORAGE_KEY = "boost-mastery.language";
 const AGENT_ENABLED_STORAGE_KEY = "boost-mastery.agent-enabled";
-const AGENT_BUTTON_POSITION_STORAGE_KEY = "boost-mastery.agent-button-position";
 const GOAL_SORT_KEY_STORAGE_KEY = "boost-mastery.goal-sort-key";
 const GOAL_SORT_DIRECTION_STORAGE_KEY = "boost-mastery.goal-sort-direction";
 const GOAL_CHART_MODES_STORAGE_KEY = "boost-mastery.goal-chart-modes";
@@ -405,9 +389,6 @@ const DISMISSED_ANNOUNCEMENTS_STORAGE_KEY = "boost-mastery.dismissed-announcemen
 const UNCATEGORIZED_TODO_CATEGORY_KEY = "__boostmaster_uncategorized_todo__";
 const DEFAULT_NAV_MENU_ORDER: TrackerView[] = ["list", "todo", "routine"];
 const SWIPE_NAVIGATION_ORDER: TrackerView[] = DEFAULT_NAV_MENU_ORDER;
-const AGENT_BUTTON_SIZE = 56;
-const AGENT_BUTTON_EDGE_PADDING = 12;
-const AGENT_BUTTON_DRAG_THRESHOLD = 6;
 const NAV_ITEM_LONG_PRESS_MS = 450;
 const NAV_ITEM_DRAG_CANCEL_DISTANCE = 10;
 const LIST_REORDER_LONG_PRESS_MS = 450;
@@ -1467,37 +1448,6 @@ function writeStoredAgentEnabled(isEnabled: boolean) {
   }
 }
 
-function clampAgentButtonPosition(position: AgentButtonPosition) {
-  if (typeof window === "undefined") return position;
-  const maxX = Math.max(AGENT_BUTTON_EDGE_PADDING, window.innerWidth - AGENT_BUTTON_SIZE - AGENT_BUTTON_EDGE_PADDING);
-  const maxY = Math.max(AGENT_BUTTON_EDGE_PADDING, window.innerHeight - AGENT_BUTTON_SIZE - AGENT_BUTTON_EDGE_PADDING);
-  return {
-    x: Math.min(maxX, Math.max(AGENT_BUTTON_EDGE_PADDING, position.x)),
-    y: Math.min(maxY, Math.max(AGENT_BUTTON_EDGE_PADDING, position.y)),
-  };
-}
-
-function readStoredAgentButtonPosition(): AgentButtonPosition | null {
-  try {
-    const stored = window.localStorage.getItem(AGENT_BUTTON_POSITION_STORAGE_KEY);
-    if (!stored) return null;
-    const parsed = JSON.parse(stored) as Partial<AgentButtonPosition>;
-    if (typeof parsed.x !== "number" || typeof parsed.y !== "number") return null;
-    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
-    return clampAgentButtonPosition({ x: parsed.x, y: parsed.y });
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredAgentButtonPosition(position: AgentButtonPosition) {
-  try {
-    window.localStorage.setItem(AGENT_BUTTON_POSITION_STORAGE_KEY, JSON.stringify(clampAgentButtonPosition(position)));
-  } catch {
-    // Ignore unavailable storage.
-  }
-}
-
 function readStoredGoalSortKey(): GoalSortKey {
   try {
     const stored = window.localStorage.getItem(GOAL_SORT_KEY_STORAGE_KEY);
@@ -2127,9 +2077,6 @@ export default function GoalTracker() {
   const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListening, setIsAgentListening] = useState(false);
-  const [agentButtonPosition, setAgentButtonPosition] = useState<AgentButtonPosition | null>(() =>
-    typeof window === "undefined" ? null : readStoredAgentButtonPosition(),
-  );
   const [isSpeechRecognitionAvailable, setIsSpeechRecognitionAvailable] = useState(() => {
     if (typeof window === "undefined") return false;
     const speechWindow = window as SpeechRecognitionWindow;
@@ -2233,8 +2180,6 @@ export default function GoalTracker() {
   const lastNavigationKey = useRef("");
   const previousView = useRef<TrackerView>("list");
   const agentChatScrollRef = useRef<HTMLDivElement | null>(null);
-  const agentButtonDragState = useRef<AgentButtonDragState | null>(null);
-  const suppressNextAgentButtonClick = useRef(false);
   const goalMemoDoubleTapTime = useRef(0);
   const suppressGoalClickAfterDrag = useRef(false);
   const goalsBeforeDrag = useRef<Goal[] | null>(null);
@@ -2510,21 +2455,6 @@ export default function GoalTracker() {
   useEffect(() => {
     latestNavMenuOrder.current = normalizeNavMenuOrder(navMenuOrder);
   }, [navMenuOrder]);
-
-  useEffect(() => {
-    function clampStoredAgentButtonOnResize() {
-      setAgentButtonPosition((position) => {
-        if (!position) return position;
-        const nextPosition = clampAgentButtonPosition(position);
-        if (nextPosition.x === position.x && nextPosition.y === position.y) return position;
-        writeStoredAgentButtonPosition(nextPosition);
-        return nextPosition;
-      });
-    }
-
-    window.addEventListener("resize", clampStoredAgentButtonOnResize);
-    return () => window.removeEventListener("resize", clampStoredAgentButtonOnResize);
-  }, []);
 
   useEffect(() => {
     if (!todoActionMenuId) return;
@@ -3726,63 +3656,6 @@ export default function GoalTracker() {
 
   async function submitAgentRequest() {
     await executeAgentPrompt(agentPrompt);
-  }
-
-  function startAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    event.stopPropagation();
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const startPosition = agentButtonPosition ?? { x: rect.left, y: rect.top };
-    agentButtonDragState.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      buttonStartX: startPosition.x,
-      buttonStartY: startPosition.y,
-      latestX: startPosition.x,
-      latestY: startPosition.y,
-      didMove: false,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function moveAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = agentButtonDragState.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-    event.stopPropagation();
-
-    const deltaX = event.clientX - dragState.startX;
-    const deltaY = event.clientY - dragState.startY;
-    if (!dragState.didMove && Math.hypot(deltaX, deltaY) < AGENT_BUTTON_DRAG_THRESHOLD) return;
-
-    dragState.didMove = true;
-    suppressNextAgentButtonClick.current = true;
-    event.preventDefault();
-
-    const nextPosition = clampAgentButtonPosition({
-      x: dragState.buttonStartX + deltaX,
-      y: dragState.buttonStartY + deltaY,
-    });
-    dragState.latestX = nextPosition.x;
-    dragState.latestY = nextPosition.y;
-    setAgentButtonPosition(nextPosition);
-  }
-
-  function endAgentButtonDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = agentButtonDragState.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-    event.stopPropagation();
-
-    safeReleasePointerCapture(event.currentTarget, event.pointerId);
-
-    agentButtonDragState.current = null;
-    if (dragState.didMove) {
-      writeStoredAgentButtonPosition({ x: dragState.latestX, y: dragState.latestY });
-      window.setTimeout(() => {
-        suppressNextAgentButtonClick.current = false;
-      }, 0);
-    }
   }
 
   function handleAgentPromptKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
@@ -5398,7 +5271,7 @@ export default function GoalTracker() {
 
   const assignmentDetailModal = assignmentDetail ? (
     <div className="fixed inset-0 z-[120] bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
-      <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-3xl gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+      <section className="md-dialog mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-3xl gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.08em] text-emerald-700">
@@ -5589,7 +5462,7 @@ export default function GoalTracker() {
 
   const assignmentFormModal = isAssignmentModalOpen ? (
     <div className="fixed inset-0 z-[120] bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
-      <section className="mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-lg gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+      <section className="md-dialog mx-auto grid max-h-[calc(100dvh-3rem)] w-full max-w-lg gap-4 overflow-auto rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{language === "ko" ? "친구에게 목표/습관/할일 부여" : "Assign to a friend"}</h2>
           <button
@@ -5713,7 +5586,7 @@ export default function GoalTracker() {
               type="button"
               onClick={submitAssignment}
               disabled={isSaving || !assignmentAssigneeId || !assignmentTitle.trim()}
-              className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
             >
               {language === "ko" ? "부여하기" : "Assign"}
             </button>
@@ -5735,7 +5608,7 @@ export default function GoalTracker() {
         event.stopPropagation();
         suppressNextScreenClick.current = false;
       }}
-      className={`relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-0 ${
+      className={`md-app-shell relative min-h-screen overflow-x-hidden touch-pan-y bg-[#f6f7f4] pb-[calc(5.75rem+env(safe-area-inset-bottom))] text-stone-950 sm:pb-20 ${
         isDarkMode ? "app-dark" : ""
       }`}
     >
@@ -5844,12 +5717,13 @@ export default function GoalTracker() {
           onPointerMove={moveNavDrag}
           onPointerUp={endNavDrag}
           onPointerCancel={endNavDrag}
-          className="sticky top-0 z-40 hidden cursor-grab gap-1 overflow-x-auto rounded-lg border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur active:cursor-grabbing sm:flex sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
+          className="md-desktop-nav sticky top-0 z-40 hidden cursor-grab gap-1 overflow-x-auto rounded-lg border border-stone-300 bg-white/95 p-1 shadow-sm backdrop-blur active:cursor-grabbing sm:flex sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden"
         >
           {navItems.map((item) => (
             <button
               key={item.id}
               data-nav-item-id={item.id}
+              aria-current={currentView === item.id ? "page" : undefined}
               type="button"
               onPointerDown={(event) => startNavItemDrag(event, item.id)}
               onPointerMove={moveNavItemDrag}
@@ -5872,11 +5746,13 @@ export default function GoalTracker() {
                       : "border-transparent text-stone-700 hover:bg-stone-100"
               }`}
             >
+              <span className="md-nav-icon" aria-hidden="true">
               {item.id === "list" && <ListIcon />}
               {item.id === "todo" && <TodoIcon />}
               {item.id === "routine" && <RoutineIcon />}
               {item.id === "archive" && <ArchiveIcon />}
               {item.id === "bin" && <BinIcon />}
+              </span>
               <span className="max-w-full truncate whitespace-nowrap">{item.label}</span>
               {item.count !== null && (
                 <span
@@ -5895,23 +5771,10 @@ export default function GoalTracker() {
           <button
             type="button"
             data-swipe-ignore
-            onPointerDown={startAgentButtonDrag}
-            onPointerMove={moveAgentButtonDrag}
-            onPointerUp={endAgentButtonDrag}
-            onPointerCancel={endAgentButtonDrag}
-            onClick={(event) => {
-              if (suppressNextAgentButtonClick.current) {
-                event.preventDefault();
-                return;
-              }
-              setIsAgentPanelExpanded(true);
-            }}
-            aria-label={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
-            title={language === "ko" ? "드래그해서 위치 이동" : "Drag to move"}
-            style={agentButtonPosition ? { left: agentButtonPosition.x, top: agentButtonPosition.y } : undefined}
-            className={`soft-agent-button fixed z-[95] grid h-14 w-14 touch-none place-items-center rounded-full border transition active:cursor-grabbing [&_svg]:h-9 [&_svg]:w-9 ${
-              agentButtonPosition ? "cursor-grab" : "bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 cursor-grab hover:-translate-y-0.5 sm:bottom-5"
-            }`}
+            onClick={() => setIsAgentPanelExpanded(true)}
+            aria-label={language === "ko" ? "AI ???? ??" : "Open AI Agent"}
+            title={language === "ko" ? "AI ???? ??" : "Open AI Agent"}
+            className="soft-agent-button floating-list-button floating-list-button-left"
           >
             <span className={isAgentRunning ? "animate-pulse" : ""}>
               <RobotIcon />
@@ -5932,7 +5795,7 @@ export default function GoalTracker() {
             />
             <section
               data-swipe-ignore
-              className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-[110] flex max-h-[min(82vh,42rem)] min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:left-auto sm:right-5 sm:w-[calc(100vw-2.5rem)] sm:max-w-xl sm:p-4"
+              className="md-agent-panel fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-[110] flex max-h-[min(82vh,42rem)] min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:left-auto sm:right-5 sm:w-[calc(100vw-2.5rem)] sm:max-w-xl sm:p-4"
             >
             <div className="grid shrink-0 gap-2">
               <div className="flex min-w-0 items-center gap-2">
@@ -6718,7 +6581,7 @@ export default function GoalTracker() {
                     type="button"
                     onClick={() => setIsAssignmentModalOpen(true)}
                     disabled={isSaving || acceptedFriends.length === 0}
-                    className="h-8 rounded-md bg-stone-950 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-8 rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {language === "ko" ? "부여하기" : "Assign"}
                   </button>
@@ -6925,7 +6788,7 @@ export default function GoalTracker() {
         <section className="min-w-0">
           <aside className={`min-w-0 flex-col gap-0 ${currentView === "detail" || currentView === "user" ? "hidden" : "flex"}`}>
             <div className={currentView === "list" ? "" : "hidden"}>
-              <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
+              <div className="md-toolbar flex flex-wrap items-center gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <ListIcon />
                   {text.goalList}
@@ -6958,18 +6821,23 @@ export default function GoalTracker() {
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    aria-expanded={isGoalModalOpen}
-                    aria-label="Add goal"
-                    onClick={() => {
-                      setCurrentView("list");
-                      setIsGoalModalOpen(true);
-                    }}
-                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-                  >
-                    {text.add}
-                  </button>
+                  {typeof document !== "undefined" && currentView === "list" && createPortal(
+                    <button
+                      type="button"
+                      aria-expanded={isGoalModalOpen}
+                      aria-label={text.addGoal}
+                      onClick={() => {
+                        setCurrentView("list");
+                        setIsGoalModalOpen(true);
+                      }}
+                      data-swipe-ignore
+                      title={text.add}
+                      className="soft-agent-button floating-list-button floating-list-button-right text-xs font-semibold"
+                    >
+                      <AddIcon />
+                    </button>,
+                    document.body,
+                  )}
                 </div>
               </div>
               {currentView === "list" && (
@@ -7078,7 +6946,7 @@ export default function GoalTracker() {
                 currentView === "todo" ? "" : "hidden"
               }`}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+              <div className="md-toolbar flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <TodoIcon />
                   {text.todoList}
@@ -7135,18 +7003,23 @@ export default function GoalTracker() {
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    aria-expanded={isTodoModalOpen}
-                    aria-label="Add task"
-                    onClick={() => {
-                      setCurrentView("todo");
-                      setIsTodoModalOpen(true);
-                    }}
-                    className="flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-                  >
-                    {text.add}
-                  </button>
+                  {typeof document !== "undefined" && currentView === "todo" && createPortal(
+                    <button
+                      type="button"
+                      aria-expanded={isTodoModalOpen}
+                      aria-label={text.addTodo}
+                      onClick={() => {
+                        setCurrentView("todo");
+                        setIsTodoModalOpen(true);
+                      }}
+                      data-swipe-ignore
+                      title={text.add}
+                      className="soft-agent-button floating-list-button floating-list-button-right text-xs font-semibold"
+                    >
+                      <AddIcon />
+                    </button>,
+                    document.body,
+                  )}
                 </div>
               </div>
               {currentView === "todo" && (
@@ -7509,6 +7382,7 @@ export default function GoalTracker() {
 
             <div className={currentView === "routine" ? "" : "hidden"}>
               <RoutineTracker
+                isActive={currentView === "routine"}
                 language={language}
                 initialRoutines={routines}
                 isSaving={isSaving}
@@ -8172,7 +8046,7 @@ export default function GoalTracker() {
 
         {isEntryModalOpen && activeGoal && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center bg-stone-950/40 px-4 py-6 backdrop-blur-sm">
-            <section className="w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+            <section className="md-dialog w-full max-w-lg rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold">{text.addProgressRecord}</h2>
                 <button
@@ -8339,7 +8213,7 @@ export default function GoalTracker() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="announcement-title"
-            className={`w-full max-w-md overflow-hidden rounded-lg border shadow-2xl shadow-stone-950/25 ${
+            className={`md-dialog w-full max-w-md overflow-hidden rounded-lg border shadow-2xl shadow-stone-950/25 ${
               isDarkMode
                 ? "border-stone-700 bg-stone-950 text-stone-50"
                 : "border-stone-200 bg-white text-stone-950"
@@ -8425,7 +8299,7 @@ export default function GoalTracker() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="send-announcement-title"
-            className="grid max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto rounded-lg border border-stone-300 bg-white p-5 text-stone-950 shadow-xl"
+            className="md-dialog grid max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto rounded-lg border border-stone-300 bg-white p-5 text-stone-950 shadow-xl"
           >
             <div className="flex items-start justify-between gap-3">
               <h2 id="send-announcement-title" className="text-base font-semibold">
@@ -8520,7 +8394,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && isAgentSettingsModalOpen && canManageAgentSettings && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">
                 {agentKeyToEdit
@@ -8597,7 +8471,7 @@ export default function GoalTracker() {
                   type="button"
                   onClick={submitAgentSettings}
                   disabled={isSaving || !agentSettingsModel.trim() || (!agentKeyToEdit && !agentSettingsApiKey.trim())}
-                  className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
                   {agentKeyToEdit ? text.save : language === "ko" ? "Key 추가" : "Add key"}
                 </button>
@@ -8609,7 +8483,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && isGoalModalOpen && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addGoal}</h2>
               <button
@@ -8710,7 +8584,7 @@ export default function GoalTracker() {
                   type="button"
                   onClick={addGoal}
                   disabled={isSaving || !goalForm.title.trim() || !isGoalFormTargetValid(goalForm.target)}
-                  className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
                   {text.add}
                 </button>
@@ -8722,7 +8596,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && isTodoModalOpen && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.addTodo}</h2>
               <button
@@ -8791,7 +8665,7 @@ export default function GoalTracker() {
                   type="button"
                   onClick={addTodoItem}
                   disabled={isSaving || !todoTitle.trim() || !todoTargetDate.trim()}
-                  className="rounded-md bg-stone-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
                 >
                   {text.add}
                 </button>
@@ -8832,7 +8706,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && todoToDelete && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.delete}?</h2>
               <button
@@ -8871,7 +8745,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && agentKeyToDelete && canManageAgentSettings && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">
                 {language === "ko" ? "LLM key 삭제" : "Delete LLM key"}
@@ -8917,7 +8791,7 @@ export default function GoalTracker() {
       )}
       {typeof document !== "undefined" && isEmptyBinModalOpen && createPortal(
         <div className="fixed inset-0 z-[120] bg-stone-950/40 backdrop-blur-sm">
-          <section className="fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
+          <section className="md-dialog fixed left-1/2 top-1/2 w-[calc(100dvw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-stone-300 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{text.emptyBinTitle}</h2>
               <button
@@ -8957,12 +8831,13 @@ export default function GoalTracker() {
       )}
       <nav
         data-swipe-ignore
-        className="fixed inset-x-0 bottom-0 z-40 flex gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur sm:hidden"
+        className="md-mobile-nav fixed inset-x-0 bottom-0 z-40 flex gap-0 overflow-x-hidden border-t border-stone-300 bg-white/95 px-1 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(28,25,23,0.12)] backdrop-blur sm:hidden"
       >
         {navItems.map((item) => (
           <button
             key={item.id}
             data-nav-item-id={item.id}
+              aria-current={currentView === item.id ? "page" : undefined}
             type="button"
             onPointerDown={(event) => startNavItemDrag(event, item.id)}
             onPointerMove={moveNavItemDrag}
@@ -8985,11 +8860,13 @@ export default function GoalTracker() {
                     : "border-transparent text-stone-700 hover:bg-stone-100"
             }`}
           >
-            {item.id === "list" && <ListIcon />}
+            <span className="md-nav-icon" aria-hidden="true">
+              {item.id === "list" && <ListIcon />}
             {item.id === "todo" && <TodoIcon />}
             {item.id === "routine" && <RoutineIcon />}
             {item.id === "archive" && <ArchiveIcon />}
             {item.id === "bin" && <BinIcon />}
+              </span>
             <span className="max-w-full truncate whitespace-nowrap sm:hidden">{item.shortLabel}</span>
             <span className="hidden max-w-full truncate whitespace-nowrap sm:inline">{item.label}</span>
             {item.count !== null && (
@@ -9490,7 +9367,7 @@ function DatePhraseSticker({
 function LoadingScreen({ isDarkMode }: { isDarkMode: boolean }) {
   return (
     <main
-      className={`relative min-h-[100dvh] overflow-hidden bg-[#f6f7f4] text-stone-950 ${
+      className={`md-loading-screen relative min-h-[100dvh] overflow-hidden bg-[#f6f7f4] text-stone-950 ${
         isDarkMode ? "app-dark" : ""
       }`}
       aria-busy="true"
@@ -9761,7 +9638,7 @@ function LoginScreen({
 
   return (
     <main className="login-screen flex min-h-screen items-center justify-center bg-[#eef4ee] px-3 py-8 text-stone-950">
-      <section className="w-full max-w-md overflow-hidden rounded-lg border border-stone-300 bg-white shadow-lg">
+      <section className="md-login-card w-full max-w-md overflow-hidden rounded-lg border border-stone-300 bg-white shadow-lg">
         <div className="border-b border-stone-200 bg-[#f7faf6] px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div>
