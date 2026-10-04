@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Image from "next/image";
+import { type AgentPersonaId } from "../../lib/agentPersonas";
 import bestIcon from "../BEST-transparent.png";
 import appIcon from "../icon3-gradient.png";
 import youIcon from "../YOU-transparent.png";
@@ -18,6 +19,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import AddIcon from "./AddIcon";
+import AgentPersonaMenu, { AgentPersonaAvatar } from "./AgentPersonaMenu";
 import AppInstallButton from "./AppInstallButton";
 import FriendRelationshipDiagram from "./FriendRelationshipDiagram";
 import Head from "./head";
@@ -689,11 +691,12 @@ async function runAgentRequest(
   apply: boolean,
   selectedList: AgentSelectedList,
   conversationHistory: AgentConversationMessage[],
+  persona: AgentPersonaId,
 ) {
   const response = await fetch("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, apply, selectedList, conversationHistory }),
+    body: JSON.stringify({ prompt, apply, selectedList, conversationHistory, persona }),
   });
   const data = (await response.json()) as { error?: string } & Partial<AgentResponse>;
   if (!response.ok || !data.message || !data.data || !Array.isArray(data.actions)) {
@@ -2070,6 +2073,8 @@ export default function GoalTracker() {
   const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
   const [agentKeyToEdit, setAgentKeyToEdit] = useState<AgentKeySetting | null>(null);
   const [agentKeyToDelete, setAgentKeyToDelete] = useState<AgentKeySetting | null>(null);
+  const [agentPersona, setAgentPersona] = useState<AgentPersonaId>("general");
+  const [agentPersonaPhoto, setAgentPersonaPhoto] = useState(true);
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentApplyChanges, setAgentApplyChanges] = useState(true);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
@@ -3317,7 +3322,7 @@ export default function GoalTracker() {
 
     try {
       const conversationHistory = buildAgentConversationHistory(agentChatMessages);
-      const result = await runAgentRequest(agentRequest, agentApplyChanges, currentAgentSelectedList, conversationHistory);
+      const result = await runAgentRequest(agentRequest, agentApplyChanges, currentAgentSelectedList, conversationHistory, agentPersona);
       setAgentPrompt("");
       setAgentChatMessages((messages) => [
         ...messages,
@@ -5772,12 +5777,12 @@ export default function GoalTracker() {
             type="button"
             data-swipe-ignore
             onClick={() => setIsAgentPanelExpanded(true)}
-            aria-label={language === "ko" ? "AI ???? ??" : "Open AI Agent"}
-            title={language === "ko" ? "AI ???? ??" : "Open AI Agent"}
+            aria-label={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
+            title={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
             className="soft-agent-button floating-list-button floating-list-button-left"
           >
             <span className={isAgentRunning ? "animate-pulse" : ""}>
-              <RobotIcon />
+              <AgentPersonaAvatar persona={agentPersona} usePhoto={agentPersonaPhoto} fallback={<RobotIcon />} size={40} />
             </span>
             {(isAgentRunning || pendingAgentClarification) && (
               <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-amber-400 ring-2 ring-white" />
@@ -5795,19 +5800,19 @@ export default function GoalTracker() {
             />
             <section
               data-swipe-ignore
-              className="md-agent-panel fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-[110] flex max-h-[min(82vh,42rem)] min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:left-auto sm:right-5 sm:w-[calc(100vw-2.5rem)] sm:max-w-xl sm:p-4"
+              className="md-agent-panel fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-[110] flex h-[min(78dvh,48rem)] max-h-[calc(100dvh-7rem)] min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-lg border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-950/25 sm:bottom-5 sm:left-auto sm:right-5 sm:w-[calc(100vw-2.5rem)] sm:max-w-xl sm:p-4"
             >
             <div className="grid shrink-0 gap-2">
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="agent-panel-heading flex min-w-0 flex-wrap items-center gap-2">
                 <h2
                   aria-live="polite"
                   className={`flex shrink-0 items-center gap-1.5 text-base font-semibold ${
                     isAgentRunning ? "text-emerald-700" : ""
                   }`}
                 >
-                  <span className="relative grid h-4 w-4 place-items-center">
+                  <span className="relative grid h-8 w-8 shrink-0 place-items-center">
                     <span className={isAgentRunning ? "animate-pulse" : ""}>
-                      <RobotIcon />
+                      <AgentPersonaAvatar persona={agentPersona} usePhoto={agentPersonaPhoto} fallback={<RobotIcon />} />
                     </span>
                     {isAgentRunning && (
                       <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
@@ -5823,6 +5828,13 @@ export default function GoalTracker() {
                         : "AI Agent"}
                   </span>
                 </h2>
+                <AgentPersonaMenu persona={agentPersona} usePhoto={agentPersonaPhoto} onPhotoChange={setAgentPersonaPhoto} disabled={isAgentRunning || isSaving} language={language} robot={<RobotIcon />} onChange={(persona) => {
+                  if (persona === agentPersona) return;
+                  setAgentPersona(persona);
+                  setAgentChatMessages([]);
+                  setPendingAgentClarification(null);
+                  setAgentPrompt("");
+                }} />
                 {!isAgentPanelExpanded && (
                   <div className="flex min-w-0 flex-none items-center gap-1">
                     <input
@@ -5910,31 +5922,31 @@ export default function GoalTracker() {
                 </button>
                 </div>
               </div>
-              {isAgentPanelExpanded && (
-                <p className="text-sm text-stone-600">
-                  {language === "ko"
-                    ? "목표, 할일, 습관을 분석하고 변경 작업을 제안합니다."
-                    : "Analyze goals, tasks, and habits, then propose list changes."}
-                </p>
-              )}
             </div>
             {isAgentPanelExpanded && (
               <>
-                {agentChatMessages.length > 0 && (
                   <div
                     ref={agentChatScrollRef}
-                    className="grid min-h-0 min-w-0 w-full max-w-full flex-1 gap-3 overflow-x-hidden overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm [overflow-wrap:anywhere]"
+                    className="grid auto-rows-max content-start min-h-0 min-w-0 w-full max-w-full flex-1 gap-3 overflow-x-hidden overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3 text-sm [overflow-wrap:anywhere]"
                   >
                     {agentChatMessages.map((message) =>
                       message.role === "user" ? (
                         <div key={message.id} className="flex min-w-0 justify-end">
                           <div className="min-w-0 max-w-[86%] whitespace-pre-wrap break-words rounded-md bg-emerald-700 px-3 py-2 text-white">
+                            <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+                              <UserIcon />
+                              {language === "ko" ? "나" : "You"}
+                            </span>
                             {message.content}
                           </div>
                         </div>
                       ) : (
                         <div key={message.id} className="flex min-w-0 w-full max-w-full justify-start">
                           <div className="grid min-w-0 w-full max-w-full overflow-hidden gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-stone-800">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold">
+                              <AgentPersonaAvatar persona={agentPersona} usePhoto={agentPersonaPhoto} fallback={<RobotIcon />} size={24} />
+                              Agent
+                            </div>
                             <p className="min-w-0 max-w-full whitespace-pre-wrap break-all [overflow-wrap:anywhere]">
                               {message.response.message}
                             </p>
@@ -5996,7 +6008,6 @@ export default function GoalTracker() {
                       ),
                     )}
                   </div>
-                )}
                 <div className="grid shrink-0 min-w-0 gap-2">
                   {pendingAgentClarification && (
                     <div className="grid min-w-0 max-h-28 gap-1 overflow-x-hidden overflow-y-auto rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 [overflow-wrap:anywhere]">
@@ -6015,8 +6026,8 @@ export default function GoalTracker() {
                           ? "Agent 질문에 대한 답변을 입력하세요. 취소하려면 '취소'라고 입력하세요."
                           : "Answer the agent's question. Type 'cancel' to clear it."
                         : language === "ko"
-                          ? "예: 이번 주 안에 할 일을 정리하고, 오래 밀린 일은 목표일을 다시 잡아줘."
-                          : "Example: Review this week's tasks and reschedule overdue items."
+                          ? "메시지를 입력하세요."
+                          : "Type a message."
                     }
                     className="min-h-24 max-h-32 w-full min-w-0 resize-none rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
                   />
@@ -6025,7 +6036,8 @@ export default function GoalTracker() {
                   <label className="flex items-center gap-2 text-sm font-medium text-stone-700">
                     <input
                       type="checkbox"
-                      checked={agentApplyChanges}
+                      checked={agentPersona === "general" && agentApplyChanges}
+                      disabled={agentPersona !== "general"}
                       onChange={(event) => setAgentApplyChanges(event.target.checked)}
                       className="h-4 w-4 accent-emerald-700"
                     />

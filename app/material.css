@@ -465,3 +465,29 @@ body.material-design button.bg-red-700 {
 body.material-design button.bg-red-700:hover:not(:disabled) {
   background-color: color-mix(in srgb, var(--md-sys-color-on-error) 8%, var(--md-sys-color-error)) !important;
 }
+
+.material-design .agent-persona-controls { color: var(--md-sys-color-on-surface); }
+.material-design .agent-persona-controls select { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface); border-color: var(--md-sys-color-outline); }
+.material-design .agent-persona-controls button { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: var(--md-sys-color-outline-variant); }
+.material-design .agent-persona-controls :is(button, select):focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.material-design .agent-persona-controls button:hover { box-shadow: var(--md-sys-elevation-level1); }
+.material-design .agent-persona-controls :disabled { opacity: .6; }
+
+.material-design .agent-persona-avatar { border-radius: 50%; object-fit: cover; object-position: center 35%; flex-shrink: 0; }
+.material-design .agent-persona-initial { display: inline-grid; place-items: center; border-radius: 50%; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); font-weight: 700; }
+.material-design .agent-panel-heading { position: relative; }
+.material-design .agent-persona-menu { position: static; flex-shrink: 0; }
+.material-design .agent-persona-trigger { display: flex; align-items: center; gap: 4px; min-height: 48px; padding: 0 10px; border-radius: 999px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: 12px; font-weight: 600; }
+.material-design .agent-persona-options { position: absolute; z-index: 5; top: 52px; left: 0; width: min(300px, 100%); padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 16px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); box-shadow: 0 6px 18px #0003; }
+.material-design .agent-persona-option { display: flex; width: 100%; align-items: center; gap: 12px; min-height: 64px; padding: 8px; border-radius: 12px; text-align: left; }
+.material-design .agent-persona-option[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.material-design .agent-persona-option-icon { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; }
+.material-design .agent-persona-option-text { display: grid; flex: 1; gap: 2px; font-size: 14px; }
+.material-design .agent-persona-option-text small { font-size: 11px; }
+.material-design .agent-persona-photo-option { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 8px; font-size: 12px; }
+.material-design .agent-persona-photo-option input { accent-color: var(--md-sys-color-primary); }
+.material-design .agent-persona-credit { padding: 0 8px 4px; font-size: 10px; color: var(--md-sys-color-on-surface-variant); }
+.material-design .agent-persona-credit a { text-decoration: underline; }
+.material-design .agent-persona-menu :is(button, input, a):focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.material-design .agent-persona-menu button:disabled { opacity: .6; }
+.material-design .agent-persona-menu button:not(:disabled):hover { filter: brightness(.96); }

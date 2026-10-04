@@ -52,6 +52,15 @@ existing always-light behavior with the same light Material scheme.
 
 ## Verification
 
+The expanded Agent panel uses a 48px tonal dropdown button immediately after its
+heading, with avatar options and a portrait toggle. The heading and left floating
+button reflect the selected persona. Use semantic surface/secondary roles for the
+menu. Keep the mirrored floating controls in their existing positions. The chat
+panel reserves up to 78dvh (48rem) for conversation and input, capped to fit above
+the mobile navigation. Introductory copy and prompt examples are omitted. Each
+message shows a sender icon and label; Agent messages use the selected persona
+portrait. Conversation rows size to their content and scroll within the panel.
+
 Run TypeScript and ESLint for changed components, and a production build when
 changing global CSS or its imports. Check light/dark role-pair contrast, desktop
 and narrow mobile layouts, empty lists, input focus, navigation selection, and

@@ -1,3 +1,4 @@
+import { normalizeAgentPersona, getAgentPersonaInstructions, type AgentPersonaId } from "./agentPersonas";
 import {
   addEntry,
   addGoal,
@@ -1388,6 +1389,7 @@ async function callOpenAiCompatibleChat(input: {
   context: unknown;
   selectedList: AgentSelectedList | null;
   conversationHistory: AgentConversationMessage[];
+  persona?: AgentPersonaId;
 }) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1402,6 +1404,7 @@ async function callOpenAiCompatibleChat(input: {
         {
           role: "system",
           content:
+            getAgentPersonaInstructions(input.persona) + "\n" +
             "You manage a personal planning app. Return only JSON with keys targetList, message, actions, and optionally clarificationQuestion. " +
             "Treat every request as a fresh independent command. Do not assume a previous agent run is still valid, and do not refuse because something was done earlier. " +
             "The user may have manually changed the database after your last run; the provided lists are the only source of truth. If the current lists show that the requested change is needed, return the action even if the same request may have been executed before. " +
@@ -1522,8 +1525,10 @@ async function callOpenAiResponsesAgent(input: {
   context: AgentListContext;
   selectedList: AgentSelectedList | null;
   conversationHistory: AgentConversationMessage[];
+  persona?: AgentPersonaId;
 }) {
   const instructions =
+    getAgentPersonaInstructions(input.persona) + "\n" +
     "You are the conversational agent for a personal planning app. Understand natural language compositionally instead of matching fixed phrases. " +
     "Return only a JSON object with targetList, message, actions, and optional clarificationQuestion. targetList is todo, goal, routine, archive, bin, or unknown. " +
     "Use query_records before answering any question about stored records or before changing an existing record. Combine every requested filter, sort, direction, and count in one query when possible. " +
@@ -1777,6 +1782,7 @@ export async function runListAgent(
   apply: boolean,
   selectedListInput?: unknown,
   conversationHistoryInput?: unknown,
+  personaInput?: unknown,
 ): Promise<AgentResult> {
   const request = prompt.trim();
   if (!request) throw new Error("Agent request is required");
@@ -1784,6 +1790,21 @@ export async function runListAgent(
   const selectedList = normalizeSelectedList(selectedListInput);
   const conversationHistory = normalizeConversationHistory(conversationHistoryInput);
   const context = await readAgentListContext();
+  const persona = normalizeAgentPersona(personaInput);
+  if (persona !== "general") {
+    const credentials = await readAgentCredentials();
+    const response = await callOpenAiResponsesAgent({ ...credentials, prompt: request, context, selectedList, conversationHistory, persona });
+    // Mentor proposals can only create items; all changes use the existing review/apply endpoint.
+    if (response.actions.some((action) => !["add_todo", "add_goal", "add_routine"].includes(action.type))) {
+      throw new Error("Persona mode only proposes new items. Use general mode to manage existing items.");
+    }
+    const targetList = response.actions.length ? inferTargetListFromActions(response.actions) : response.targetList;
+    validateActionsForTarget(response.actions, targetList, "The persona");
+    return {
+      ...response, targetList, applied: false, data: context,
+      clarification: response.clarificationQuestion ? { originalPrompt: request, question: response.clarificationQuestion } : undefined,
+    };
+  }
   const requestedKinds = getRequestedListKinds(request);
   const requestTargetList = getRequestTargetList(request, selectedList);
   const defaultActiveListKind = getDefaultActiveListKind(request, selectedList);
