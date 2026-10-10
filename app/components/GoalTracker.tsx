@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { type AgentPersonaId } from "../../lib/agentPersonas";
+import { readStoredAgentPreferences, writeStoredAgentPreferences } from "../../lib/agentPreferences";
 import bestIcon from "../BEST-transparent.png";
 import appIcon from "../icon3-gradient.png";
 import youIcon from "../YOU-transparent.png";
@@ -2073,13 +2074,14 @@ export default function GoalTracker() {
   const [agentSettingsApiKey, setAgentSettingsApiKey] = useState("");
   const [agentKeyToEdit, setAgentKeyToEdit] = useState<AgentKeySetting | null>(null);
   const [agentKeyToDelete, setAgentKeyToDelete] = useState<AgentKeySetting | null>(null);
-  const [agentPersona, setAgentPersona] = useState<AgentPersonaId>("general");
-  const [agentPersonaPhoto, setAgentPersonaPhoto] = useState(true);
+  const [initialAgentPreferences] = useState(readStoredAgentPreferences);
+  const [agentPersona, setAgentPersona] = useState<AgentPersonaId>(initialAgentPreferences.persona);
+  const [agentPersonaPhoto, setAgentPersonaPhoto] = useState(initialAgentPreferences.usePhoto);
   const [agentPrompt, setAgentPrompt] = useState("");
-  const [agentApplyChanges, setAgentApplyChanges] = useState(true);
+  const [agentApplyChanges, setAgentApplyChanges] = useState(initialAgentPreferences.applyChanges);
   const [agentChatMessages, setAgentChatMessages] = useState<AgentChatMessage[]>([]);
   const [pendingAgentClarification, setPendingAgentClarification] = useState<AgentResponse["clarification"] | null>(null);
-  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(false);
+  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(initialAgentPreferences.panelExpanded);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListening, setIsAgentListening] = useState(false);
   const [isSpeechRecognitionAvailable, setIsSpeechRecognitionAvailable] = useState(() => {
@@ -2499,6 +2501,15 @@ export default function GoalTracker() {
   }, [isAgentEnabled]);
 
   useEffect(() => {
+    writeStoredAgentPreferences({
+      persona: agentPersona,
+      usePhoto: agentPersonaPhoto,
+      applyChanges: agentApplyChanges,
+      panelExpanded: isAgentPanelExpanded,
+    });
+  }, [agentPersona, agentPersonaPhoto, agentApplyChanges, isAgentPanelExpanded]);
+
+  useEffect(() => {
     writeStoredGoalSortKey(goalSortKey);
   }, [goalSortKey]);
 
@@ -2806,7 +2817,6 @@ export default function GoalTracker() {
     setAgentSettingsModel("gpt-4o-mini");
     setAgentSettingsApiKey("");
     setAgentPrompt("");
-    setAgentApplyChanges(true);
     setAgentChatMessages([]);
     setPendingAgentClarification(null);
     setAgentKeyToEdit(null);
@@ -5781,8 +5791,8 @@ export default function GoalTracker() {
             title={language === "ko" ? "AI 에이전트 열기" : "Open AI Agent"}
             className="soft-agent-button floating-list-button floating-list-button-left"
           >
-            <span className={isAgentRunning ? "animate-pulse" : ""}>
-              <AgentPersonaAvatar persona={agentPersona} usePhoto={agentPersonaPhoto} fallback={<RobotIcon />} size={40} />
+            <span className={`flex items-center justify-center ${isAgentRunning ? "animate-pulse" : ""}`}>
+              <AgentPersonaAvatar persona={agentPersona} usePhoto={agentPersonaPhoto} fallback={<RobotIcon />} size={56} />
             </span>
             {(isAgentRunning || pendingAgentClarification) && (
               <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-amber-400 ring-2 ring-white" />
