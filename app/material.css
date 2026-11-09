@@ -1,6 +1,16 @@
 /* Material 3 tonal-spot scheme generated from #4f936f with
  * @material/material-color-utilities 0.4.0, standard contrast, 2021 spec.
  * See docs/design-system.md for component mappings and app adaptations. */
+html:has([data-archive-view="true"]),
+body:has([data-archive-view="true"]) {
+  scrollbar-width: none;
+}
+
+html:has([data-archive-view="true"])::-webkit-scrollbar,
+body:has([data-archive-view="true"])::-webkit-scrollbar {
+  display: none;
+}
+
 :root {
   --md-sys-color-primary: #266a4a;
   --md-sys-color-on-primary: #ffffff;

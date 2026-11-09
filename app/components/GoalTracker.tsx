@@ -1816,6 +1816,13 @@ async function restoreStoredTodo(todoId: string) {
   return data;
 }
 
+async function archiveExistingTodo(todoId: string) {
+  const response = await fetch(`/api/todos/${todoId}/archive`, { method: "PATCH" });
+  const data = (await response.json()) as { error?: string; todos: Todo[]; archivedTodos: Todo[] };
+  if (!response.ok) throw new Error(data.error || "Failed to archive task");
+  return data;
+}
+
 async function permanentlyRemoveTodo(todoId: string) {
   const response = await fetch(`/api/todos/${todoId}/permanent`, { method: "DELETE" });
   const data = (await response.json()) as { error?: string; deletedTodos?: Todo[] };
@@ -4696,6 +4703,26 @@ export default function GoalTracker() {
     startEditingTodo(todo);
   }
 
+  async function archiveTodoItem(todoId: string) {
+    if (!loginId || isSaving) return;
+    setTodoActionMenuId(null);
+    setIsSaving(true);
+    setError("");
+
+    try {
+      const result = await archiveExistingTodo(todoId);
+      setTodos(result.todos);
+      setArchivedTodos(result.archivedTodos);
+      setSelectedTodoIds((current) => current.filter((id) => id !== todoId));
+      cancelEditingTodo();
+      setSelectedCalendarTodoId(null);
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : "Failed to archive task");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function deleteTodoItem(todoId: string) {
     if (!loginId) return;
 
@@ -5678,7 +5705,7 @@ export default function GoalTracker() {
         </div>
       )}
 
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-2.5 py-5 sm:gap-6 sm:px-4 sm:py-6 lg:px-5">
+      <div data-archive-view={currentView === "archive" ? "true" : undefined} className={`mx-auto flex w-full flex-col gap-5 px-2.5 py-5 sm:gap-6 sm:px-4 sm:py-6 lg:px-5 ${currentView === "archive" ? "" : "max-w-7xl"}`}>
         <Head
           language={language}
           text={text}
@@ -7349,7 +7376,7 @@ export default function GoalTracker() {
                               <MoreIcon />
                             </button>
                             {todoActionMenuId === todo.id && (
-                              <div className="todo-action-menu-panel absolute inset-y-0 right-14 z-20 flex min-w-60 max-w-[calc(100%-4rem)] items-stretch overflow-hidden rounded-md border border-stone-200 text-sm font-semibold text-stone-700 shadow-xl">
+                              <div className="todo-action-menu-panel absolute top-0 right-14 z-20 grid w-72 max-w-[calc(100%-4rem)] grid-cols-2 auto-rows-[minmax(3rem,auto)] overflow-hidden rounded-md border border-stone-200 text-sm font-semibold text-stone-700 shadow-xl">
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -7372,6 +7399,18 @@ export default function GoalTracker() {
                                 >
                                   <EditIcon />
                                   {text.edit}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSaving}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void archiveTodoItem(todo.id);
+                                  }}
+                                  className="flex items-center justify-center gap-2 border-t border-stone-200 px-2 hover:bg-stone-100 disabled:opacity-60"
+                                >
+                                  <ArchiveIcon />
+                                  {language === "ko" ? "저장소로 보내기" : "Archive"}
                                 </button>
                                 <button
                                   type="button"
@@ -7441,7 +7480,7 @@ export default function GoalTracker() {
                 </div>
               </div>
               {currentView === "archive" && (
-              <div data-screen-swipe-surface className="max-h-[32rem] touch-pan-y space-y-4 overflow-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div data-screen-swipe-surface className="min-w-0 touch-pan-y space-y-4">
                 {archivedItemCount === 0 ? (
                   <p className="rounded-md bg-stone-100 px-3 py-4 text-sm text-stone-600">
                     {text.archivedEmpty}
@@ -8718,6 +8757,7 @@ export default function GoalTracker() {
           onSaveEdit={() => saveTodoTitle(selectedCalendarTodo)}
           onCancelEdit={cancelEditingTodo}
           onCheck={() => toggleTodoCompleted(selectedCalendarTodo)}
+          onArchive={() => void archiveTodoItem(selectedCalendarTodo.id)}
           onDelete={() => {
             cancelEditingTodo();
             setSelectedCalendarTodoId(null);
@@ -9116,6 +9156,7 @@ function TodoCalendarDetailModal({
   onSaveEdit,
   onCancelEdit,
   onCheck,
+  onArchive,
   onDelete,
 }: {
   todo: Todo;
@@ -9134,6 +9175,7 @@ function TodoCalendarDetailModal({
   onSaveEdit: () => void;
   onCancelEdit: () => void;
   onCheck: () => void;
+  onArchive: () => void;
   onDelete: () => void;
 }) {
   const targetDate = todo.targetDate && /^\d{4}-\d{2}-\d{2}$/.test(todo.targetDate) ? todo.targetDate : "";
@@ -9292,6 +9334,16 @@ function TodoCalendarDetailModal({
               <EditIcon />
             </button>
           )}
+          <button
+            type="button"
+            onClick={onArchive}
+            disabled={isSaving}
+            aria-label={language === "ko" ? "저장소로 보내기" : "Archive"}
+            title={language === "ko" ? "저장소로 보내기" : "Archive"}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <ArchiveIcon />
+          </button>
           <button
             type="button"
             onClick={onDelete}
